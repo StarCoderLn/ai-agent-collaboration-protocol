@@ -1,5 +1,7 @@
 # Stitch 设计稿生成操作手册
 
+> **状态：已搁置（2026-08-20）**。项目决定不走 Stitch 出图流程——图片生成难以稳定复现 `docs/DESIGN.md` 中金额精度、过渡时长、图标描边等精确规则，开发阶段改为前端工程师直接依据 `docs/DESIGN.md` 用代码实现并在浏览器中验证。本文档保留作为后续如需静态营销页/宣传图等场景的参考，不再是 MVP 页面的生成路径。
+>
 > 适用项目：AI Agent 协作协议平台  
 > 使用方式：严格按本文顺序操作。每完成一步，先检查并选定结果，再进入下一步。提示词可直接复制到 Stitch。  
 > 界面语言：简体中文；设计描述使用英文，以提高布局和视觉控制的稳定性。
@@ -97,6 +99,10 @@ Minimal decorative gradients
 - 阴影克制，主要依赖边框与背景层级。
 - 金额和任务状态使用稳定、易扫描的排版，不使用装饰字体。
 - 默认桌面画布 1440px，同时准备 390px 移动端关键页面。
+- 图标统一使用线性图标（line icon），1.5px 描边，24px 网格，禁止在同一产品中混用面性/线性图标。
+- 状态切换（任务状态、托管状态、分配状态）使用轻微过渡（约 200ms），不用硬切换，也不用夸张的弹跳缓动；链上确认、Agent 接单这类关键状态变化可用稍慢的过渡（约 320ms）让用户注意到。
+- 金额显示固定小数位数（稳定币 2 位，ETH 展示值最多 6 位，禁止展示 18 位 wei 原始值），千分位分隔，货币单位常驻显示，同一货币在列表、详情、预览、回执四处的小数位数必须一致。
+- 详见 `docs/DESIGN.md` 的 “Data formatting”“Motion”“Iconography”“Loading and empty states” 四节，这些规则在生成每一页时都要复用，不要每页各自发挥。
 
 ## 3. 操作前准备
 
@@ -224,6 +230,14 @@ Include:
 - toast, alert, modal, drawer and confirmation dialog
 - skeleton, empty, error and offline states
 - network graph node styles for Agent matching
+
+Data and trust signal rules to lock in (apply consistently across every future page, not just this one):
+- Amounts: fixed decimal precision per currency, thousands separators, currency label always attached, right-aligned in tables. Never show raw 18-decimal wei values.
+- Timestamps: relative time in list views ("3 分钟前"), absolute time on hover or detail.
+- Wallet addresses and transaction hashes: shortened form with a copy affordance, monospace font.
+- Icons: one line-icon style only, 1.5px stroke, 24px grid — do not mix filled and line icons.
+- State transitions: brief, calm transitions (~200ms) for ordinary status changes, a slightly slower (~320ms) transition for pending-to-confirmed changes (on-chain confirmation, Agent acceptance). No bouncy or decorative motion, no fake progress bars for indeterminate waits.
+- Offline/degraded states (e.g. connection lost) use amber, not red — that is a connectivity signal, not a failure.
 
 Required status labels:
 草稿、待托管、待匹配、待接单、执行中、待验收、返工中、争议中、退款中、已退款、已完成、已超时。

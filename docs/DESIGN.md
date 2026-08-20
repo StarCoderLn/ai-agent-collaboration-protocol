@@ -64,6 +64,17 @@ spacing:
   margin-mobile: 16px
   margin-desktop: 48px
   max-width: 1280px
+motion:
+  duration-fast: 120ms
+  duration-base: 200ms
+  duration-slow: 320ms
+  easing-standard: cubic-bezier(0.2, 0, 0, 1)
+  easing-emphasized: cubic-bezier(0.3, 0, 0.1, 1)
+icon:
+  style: line
+  strokeWidth: 1.5
+  grid: 24px
+  sizes: [16px, 20px, 24px]
 ---
 
 # Trusted Intelligence
@@ -89,6 +100,38 @@ Use consistent navigation, buttons, form controls, task cards, Agent cards, stat
 ## Accessibility
 
 Meet WCAG AA contrast, show keyboard focus, use 44px minimum interactive targets, and never encode status with color alone.
+
+## Data formatting
+
+Trust in a financial product is carried by the numbers, not just the palette. Amounts, timestamps, and identifiers must render identically everywhere they appear.
+
+- Amounts: fixed decimal precision per currency (e.g. 2 decimals for stablecoins, up to 6 for ETH display values — never show raw 18-decimal wei), thousands separators, currency label always attached, right-aligned in tables and lists.
+- Never let an amount's decimal count shift between screens (list, detail, preview, receipt) for the same currency.
+- Timestamps: absolute time on hover/detail, relative time ("3 分钟前") on list views; always the same relative-time phrasing across the product, not different phrasings per page.
+- Wallet addresses and transaction hashes: shortened form `0x1234…abcd` with a copy affordance, full value available on hover or click — never truncate silently without a way to get the full value.
+- Percentages and scores (matching score, ratings): one decimal place, consistent rounding rule, never re-derive the same score differently on two screens.
+
+## Motion
+
+Motion communicates that the system is working, not stalled — critical for a product full of async on-chain and Agent-execution waits. Use the `motion` tokens; do not introduce ad hoc durations or easing per page.
+
+- State transitions (task status, escrow status, assignment status) use `duration-base` with `easing-standard`: a brief crossfade or badge swap, never an instant hard cut and never a bouncy/playful easing.
+- Pending → confirmed transitions (on-chain confirmation, Agent acceptance) get a slightly more deliberate `duration-slow` transition so the change is noticeable, not missed.
+- Loading and waiting states animate continuously (skeleton shimmer, spinner) but never use motion to simulate progress that isn't real — don't fake a progress bar for an indeterminate wait.
+- No decorative motion (parallax, bouncing icons, celebratory confetti on payment) — restraint is part of the trust signal.
+
+## Iconography
+
+One icon set, one style, everywhere. Use the `icon` tokens: line icons only (no filled/duotone mixing), 1.5px stroke, drawn on a 24px grid, available at 16/20/24px. Icons always pair with a text label in status contexts (per Accessibility) — an icon alone is never the only carrier of meaning.
+
+## Loading and empty states
+
+Every async view (candidate matching, execution progress, transaction confirmation) needs all four states designed, not just the happy path:
+
+- **Skeleton**: for initial content load, shaped like the real layout (card/table skeletons match final card/table geometry), not a generic spinner, so the page doesn't visually jump when data arrives.
+- **Empty**: explains *why* it's empty and what to do next (e.g. "无候选 Agent — 尝试放宽预算或标签"), never a bare "无数据".
+- **Error**: states what failed and offers a retry action; uses `error` color restrained to the message and icon, not the whole panel.
+- **Offline/degraded** (SSE disconnected, chain sync delayed): uses `warning`, not `error` — this is a connectivity state, not a failure, and should say so.
 
 ## Avoid
 
