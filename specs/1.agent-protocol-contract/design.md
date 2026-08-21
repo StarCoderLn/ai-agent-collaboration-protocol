@@ -6,6 +6,7 @@
 | ---------- | ---- | -------- |
 | 2026-08-20 | v1   | 初始设计 |
 | 2026-08-20 | v2   | 新增模块 4「沙箱模式标记」 |
+| 2026-08-21 | v3   | 新增模块 5「过期记录清理」，补上此前只有设计意图、没有任务落地的 TTL 清理机制 |
 
 ## 项目架构
 
@@ -54,6 +55,15 @@
 - 请求头新增 `X-Call-Type: sandbox | production`，纳入签名覆盖范围（拼入 `Sign()`/`VerifySignature()` 的签名基串），防止被中间人篡改为绕过沙箱标记。
 - `idempotency_records`、审计日志写入时透传该标记；下游消费方（[[12.scoring-system]] 的评分样本计算、[[15.agent-sandbox-admission]] 的沙箱调用记录）按此字段过滤，不需要各自重新判断"这是不是测试调用"。
 - 默认值为 `production`：调用方不显式声明 `sandbox` 时，一律按正式任务处理，避免遗漏标记导致沙箱调用被误计入正式统计（更危险的方向），而不是反过来默认沙箱、遗漏时误伤正式任务。
+
+### 模块 5: 过期记录清理 `[v3 新增]`
+
+**涉及层及关键设计:**
+
+- `CleanupExpiredIdempotencyRecords(ctx, now) (deletedCount int, err error)`：删除 `expires_at < now` 的 `idempotency_records`，按批次删除（如每批 1000 行）避免长事务锁表。
+- `CleanupExpiredNonces(ctx, now, retention) (deletedCount int, err error)`：删除 `created_at < now - retention` 的 `used_nonces`，`retention` 默认 24 小时（覆盖 ±5 分钟签名时间窗口后留足缓冲，具体时长可配置，不与时间窗口本身耦合成同一个常量）。
+- 两个清理函数都是纯粹的批量 DELETE，天然幂等（重复执行只会删除"当时仍然过期"的记录，不会因为重复调用产生错误或误删未过期记录），不需要额外的去重逻辑。
+- 调度方式：Go 分发引擎内的定时任务（复用模块 1/2 已有的定时任务基础设施），默认每小时执行一次，执行间隔可配置；本 feature 只提供清理函数本身，具体调度器（cron/ticker）接入点由部署时决定。
 
 ## 接口契约
 

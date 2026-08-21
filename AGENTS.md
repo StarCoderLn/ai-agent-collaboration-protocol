@@ -153,3 +153,10 @@
 - 一次性业务细节、修复过程、代码片段和已被稳定规则覆盖的内容不得写入。
 - 模块专属教训应下沉到对应模块目录的 `AGENTS.md`；这里只保留跨模块硬约束。
 - 允许去重、合并和压缩本节条目，但不得丢失仍然有效的知识。
+
+### 已沉淀条目
+
+- [1.agent-protocol-contract/T-001] Go module path 须对齐实际 git remote(services/<name>),否则跨服务 import 解析失败。
+- [1.agent-protocol-contract/T-002] 已记录的历史教训需在下个 task 验证是否真落地,不能只记不查。
+- [1.agent-protocol-contract/T-005,T-008] 给已有字段加标记位/新增列,仅改签名或建列不够,须同步扩展 store 写入接口参数回填,否则被 DB 默认值掩盖、字段无法落库。
+- [1.agent-protocol-contract/T-006] 契约测试若只断言错误码/默认值等静态属性、未经真实入口驱动触发,会掩盖该行为实际不可达。

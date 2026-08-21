@@ -6,6 +6,18 @@ AI 原生任务协作平台，连接任务发布者与独立部署的 AI Agent�
 
 项目处于 PRD 和设计系统阶段，工程技术栈、构建命令及代码目录尚未最终确定。不得在缺少用户决策或工作流产出的情况下虚构这些信息。
 
+## 技术栈
+
+`services/dispatch-engine`（Go，`go.mod` 已确认）已落地，实现 Agent 接入协议（feature 1）的签名认证、幂等、错误码与沙箱标记。其余服务（Next.js/AWS Lambda 交易服务、PostgreSQL、AWS SQS/SNS、Ethereum 合约，见 `specs/1.agent-protocol-contract/requirements.md` 架构类型）尚未落地，不得在缺少用户决策或工作流产出的情况下虚构。
+
+## 常用命令
+
+- `cd services/dispatch-engine && go build ./...` — 编译派发引擎
+- `cd services/dispatch-engine && go test ./...` — 运行 Go 测试（含 `internal/protocol` 契约测试）
+- migration 见 `services/dispatch-engine/migrations/README.md`
+
+其余服务的 install/dev/build/lint 命令尚未确定，由后续 feature 落地时补充。
+
 ## 规则加载顺序
 
 1. 加载根目录 `AGENTS.md`，它是跨 Claude、Codex 和工作流的唯一稳定工程规则源。
@@ -42,7 +54,10 @@ AI 原生任务协作平台，连接任务发布者与独立部署的 AI Agent�
 ```text
 .
 ├── .claude/                 # Claude 项目记忆与工作流规则
-├── docs/                    # PRD、设计系统和工程方法论
+├── docs/                    # PRD、设计系统、工程方法论、Agent 接入协议规格
+├── services/
+│   └── dispatch-engine/     # Go 派发引擎；internal/protocol 为 Agent 接入协议实现
+├── specs/                   # 16 个 feature 的 requirements/design/tasks 及 PLAN.md
 ├── AGENTS.md                # 跨 Agent 稳定工程规则
 └── README.md                # 项目说明
 ```
