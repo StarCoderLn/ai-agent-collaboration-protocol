@@ -1,0 +1,32 @@
+{
+	"name": "web",
+	"private": true,
+	"workspaces": [
+		"apps/*",
+		"packages/*"
+	],
+	"type": "module",
+	"engines": {
+		"node": ">=22"
+	},
+	"scripts": {
+		"dev": "pnpm -r dev",
+		"build": "pnpm -r --if-present build",
+		"test": "pnpm -r --if-present test",
+		"check-types": "pnpm -r check-types",
+		"dev:web": "pnpm --filter web dev",
+		"check": "biome check --write ."
+	},
+	"dependencies": {
+		"@web/env": "workspace:*",
+		"dotenv": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.6",
+		"@types/node": "^22.20.1",
+		"@web/config": "workspace:*",
+		"typescript": "catalog:"
+	},
+	"packageManager": "pnpm@11.18.0"
+}

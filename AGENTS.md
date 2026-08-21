@@ -156,7 +156,8 @@
 
 ### 已沉淀条目
 
-- [1.agent-protocol-contract/T-001] Go module path 须对齐实际 git remote(services/<name>),否则跨服务 import 解析失败。
 - [1.agent-protocol-contract/T-002] 已记录的历史教训需在下个 task 验证是否真落地,不能只记不查。
-- [1.agent-protocol-contract/T-005,T-008] 给已有字段加标记位/新增列,仅改签名或建列不够,须同步扩展 store 写入接口参数回填,否则被 DB 默认值掩盖、字段无法落库。
-- [1.agent-protocol-contract/T-006] 契约测试若只断言错误码/默认值等静态属性、未经真实入口驱动触发,会掩盖该行为实际不可达。
+- [2.agent-registration/T-006,T-008] 勾选 task 完成前须核对：未独立验证的其它 task 不可批量勾选；task 声明的依赖也须已勾选。
+- [2.agent-registration/T-007] 临时脚手架(占位框架)转正后必须在同一 task 或紧邻 task 里迁移旧页面，否则同 feature 出现互不连通的多个前端 App。
+- [2.agent-registration/T-007] 排任务清单时'编辑/查看页'task 必须先确认对应 GET 读取端点已有独立任务，否则页面无法端到端可用。
+- [2.agent-registration/T-008] AC 要求覆盖多个操作类型(创建/编辑/替换)时测试须逐项落地,遗漏一项会掩盖该操作完全未实现该行为。

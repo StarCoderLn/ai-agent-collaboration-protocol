@@ -1,0 +1,27 @@
+{
+  "name": "business-api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agent 注册与凭证管理的框架无关领域模块；目标承载技术栈已选定为 Next.js + AWS Lambda，路由与认证装配尚未完成。",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-kms": "^3.679.0",
+    "js-sha3": "^0.13.0",
+    "pg": "^8.23.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/pg": "^8.23.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

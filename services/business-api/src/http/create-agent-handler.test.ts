@@ -1,0 +1,104 @@
+import { describe, expect, it, vi } from "vitest";
+import { createAgentHttpHandler, type CreateAgentHttpDeps } from "./create-agent-handler.js";
+import type { AgentRepository, CreatedAgent } from "../agents/agent-repository.js";
+import { Idempotency, type IdempotencyStore } from "../idempotency/idempotency-store.js";
+import type { CreateAgentInput } from "../agents/create-agent-input.js";
+
+const WALLET_ADDRESS = "0x1234567890123456789012345678901234567890";
+const OTHER_WALLET_ADDRESS = "0x0000000000000000000000000000000000dEaD";
+
+function validBody(overrides?: Partial<Record<string, unknown>>): Record<string, unknown> {
+  return {
+    name: "My Agent",
+    categoryId: "11111111-1111-4111-8111-111111111111",
+    capabilityDesc: "does things",
+    tags: ["tag-a"],
+    pricingType: "fixed",
+    price: { amount: "1000", currency: "USDC" },
+    walletAddress: WALLET_ADDRESS,
+    serviceEndpoint: "https://agent.example.com",
+    credentialSecret: "top-secret-key",
+    email: "provider@example.com",
+    ...overrides,
+  };
+}
+
+function makeDeps(actorId: string): CreateAgentHttpDeps & {
+  createAgentWithCredential: ReturnType<typeof vi.fn>;
+} {
+  const createAgentWithCredential = vi.fn(
+    async (_input: CreateAgentInput, _encryptedSecret: string): Promise<CreatedAgent> => ({
+      agentId: "agent-1",
+      status: "pending_review",
+    }),
+  );
+  const repository: AgentRepository = { createAgentWithCredential };
+
+  const encryptor = { encryptCredential: vi.fn(async (plaintext: string) => ({ encryptedSecret: `enc(${plaintext})` })) };
+
+  const store: IdempotencyStore = {
+    reserve: vi.fn(async () => ({ inserted: true, committed: false, snapshot: null })),
+    commitResponse: vi.fn(async () => {}),
+  };
+  const idempotency = new Idempotency(store);
+
+  const auditLogWriter = { write: vi.fn(async () => {}) };
+
+  return {
+    repository,
+    encryptor,
+    idempotency,
+    auditLogWriter,
+    resolveActorId: vi.fn(async (_req: Request) => actorId),
+    createAgentWithCredential,
+  };
+}
+
+function makeRequest(body: unknown, headers?: Record<string, string>): Request {
+  return new Request("https://business-api.internal/api/agents", {
+    method: "POST",
+    headers: { "content-type": "application/json", "idempotency-key": "idem-1", ...headers },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("createAgentHttpHandler", () => {
+  it("wires an authenticated caller through to a 201 when walletAddress matches the actor", async () => {
+    const deps = makeDeps(WALLET_ADDRESS);
+    const handler = createAgentHttpHandler(deps);
+
+    const response = await handler(makeRequest(validBody()));
+    const body = (await response.json()) as { agentId: string; status: string };
+
+    expect(response.status).toBe(201);
+    expect(body).toEqual({ agentId: "agent-1", status: "pending_review" });
+    expect(deps.createAgentWithCredential).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 403 WALLET_OWNERSHIP_MISMATCH when walletAddress does not match the authenticated actor", async () => {
+    const deps = makeDeps(OTHER_WALLET_ADDRESS);
+    const handler = createAgentHttpHandler(deps);
+
+    const response = await handler(makeRequest(validBody({ walletAddress: WALLET_ADDRESS })));
+    const body = (await response.json()) as { error_code: string };
+
+    expect(response.status).toBe(403);
+    expect(body.error_code).toBe("WALLET_OWNERSHIP_MISMATCH");
+    expect(deps.createAgentWithCredential).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 when resolveActorId rejects (unauthenticated request)", async () => {
+    const deps = makeDeps(WALLET_ADDRESS);
+    deps.resolveActorId = vi.fn(async () => {
+      throw new Error("no session");
+    });
+    const handler = createAgentHttpHandler(deps);
+
+    const response = await handler(makeRequest(validBody()));
+    const body = (await response.json()) as { error_code: string };
+
+    expect(response.status).toBe(401);
+    expect(body.error_code).toBe("UNAUTHENTICATED");
+    expect(deps.createAgentWithCredential).not.toHaveBeenCalled();
+  });
+});

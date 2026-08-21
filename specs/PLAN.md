@@ -4,10 +4,21 @@
 
 来源需求文档：`docs/prd.md`（AI Agent 协作协议平台 MVP）。范围：完整 MVP（对应 PRD 第 11 节 P1-P4），链选型：**Ethereum**（用户已确认，Solana 不在 MVP 范围）。
 
+## 项目级技术栈决策（已冻结）
+
+- 前端只保留 better-t-stack 生成的 `web/` pnpm workspace，唯一正式应用是 `web/apps/web`；不得新增 Vite 或其他平行前端。
+- Web 使用 Next.js 16、React 19、TypeScript strict、App Router 和 Route Handlers；共享 UI 使用 `web/packages/ui`，样式使用 Tailwind CSS。
+- 边界校验使用 Zod，前端测试使用 Vitest + Testing Library，lint/格式化使用 Biome。
+- 用户面业务 API 采用 Next.js Route Handlers 并以 AWS Lambda 为部署方向；Go 只承担分发引擎与 Agent 接入协议职责。
+- PostgreSQL、AWS SQS/SNS、Ethereum + Solidity + MetaMask 是 MVP 已选技术边界；不实现 Solana/Phantom 路径。
+- “技术栈已确定”不代表所有实现已完成。路由装配、数据库适配器、认证协议或部署配置缺失时，必须准确记录为实现缺口，不得另建技术栈替代。
+- 提供者钱包认证方案尚未冻结；SIWE 只可标为待评估候选，未经单独设计不得视为已实现。
+- Mastra、LangChain、LangGraph 仅用于第三方或自建测试 Agent 的内部编排，不是平台 Web/API 技术栈替代项；自建测试 Agent 的生产选型仍需样例工作流验证后单独冻结。
+
 | 序号 | feature | 说明 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
-| 1 | agent-protocol-contract | Agent 接入协议基础设施：认证签名、幂等键、错误码、超时重试语义 | - | 待开发 |
-| 2 | agent-registration | Agent 注册、凭证加密存储、必填校验、审计日志 | 1 | 待开发 |
+| 1 | agent-protocol-contract | Agent 接入协议基础设施：认证签名、幂等键、错误码、超时重试语义 | - | 已实现 |
+| 2 | agent-registration | Agent 注册、凭证加密存储、必填校验、审计日志 | 1 | 开发中（正式前端已统一；路由/认证/读取接口未完成） |
 | 3 | agent-health-lifecycle | 健康检查、上下架状态机、试运行准入、运营审核 | 1, 2 | 待开发 |
 | 4 | task-creation-and-preview | 任务创建表单、字段校验、分类标签联动、发布前预览 | - | 待开发 |
 | 5 | escrow-contract-ethereum | Ethereum 智能合约：托管存款、退款、结算、暂停、事件 | - | 待开发 |

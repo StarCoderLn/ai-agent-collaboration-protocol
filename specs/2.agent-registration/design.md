@@ -7,11 +7,12 @@
 | 2026-08-20 | v1   | 初始设计 |
 | 2026-08-20 | v2   | 说明 `PATCH /api/agents/:id` 拒绝钱包地址修改是永久约束，换绑走 [[16.agent-wallet-rebind]] 单独接口 |
 | 2026-08-20 | v3   | `agents` 表新增 `email` 必填字段 |
+| 2026-08-21 | v4   | 冻结唯一前端与 Web 技术栈，禁止平行 Vite 应用 |
 
 ## 项目架构
 
 - 架构类型: 多服务架构
-- 涉及层: 交易/业务服务（Next.js + AWS Lambda，承载 Agent 档案 CRUD）、PostgreSQL、前端（better-t-stack）
+- 涉及层: 交易/业务服务（Next.js App Router Route Handlers + AWS Lambda，承载 Agent 档案 CRUD）、PostgreSQL、前端（better-t-stack 的 `web/apps/web`）
 
 ## 功能模块设计
 
@@ -46,10 +47,11 @@
 - 表单遵循 `docs/DESIGN.md` 视觉规范（Inter 字体、8px 间距、12px 卡片圆角、语义色）；钱包地址字段使用等宽字体展示。
 - 字段级错误展示在对应输入项下方，不使用整页 toast 汇总（可扫描性要求）。
 - 凭证输入框提交后立即清空本地状态，不缓存明文到前端 store。
+- 注册页与编辑页必须位于唯一正式应用 `web/apps/web`，使用 Next.js 16 App Router、React 19、Tailwind CSS、`web/packages/ui`、Zod、Vitest + Testing Library 和 Biome。不得保留或新增 Vite 平行应用。
 
 ## 接口契约
 
-- `POST /api/agents` 请求体：`{ name, categoryId, capabilityDesc, tags[], pricingType, price, walletAddress, serviceEndpoint, credentialSecret, email }`（`[v3]` 新增 `email`）；响应：`{ agentId, status: "draft" }`。
+- `POST /api/agents` 请求体：`{ name, categoryId, capabilityDesc, tags[], pricingType, price, walletAddress, serviceEndpoint, credentialSecret, email }`（`[v3]` 新增 `email`）；响应：`{ agentId, status: "pending_review" }`，状态值以 [[3.agent-health-lifecycle]] 的状态机为权威定义。
 - `PUT /api/agents/:id/credentials` 请求体：`{ credentialSecret }`；响应：`{ keyVersion, configured: true }`，不回显任何密钥相关字段。
 - 错误响应复用 [[1.agent-protocol-contract]] 定义的统一错误码结构。
 
@@ -69,4 +71,5 @@
 | 决策 | 选项 | 理由 |
 | ---- | ---- | ---- |
 | 承载服务 | Next.js + AWS Lambda（选中）vs Go 分发引擎 | 注册配置属于低频用户面 CRUD，Go 分发引擎应保持专注于派发路径的深模块职责，混入 CRUD 会扩大其接口面 |
+| 前端工程 | better-t-stack `web/apps/web`（选中）vs 独立 Vite 应用 | 单一 App Router 应用统一路由、设计系统、环境变量、测试和部署边界，避免重复脚手架与迁移成本 |
 | 凭证存储 | 应用层信封加密 + 物理分表（选中）vs 数据库透明加密（TDE） | TDE 无法阻止“查询到但被解密返回”的误用路径；应用层加密从接口设计上直接消除“读明文”的可能性 |

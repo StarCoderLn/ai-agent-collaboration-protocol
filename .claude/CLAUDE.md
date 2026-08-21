@@ -4,24 +4,39 @@ AI 原生任务协作平台，连接任务发布者与独立部署的 AI Agent�
 
 ## 当前阶段
 
-项目处于 PRD 和设计系统阶段，工程技术栈、构建命令及代码目录尚未最终确定。不得在缺少用户决策或工作流产出的情况下虚构这些信息。
+项目已进入开发阶段，MVP 技术栈已经冻结。必须区分“技术栈已确定”和“具体模块尚未实现”，不得因路由、认证或适配器未完成而另建平行脚手架。
 
 ## 技术栈
 
-`services/dispatch-engine`（Go，`go.mod` 已确认）已落地，实现 Agent 接入协议（feature 1）的签名认证、幂等、错误码与沙箱标记。其余服务（Next.js/AWS Lambda 交易服务、PostgreSQL、AWS SQS/SNS、Ethereum 合约，见 `specs/1.agent-protocol-contract/requirements.md` 架构类型）尚未落地，不得在缺少用户决策或工作流产出的情况下虚构。
+`services/dispatch-engine`（Go，`go.mod` 已确认）已落地，实现 Agent 接入协议（feature 1）的签名认证、幂等、错误码与沙箱标记。
+
+feature 2（Agent 注册与凭证管理）已形成部分实现，但尚未完成真实路由、读取接口和认证装配：
+- `services/business-service/migrations`（SQL，`golang-migrate` 风格）— `agents`/`agent_credentials`/`audit_logs`，与 dispatch-engine 共享 PostgreSQL 但用独立追踪表 `business_service_schema_migrations`。
+- `services/business-api`（TypeScript + Vitest）— 信封加密、Agent 创建/编辑/凭证替换领域逻辑；Next.js/AWS Lambda 已由 design.md 选定，但路由和认证装配尚未落地。
+- `web/`（better-t-stack pnpm workspace，`packageManager: pnpm@11.18.0`）— 唯一正式 Web 工程；`apps/web` 使用 Next.js 16、React 19、App Router、Tailwind CSS 和 Zod，`packages/ui` 提供共享 UI，测试使用 Vitest + Testing Library，lint/格式化使用 Biome。注册页与编辑页均已迁入，但读取接口和认证仍缺失，不能视为端到端完成。
+
+项目级固定边界：用户面业务 API 使用 Next.js App Router Route Handlers，部署方向为 AWS Lambda；Go 只负责分发引擎；数据使用 PostgreSQL 与 AWS SQS/SNS；MVP 链为 Ethereum + Solidity + MetaMask。提供者钱包认证协议尚待单独设计，SIWE 仅是候选方案。
+
+其余服务（AWS SQS/SNS、Ethereum 合约，见 `specs/1.agent-protocol-contract/requirements.md` 架构类型）尚未落地，不得在缺少用户决策或工作流产出的情况下虚构。
 
 ## 常用命令
 
 - `cd services/dispatch-engine && go build ./...` — 编译派发引擎
 - `cd services/dispatch-engine && go test ./...` — 运行 Go 测试（含 `internal/protocol` 契约测试）
-- migration 见 `services/dispatch-engine/migrations/README.md`
+- migration 见 `services/dispatch-engine/migrations/README.md`（业务库 migration 见 `services/business-service/migrations/README.md`，含独立追踪表参数）
+- `cd services/business-api && pnpm test` / `pnpm typecheck` / `pnpm build` — 业务 API 单元测试、类型检查、构建
+- `cd web && pnpm dev:web` / `pnpm test` / `pnpm check-types` / `pnpm check` / `pnpm build` — 正式 Web 前端开发与验证
 
-其余服务的 install/dev/build/lint 命令尚未确定，由后续 feature 落地时补充。
+其余服务（交易队列、合约）的 install/dev/build/lint 命令尚未确定，由后续 feature 落地时补充。
 
 ## 规则加载顺序
 
 1. 加载根目录 `AGENTS.md`，它是跨 Claude、Codex 和工作流的唯一稳定工程规则源。
-2. 加载 `.claude/rules/` 中与当前任务和模块匹配的规则。
+2. 加载 `.claude/rules/` 中与当前任务和模块匹配的规则（按 glob 自动匹配，也可按需显式引入）：
+   - @rules/coding-style.md — 文档与规格写作风格
+   - @rules/git-workflow.md — Git 提交与分支规范
+   - @rules/security.md — 安全基线（认证授权、钱包资金、外部 Agent 输入、密钥审计）
+   - @rules/testing.md — 测试与验证规范
 3. 加载对应 feature 的 `requirements.md`、`design.md`、`tasks.md` 和项目级 `PLAN.md`（如存在）。
 4. 用户当前请求和更具体目录的规则优先；发现冲突时说明并请求确认，不得静默覆盖。
 
@@ -43,7 +58,7 @@ AI 原生任务协作平台，连接任务发布者与独立部署的 AI Agent�
 
 ## 工作流兼容规则
 
-- `yd:prd` 和 `yd-ai-wf-opt` 生成的项目事实、技术栈、命令、目录及模块规则可以增量补充本文件和 `.claude/rules/`，不得覆盖已有内容。
+- `yd:prd` 和 `yd-ai-wf-opt` 可以增量补充已验证的项目事实、命令、目录及模块规则，但不得把已冻结技术栈改回候选状态或创建平行实现；技术栈变更必须先由用户确认并同步 `docs/prd.md` 与 `specs/PLAN.md`。
 - 工作流产生的临时任务信息写入 `specs/` 或对应 feature 文件，不得混入稳定工程规则。
 - 新教训按 `AGENTS.md` 第 12 节格式沉淀；模块专属教训写入模块目录的 `AGENTS.md`。
 - `PLAN.md` 中已确认的项目级技术决策必须执行；需要偏离时作为 blocker 明确说明，不得自行替换为“等价方案”。
@@ -56,7 +71,10 @@ AI 原生任务协作平台，连接任务发布者与独立部署的 AI Agent�
 ├── .claude/                 # Claude 项目记忆与工作流规则
 ├── docs/                    # PRD、设计系统、工程方法论、Agent 接入协议规格
 ├── services/
-│   └── dispatch-engine/     # Go 派发引擎；internal/protocol 为 Agent 接入协议实现
+│   ├── dispatch-engine/     # Go 派发引擎；internal/protocol 为 Agent 接入协议实现
+│   ├── business-service/    # 业务库 SQL migration（agents/agent_credentials/audit_logs）
+│   └── business-api/        # TS 业务逻辑：信封加密、Agent 编辑/凭证替换
+├── web/                     # 唯一正式 Web 工程（better-t-stack / Next.js 16）
 ├── specs/                   # 16 个 feature 的 requirements/design/tasks 及 PLAN.md
 ├── AGENTS.md                # 跨 Agent 稳定工程规则
 └── README.md                # 项目说明
