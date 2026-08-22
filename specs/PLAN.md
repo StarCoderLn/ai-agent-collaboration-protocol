@@ -18,7 +18,7 @@
 | 序号 | feature | 说明 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
 | 1 | agent-protocol-contract | Agent 接入协议基础设施：认证签名、幂等键、错误码、超时重试语义 | - | 已实现 |
-| 2 | agent-registration | Agent 注册、凭证加密存储、必填校验、审计日志 | 1 | 开发中（正式前端已统一；路由/认证/读取接口未完成） |
+| 2 | agent-registration | Agent 注册、凭证加密存储、必填校验、审计日志 | 1 | 已完成（T-001～T-012；真实 PostgreSQL、AWS KMS 与 CDK 部署仍待环境级验证） |
 | 3 | agent-health-lifecycle | 健康检查、上下架状态机、试运行准入、运营审核 | 1, 2 | 待开发 |
 | 4 | task-creation-and-preview | 任务创建表单、字段校验、分类标签联动、发布前预览 | - | 待开发 |
 | 5 | escrow-contract-ethereum | Ethereum 智能合约：托管存款、退款、结算、暂停、事件 | - | 待开发 |

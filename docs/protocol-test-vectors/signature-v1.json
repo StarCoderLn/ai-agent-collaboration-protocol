@@ -1,0 +1,11 @@
+{
+  "description": "Framework-neutral HMAC-SHA256 signature vector for protocol v1.0",
+  "secret": "cross-language-test-secret",
+  "method": "POST",
+  "path": "/v1/research",
+  "timestamp": "1787356800",
+  "nonce": "fixed-nonce-001",
+  "call_type": "sandbox",
+  "body": "{\"topic\":\"agent protocols\"}",
+  "signature": "6f9b41841b600ff6f453a5c9775d8f979fd8f0a29d044e45130bb7f3549b224f"
+}
