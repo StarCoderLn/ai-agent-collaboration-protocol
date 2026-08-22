@@ -157,7 +157,5 @@
 ### 已沉淀条目
 
 - [1.agent-protocol-contract/T-002] 已记录的历史教训需在下个 task 验证是否真落地,不能只记不查。
-- [2.agent-registration/T-006,T-008] 勾选 task 完成前须核对：未独立验证的其它 task 不可批量勾选；task 声明的依赖也须已勾选。
-- [2.agent-registration/T-007] 临时脚手架(占位框架)转正后必须在同一 task 或紧邻 task 里迁移旧页面，否则同 feature 出现互不连通的多个前端 App。
-- [2.agent-registration/T-007] 排任务清单时'编辑/查看页'task 必须先确认对应 GET 读取端点已有独立任务，否则页面无法端到端可用。
-- [2.agent-registration/T-008] AC 要求覆盖多个操作类型(创建/编辑/替换)时测试须逐项落地,遗漏一项会掩盖该操作完全未实现该行为。
+- [2.agent-registration/T-004,T-006,T-008] 勾选 task 完成前须核对：未独立验证的其它 task 不可批量勾选、声明的依赖须已勾选、tasks.md 内『未完成原因』等说明须同步更新/删除，避免自相矛盾。
+- [2.agent-registration/T-007] task 完成判定以其自身声明范围内的证据(如测试通过)为准，不应因未被列为其依赖的其他缺口而无限期不勾选，但须在文档保留该已知限制说明。

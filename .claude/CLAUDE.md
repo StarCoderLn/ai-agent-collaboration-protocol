@@ -10,12 +10,12 @@ AI 原生任务协作平台，连接任务发布者与独立部署的 AI Agent�
 
 `services/dispatch-engine`（Go，`go.mod` 已确认）已落地，实现 Agent 接入协议（feature 1）的签名认证、幂等、错误码与沙箱标记。
 
-feature 2（Agent 注册与凭证管理）已形成部分实现，但尚未完成真实路由、读取接口和认证装配：
+feature 2（Agent 注册与凭证管理）12 项任务已全部完成，真实路由、读取接口和 SIWE 认证装配均已落地，仍需真实 AWS/PostgreSQL 环境验证：
 - `services/business-service/migrations`（SQL，`golang-migrate` 风格）— `agents`/`agent_credentials`/`audit_logs`，与 dispatch-engine 共享 PostgreSQL 但用独立追踪表 `business_service_schema_migrations`。
-- `services/business-api`（TypeScript + Vitest）— 信封加密、Agent 创建/编辑/凭证替换领域逻辑；Next.js/AWS Lambda 已由 design.md 选定，但路由和认证装配尚未落地。
-- `web/`（better-t-stack pnpm workspace，`packageManager: pnpm@11.18.0`）— 唯一正式 Web 工程；`apps/web` 使用 Next.js 16、React 19、App Router、Tailwind CSS 和 Zod，`packages/ui` 提供共享 UI，测试使用 Vitest + Testing Library，lint/格式化使用 Biome。注册页与编辑页均已迁入，但读取接口和认证仍缺失，不能视为端到端完成。
+- `services/business-api`（TypeScript + Vitest，独立 Next.js API-only 应用）— 信封加密、Agent 创建/编辑/凭证替换领域逻辑，已挂载为真实 Route Handlers 并接入 SIWE 认证与 PostgreSQL 事务；AWS Lambda 部署配置（CDK + Lambda Web Adapter + zip 打包）见 `services/business-api/infra/README.md`，尚未在真实 AWS 环境验证。
+- `web/`（better-t-stack pnpm workspace，`packageManager: pnpm@11.18.0`）— 唯一正式 Web 工程；`apps/web` 使用 Next.js 16、React 19、App Router、Tailwind CSS 和 Zod，`packages/ui` 提供共享 UI，测试使用 Vitest + Testing Library，lint/格式化使用 Biome。注册页与编辑页均已迁入并接入真实读取/写入接口与认证，端到端可用（真实环境验证仍待执行）。
 
-项目级固定边界：用户面业务 API 使用 Next.js App Router Route Handlers，部署方向为 AWS Lambda；Go 只负责分发引擎；数据使用 PostgreSQL 与 AWS SQS/SNS；MVP 链为 Ethereum + Solidity + MetaMask。提供者钱包认证协议尚待单独设计，SIWE 仅是候选方案。
+项目级固定边界：用户面业务 API 使用 Next.js App Router Route Handlers，部署方向为 AWS Lambda；Go 只负责分发引擎；数据使用 PostgreSQL 与 AWS SQS/SNS；MVP 链为 Ethereum + Solidity + MetaMask。提供者钱包认证方案已冻结为 SIWE（EIP-4361），2026-08-22 由用户确认，详见 `specs/PLAN.md` 与 `specs/2.agent-registration/design.md` 模块 5。
 
 其余服务（AWS SQS/SNS、Ethereum 合约，见 `specs/1.agent-protocol-contract/requirements.md` 架构类型）尚未落地，不得在缺少用户决策或工作流产出的情况下虚构。
 
