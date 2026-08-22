@@ -2,12 +2,23 @@
 
 ## 本次 PRD（2026-08-20）切分为 16 个 feature
 
-来源需求文档：`docs/prd.md`（AI Agent 协作协议平台 MVP）。范围：完整 MVP（对应 PRD 第 11 节 P1-P4），链选型：**Ethereum**（用户已确认，Solana 不在 MVP 范围）。
+来源需求文档：`docs/prd.md`（AI Agent 协作协议平台 MVP）。范围：完整 MVP（对应 PRD 第 11 节 P1-P4），链选型：**Ethereum**（用户已确认，Solana 不在 MVP 范围）。`[2026-08-22 变更]` 14.ops-backend-and-metrics、15.agent-sandbox-admission、16.agent-wallet-rebind 已被用户确认延后至 P5「后续能力」（见 docs/prd.md 2.2 节），当前 MVP 本轮开发范围为 **12 个 feature**（1-13，不含 14/15/16）；三个延后 feature 的 requirements/design/tasks 均已生成，予以保留供后续启用时直接使用，不删除也不重新编号。
+
+## 项目级技术栈决策（已冻结）
+
+- 前端只保留 better-t-stack 生成的 `web/` pnpm workspace，唯一正式应用是 `web/apps/web`；不得新增 Vite 或其他平行前端。
+- Web 使用 Next.js 16、React 19、TypeScript strict、App Router 和 Route Handlers；共享 UI 使用 `web/packages/ui`，样式使用 Tailwind CSS。
+- 边界校验使用 Zod，前端测试使用 Vitest + Testing Library，lint/格式化使用 Biome。
+- 用户面业务 API 采用 Next.js Route Handlers 并以 AWS Lambda 为部署方向；Go 只承担分发引擎与 Agent 接入协议职责。Lambda 打包与 IaC 方案（2026-08-22 由用户确认）：AWS Lambda Web Adapter + zip 打包（不用容器镜像）+ AWS CDK（不用 SAM——本项目已知会有多个 Lambda，包括未来 feature 9/10 的 SQS 消费者、feature 12 的定时评分任务，CDK 用真正的编程语言表达共享配置更合适）。具体实现与部署命令见 `services/business-api/infra/README.md`；后续新增 Lambda（不限于 business-api）默认沿用同一 IaC 工具，除非有真实理由需要偏离（如 Go 分发引擎若改用 ECS/Fargate 等非 serverless 资源，仍可用 CDK 表达，不需要引入第二套工具）。
+- PostgreSQL、AWS SQS/SNS、Ethereum + Solidity + MetaMask 是 MVP 已选技术边界；不实现 Solana/Phantom 路径。
+- “技术栈已确定”不代表所有实现已完成。路由装配、数据库适配器、认证协议或部署配置缺失时，必须准确记录为实现缺口，不得另建技术栈替代。
+- 提供者钱包认证方案已冻结为 SIWE（EIP-4361）：`GET /api/auth/nonce` 签发一次性 nonce（PostgreSQL 存储，短 TTL，单次使用）→ 前端 `personal_sign` 签署标准 SIWE 消息 → `POST /api/auth/verify` 校验签名与 nonce 后写入 `auth_sessions`（session_id、wallet_address、expires_at）并下发 httpOnly+Secure+SameSite=Lax 的不透明 session cookie → 后续接口从 session 解析 `actorId`，不信任请求体/Header 自报的钱包地址。会话 TTL 24 小时，过期需重新签名；多端会话管理与 refresh 轮换体验不在本轮范围。详细设计与实现见 [[2.agent-registration]] design.md 模块 5。（2026-08-22 由用户确认冻结）
+- Mastra、LangChain、LangGraph 仅用于第三方或自建测试 Agent 的内部编排，不是平台 Web/API 技术栈替代项；自建测试 Agent 的生产选型仍需样例工作流验证后单独冻结。
 
 | 序号 | feature | 说明 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
-| 1 | agent-protocol-contract | Agent 接入协议基础设施：认证签名、幂等键、错误码、超时重试语义 | - | 待开发 |
-| 2 | agent-registration | Agent 注册、凭证加密存储、必填校验、审计日志 | 1 | 待开发 |
+| 1 | agent-protocol-contract | Agent 接入协议基础设施：认证签名、幂等键、错误码、超时重试语义 | - | 已实现 |
+| 2 | agent-registration | Agent 注册、凭证加密存储、必填校验、审计日志 | 1 | 已完成（T-001～T-012；真实 PostgreSQL、AWS KMS 与 CDK 部署仍待环境级验证） |
 | 3 | agent-health-lifecycle | 健康检查、上下架状态机、试运行准入、运营审核 | 1, 2 | 待开发 |
 | 4 | task-creation-and-preview | 任务创建表单、字段校验、分类标签联动、发布前预览 | - | 待开发 |
 | 5 | escrow-contract-ethereum | Ethereum 智能合约：托管存款、退款、结算、暂停、事件 | - | 待开发 |
@@ -19,21 +30,21 @@
 | 11 | execution-tracking-and-delivery | Agent 进度上报、1~3 个候选结果提交与版本管理、验收/返工 | 1, 10 | 待开发 |
 | 12 | scoring-system | 五维评分计算（贝叶斯平滑/时间衰减）、规则版本化、评分页面 | 11 | 待开发 |
 | 13 | dispute-and-arbitration | 争议发起、证据提交、资金冻结、人工仲裁决定、结算/退款执行 | 6, 11 | 待开发 |
-| 14 | ops-backend-and-metrics | 运营后台（审核/查询/超时处理/交易核对）、核心指标埋点看板 | 2, 3, 8, 9, 13 | 待开发 |
-| 15 | agent-sandbox-admission | 新 Agent 沙箱调用（3 次标准化测试）+ 清单式人工判定，驱动试运行→可接单准入 | 1, 2, 3, 14 | 待开发 |
-| 16 | agent-wallet-rebind | 钱包换绑：新钱包签名验证所有权 + 站外通知 + 冷静期，冷静期内结算仍走旧地址 | 1, 2 | 待开发 |
+| 14 | ops-backend-and-metrics | 运营后台（审核/查询/超时处理/交易核对）、核心指标埋点看板 | 2, 3, 8, 9, 13 | **延后至 P5**（用户确认，2026-08-22；MVP 阶段运营操作走直接数据库操作/人工介入） |
+| 15 | agent-sandbox-admission | 新 Agent 沙箱调用（3 次标准化测试）+ 清单式人工判定，驱动试运行→可接单准入 | 1, 2, 3, 14 | **延后至 P5**（用户确认，2026-08-22；MVP 阶段内部测试 Agent 由人工直接标记为可接单，跳过正式沙箱流程；3 的 `AdminApprove` 事件改由人工/临时接口触发，不依赖 15） |
+| 16 | agent-wallet-rebind | 钱包换绑：新钱包签名验证所有权 + 站外通知 + 冷静期，冷静期内结算仍走旧地址 | 1, 2 | **延后至 P5**（用户确认，2026-08-22；不阻塞其他 feature，无 feature 反向依赖 16） |
 
-**推荐执行顺序**：1 → 2 → 3；与此并行可先做 4、5（任务创建表单与合约互不依赖）→ 6 → 7 → 8 → 9 → 10 → 11 →（12 与 13 可并行）→ 14 → 15。15 依赖 14 的 RBAC，且逻辑上应在 3 之后紧接开发（沙箱判定是 3 的准入触发方），但物理上要等 14 交付才能接入正式权限校验，故排在末尾；开发时可先用临时权限占位实现 15 的核心流程，不必强制等到 14 完成。16 只依赖 1、2，可在 2 完成后随时插入开发，不依赖 15 的进度。
+**推荐执行顺序**：1 → 2 → 3；与此并行可先做 4、5（任务创建表单与合约互不依赖）→ 6 → 7 → 8 → 9 → 10 → 11 →（12 与 13 可并行）。本轮开发到 12/13 完成即构成完整闭环（含评分与争议仲裁），14/15/16 已延后至 P5，暂不排入本轮开发顺序。
 
 ```text
 1 → 2 → 3 ─┐
-            ├→ 8 → 9 → 10 → 11 → 12 ─┐
-4 → 7 ──────┘                         ├→ 14 → 15
-4 → 6 ← 5 ─────────────────────────────┤
+            ├→ 8 → 9 → 10 → 11 → 12
+4 → 7 ──────┘
+4 → 6 ← 5 ─────────────────────────────┐
 6 → 13 ← 11 ─────────────────────────────┘
-1, 2, 3 → 15（沙箱准入，反向驱动 3 的 AdminApprove 事件）
-1, 2 → 16（钱包换绑，独立分支，随时可插入）
 ```
+
+14（运营后台+指标）、15（沙箱准入）、16（钱包换绑）均已延后至 P5，不再画入本轮依赖图。3 的 `AdminApprove` 事件（原由 15 驱动）在 15 缺席期间由人工/临时接口直接触发；14 依赖的 2/3/8/9/13 均在本轮范围内，恢复 14 的排期时不受影响。
 
 > **7.T-004 的轻依赖说明（避免误读为循环依赖）**：`ValidateHardConstraints()` 的"受控上线期预算上限"判断需要查询 `3.agent_status_config`（`3.T-001` 建表）和 `12.agent_score_snapshots`/`scoring_rule_versions`（`12.T-001` 建表）两张表，但**只依赖表结构存在，不依赖 12 的评分计算逻辑跑完**——查不到快照时按"样本量=0"处理，本身就是合法的"受控中"判定。所以不需要等 12 全部开发完才能做 7，只需要 12 的建表任务（`12.T-001`）先完成；`12.T-001` 本身只依赖 [[11.execution-tracking-and-delivery]] 的表结构（不依赖 11 的业务逻辑跑完），可以视需要提前于 12 的其余任务单独排期，不构成 7 → 12 → 11 → … → 8 → 7 这样的真实循环。
 
@@ -45,6 +56,8 @@
 > - 拆分原「9.dispatch-and-acceptance」为 9（分配与接单）与 10（通知与状态同步）两个 feature，因合并后任务数超过单 feature 8 个上限（Step 5.5/9 强制要求）；10 之后的原 10-13 顺延为 11-14。
 > - 2026-08-20 `--change`：新增 15.agent-sandbox-admission，落实 PRD §14 P0-7「新 Agent 沙箱调用 3 次 + 清单式人工判定」的确认方案。同步更新了 1.agent-protocol-contract（新增 F-006 沙箱模式标记位，v1→v2）与 3.agent-health-lifecycle（F-007 触发条件明确为 15 的判定结果，v1→v2），两个 feature 均未变更任务数量，任务结构不受影响。
 > - 2026-08-20 `--change`：新增 16.agent-wallet-rebind，落实钱包换绑安全流程（新钱包签名验证 + 站外通知 + 冷静期，参考交易所提现地址变更惯例）。同步更新了 2.agent-registration（AC-004 从「MVP 不支持换绑」改为「换绑走 16 的独立流程」，v1→v2，任务结构不变）。
+> - 2026-08-22 `--change`：用户确认为缩短本轮开发周期，将 16.agent-wallet-rebind 延后至 P5「后续能力」（同步更新 docs/prd.md 2.2 节）。2.agent-registration 的 AC-004（拒绝直接修改钱包地址）不受影响：MVP 阶段钱包地址注册后本就保持不可编辑，延后 16 不需要任何代码回退或降级路径。requirements/design/tasks 予以保留，不删除、不重新编号，后续启用时可直接使用。
+> - 2026-08-22 `--change`：用户进一步确认将 14.ops-backend-and-metrics、15.agent-sandbox-admission 一并延后至 P5（同步更新 docs/prd.md 2.1/2.2 节），本轮 MVP 开发范围收敛为 1-13 共 12 个 feature，12（评分）与 13（争议仲裁）按用户要求保留在本轮范围内以保证闭环完整（PRD 4.2 单 Agent 任务闭环的第 9、11 步显式包含争议与评分）。影响评估：无其他 feature 依赖 14 或 15，延后不阻塞已排期的开发顺序；3.agent-health-lifecycle 的 `AdminApprove` 事件原本由 15 的沙箱判定结果驱动，15 缺席期间该事件需要人工/临时接口直接触发（不需要修改 3 的状态机本身，只是触发方从"15 的正式判定"改为"人工操作"）。requirements/design/tasks 均已生成，予以保留，不删除、不重新编号。
 
 ## 前置决策记录（来自用户确认，2026-08-20）
 

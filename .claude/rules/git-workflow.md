@@ -1,10 +1,10 @@
 ---
-description: PRD/设计系统阶段的 Git 提交与分支规范
+description: 项目 Git 提交、分支与提交前验证规范
 ---
 
 # Git 工作流
 
-项目当前处于 PRD 和设计系统阶段（无代码实现，仅 `docs/`、`specs/`、`AGENTS.md` 等文档），以下规则适用于当前及后续引入代码后的阶段。
+项目已进入编码阶段，以下规则同时适用于文档、Go、TypeScript/Next.js、SQL 和后续合约代码。
 
 ## 提交前检查
 
@@ -22,7 +22,7 @@ description: PRD/设计系统阶段的 Git 提交与分支规范
 
 - 默认在 `main` 上直接提交文档类变更（PRD、设计系统、规则文件），除非用户要求走 PR 流程。
 - 进入代码实现阶段后，涉及公共接口、数据库 schema、认证、资金、并发或跨模块的改动应走独立分支 + PR，禁止直接提交到 `main`。
-- 分支命名待技术栈确定后在本文件补充约定；当前阶段不强制。
+- 分支使用 `feature/<feature-id>-<short-name>`、`fix/<scope>-<short-name>` 或 `docs/<short-name>`；高影响代码变更走独立分支和 PR。
 
 ## 禁止操作
 
@@ -30,6 +30,17 @@ description: PRD/设计系统阶段的 Git 提交与分支规范
 - 不得跳过 hooks（`--no-verify` 等），除非用户明确要求。
 - 不得对已有提交做 `--amend`，除非用户明确要求；默认创建新提交。
 
-## 待补充事项
+## Go 代码改动前置检查（services/dispatch-engine）
 
-- 技术栈确定后（package.json / 等配置文件出现），本文件需补充：commit message 格式约定（如 Conventional Commits）、分支命名规则、CI 触发条件、代码类改动的 lint/test 前置检查命令。
+- 提交涉及 `services/dispatch-engine` 下代码前，在该目录执行并确认通过：
+  - `go build ./...`
+  - `go test ./...`
+  - `go vet ./...`（尚无 golangci-lint 配置，`go vet` 为当前唯一 lint 前置检查）
+- 未实际执行上述命令时，不得在提交信息或对话中声称已通过验证。
+- 仓库暂无 CI 配置，以上检查需在本地手动执行。
+
+## TypeScript / Next.js 提交前检查
+
+- `services/business-api`：执行 `pnpm test`、`pnpm typecheck`、`pnpm build`。
+- `web`：使用 Node.js 22+ 执行 `pnpm test`、`pnpm check-types`、`pnpm exec biome check .`、`pnpm build`。
+- PostgreSQL、AWS Lambda/KMS 和 Ethereum 的真实环境验证尚未落地时，提交说明必须列出未验证项，不得用本地 mock 结果代替。

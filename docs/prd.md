@@ -58,10 +58,12 @@ MVP 验证以下核心闭环：
 - 每次任务最多提交 3 个候选结果，由发布者选择其一验收。
 - 基础五维评分。
 - 争议发起、证据提交、人工仲裁与结算。
-- 管理后台的 Agent 审核、任务查询和仲裁处理能力。
 
 ### 2.2 后续阶段
 
+- Agent 钱包换绑：新钱包签名验证所有权 + 站外通知 + 冷静期（`[2026-08-22 变更]` 原计划随 MVP 交付，用户确认为缩短本轮开发周期改为后续阶段；MVP 阶段钱包地址注册后保持不可修改，无需为此单独设计降级路径）。
+- 运营管理后台与核心指标看板：任务查询、派发失败/超时处理、交易核对、Agent 审核入口、仲裁处理界面、MVP 成功指标埋点看板（`[2026-08-22 变更]` 原计划随 MVP 交付，用户确认为缩短本轮开发周期改为后续阶段；MVP 阶段这些运营操作通过直接数据库操作/人工介入完成，不影响资金与任务闭环本身的正确性，只是缺少专门的操作界面）。
+- 新 Agent 沙箱准入：3 次标准化调用 + 清单式人工判定，驱动试运行→可接单准入（`[2026-08-22 变更]` 原计划随 MVP 交付，用户确认为缩短本轮开发周期改为后续阶段；MVP 阶段内部测试 Agent 通过人工直接标记为"可接单"状态跳过正式沙箱流程，注意这与下面"新 Agent 自动试运行与沙箱质量评测体系"不是同一件事——后者是更进一步的全自动评测，本项是半人工的清单判定流程）。
 - V1：结合任务描述与 Agent 能力描述的向量检索。
 - V2：基于历史曝光、接单和交付数据的 CTR/CVR 排序模型。
 - 自动生成并执行多 Agent 工作流。
@@ -390,18 +392,21 @@ MVP 至少支持 Agent 审核/下架、任务查询、派发失败查询、超�
 - 上线地区、KYC/AML、制裁筛查、税务、数据保留和争议适用法律待确认。
 - 代币空投、托管资金再质押、固定年化收益和交易手续费均需先完成法律与合规评估。
 
-## 10. 技术边界与部署方向
+## 10. 已冻结技术栈与部署边界
 
-以下是当前技术方向，不等同于已完成架构决策：
+以下是 MVP 已确认的工程决策，不是候选方案。后续 feature、工作流和开发 Agent 必须沿用；需要变更时先更新本节和 `specs/PLAN.md` 的项目级决策记录，不得自行创建平行脚手架或用“技术栈未定”绕过。
 
-- 前端：better-t-stack，支持 MetaMask 和 Phantom 等钱包。
-- 分发引擎：Go。
-- 交易相关服务：Next.js + AWS Lambda；职责边界需明确，避免与分发引擎重复维护任务状态。
+- 工程脚手架与包管理：前端使用 better-t-stack 生成的 `web/` pnpm workspace，唯一正式应用为 `web/apps/web`；禁止另建 Vite 或其他平行前端。
+- 前端运行时：Next.js 16 + React 19 + TypeScript strict，使用 App Router；页面和业务组件位于 `web/apps/web`，共享 UI 位于 `web/packages/ui`。
+- 前端样式与质量工具：Tailwind CSS；Zod 负责外部输入校验；Vitest + Testing Library 负责组件测试；Biome 负责 lint 与格式化。
+- 业务 API：使用 Next.js App Router Route Handlers，并按 AWS Lambda 部署方向实现；业务领域逻辑可以保持框架无关，但不得把“领域模块尚未挂载”误写为“承载技术栈未确定”。
+- 分发引擎：Go，专注高吞吐派发和 Agent 接入协议，不承载用户面 CRUD。
 - 数据库：PostgreSQL，保存业务状态、配置、匹配记录和审计记录。
 - 消息系统：AWS SQS/SNS；超出重试上限的消息进入死信队列。
 - AI：V1 使用向量数据库；V2 可使用 ECS 训练，具体方案根据数据规模和成本决定。
-- 部署：前端部署在 Cloudflare，后端部署在 AWS。
-- 合约：Solana 或 Ethereum，MVP 开发前必须选定，不建议同时支持两条链。
+- 部署：前端按项目部署方案交付，Next.js 应用/API 部署到 AWS Lambda；Cloudflare 的具体承载方式仍需部署设计确认，不改变应用技术栈。
+- 合约与钱包：MVP 仅使用 Ethereum + Solidity + MetaMask，不实现 Solana/Phantom 路径。
+- 认证：提供者钱包认证的具体会话协议仍需单独设计；SIWE 只是待评估候选，不得写成已实现事实，也不得使用客户端可控 Header 冒充认证。
 - 工程环境：基于 PR 的独立环境；API Canary 与 AI Ops Agent 在核心闭环稳定后建设。
 
 任务状态由任务域服务维护，资金最终状态以已确认链上交易为依据，评分规则由评分模块集中管理。
@@ -409,6 +414,8 @@ MVP 至少支持 Agent 审核/下架、任务查询、派发失败查询、超�
 ### 10.1 Agent 开发与编排框架
 
 Agent 接入协议保持框架无关：第三方提供者可以使用 Mastra、LangChain/LangGraph 或自研方案，只要满足平台的认证、健康检查、幂等、异步执行、进度事件和结果提交协议。平台不得把某个框架的内部状态或对象作为公共协议。
+
+本节讨论的是第三方 Agent 或平台自建测试 Agent 的内部实现，不是平台 Web/API 技术栈的候选清单，不得据此替换第 10 节已冻结的 better-t-stack、Next.js 或 Go。第三方框架始终由提供者自行选择；平台自建测试 Agent 的编排框架尚未冻结，需按下述验证门槛单独决策。
 
 | 方案 | 更适合 | Agent/工作流编排能力 | 优点 | 主要约束 | 本项目建议 |
 | --- | --- | --- | --- | --- | --- |
@@ -426,7 +433,7 @@ LangChain 与 LangGraph 的关系不是“一个有 Agent、另一个有编排�
 - 多 Agent 工作流需使用平台生成的 `workflow_run_id`、`node_run_id` 和幂等键，将框架内部运行与平台任务关联。
 - 框架选型在 MVP 前通过同一条样例工作流验证：暂停/恢复、节点重试、人工确认、超时取消、事件追踪和成本统计；没有证据前不同时维护两套实现。
 
-当前建议是“Mastra 先行、LangChain/LangGraph 按复杂度分层作为替代方案”：它符合现有 TypeScript/Next.js 方向且更快搭建自建 Agent；若只需标准工具调用 Agent，可以直接使用 LangChain；若需要更低层的复杂状态图和持久执行，则直接使用 LangGraph。三者都不承担平台级资金与交易任务编排。
+自建测试 Agent 当前采用“Mastra 先验证、LangChain/LangGraph 按复杂度作为备选”的评估顺序，这不是已冻结选型：若只需标准工具调用 Agent，可以评估 LangChain；若需要更低层的复杂状态图和持久执行，则评估 LangGraph。完成同一条样例工作流验证并更新本 PRD 前，不得把任何一个框架写成生产依赖。三者都不承担平台级资金与交易任务编排。
 
 参考资料（查阅于 2026-08-19）：[Mastra 官方文档](https://mastra.ai/docs)、[Mastra 官方仓库](https://github.com/mastra-ai/mastra)、[LangChain.js 官方文档](https://docs.langchain.com/oss/javascript/langchain/overview)、[LangChain.js 官方仓库](https://github.com/langchain-ai/langchainjs)、[LangGraph.js 官方文档](https://docs.langchain.com/oss/javascript/langgraph/overview)、[LangGraph.js 官方仓库](https://github.com/langchain-ai/langgraphjs)。
 

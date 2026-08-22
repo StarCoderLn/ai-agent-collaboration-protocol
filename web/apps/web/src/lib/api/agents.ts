@@ -1,0 +1,181 @@
+import { env } from "@web/env/web";
+import { z } from "zod";
+
+/**
+ * business-api（2.agent-registration）Agent 档案接口的前端客户端。
+ *
+ * 权威契约见 specs/2.agent-registration/design.md「接口契约」与
+ * services/business-api/src/agents/{agent,patch-agent,credentials}.ts：
+ * - `PATCH /api/agents/:id`：编辑除钱包地址外的字段，返回完整档案。
+ * - `PUT /api/agents/:id/credentials`：整体覆盖写凭证，只返回 `keyVersion`/`configured`，
+ *   不存在、也不会新增任何返回明文或密文的路径（AC-002）。
+ *
+ * `GET /api/agents/:id`（读取单个档案用于回显编辑表单）尚未在 2.agent-registration
+ * 的任务清单中定义为独立任务，这里按同一资源的 RESTful 惯例对接；真实 Route Handler 落地前
+ * 调用会以网络错误呈现，页面已用 `AgentFetchError` 承接并展示可重试的错误态
+ * （docs/DESIGN.md「Loading and empty states」）。
+ */
+
+const API_BASE_URL = env.NEXT_PUBLIC_BUSINESS_API_URL;
+
+/**
+ * 运行时校验 business-api 的响应体（codex review T-007 P2 修复：外部输入必须在边界
+ * 校验，见 .claude/rules/frontend.md 第 6 条）。网关返回结构不一致或字段缺失时
+ * （如 `tags` 缺失/非数组）此前会直接进入可信表单状态，可能在 `agent.tags.join(...)`
+ * 等处崩溃；现在会在边界处抛出 `AgentApiRequestError`，由调用方统一的错误态承接。
+ */
+const agentSchema = z.object({
+	id: z.string(),
+	providerWalletAddress: z.string(),
+	name: z.string(),
+	categoryId: z.string(),
+	capabilityDesc: z.string(),
+	tags: z.array(z.string()),
+	pricingType: z.string(),
+	/** 最小单位整数金额，以十进制字符串传输，避免 JSON number 精度丢失。 */
+	priceAmount: z.string(),
+	priceCurrency: z.string(),
+	serviceEndpoint: z.string(),
+	email: z.string(),
+	status: z.enum(["pending_review", "active", "paused", "delisted"]),
+	pauseReason: z.enum(["health_check", "manual"]).nullable(),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+});
+
+export type Agent = z.infer<typeof agentSchema>;
+
+/** `PATCH /api/agents/:id` 允许编辑的字段集合，与后端 `AGENT_PATCHABLE_FIELDS` 保持一致。 */
+export interface AgentPatchInput {
+	name?: string;
+	categoryId?: string;
+	capabilityDesc?: string;
+	tags?: string[];
+	pricingType?: string;
+	priceAmount?: string;
+	priceCurrency?: string;
+	serviceEndpoint?: string;
+	email?: string;
+}
+
+export interface AgentApiErrorBody {
+	error_code: string;
+	message: string;
+	retryable: boolean;
+	fields?: Record<string, string>;
+}
+
+export class AgentApiRequestError extends Error {
+	readonly status: number;
+	readonly body: AgentApiErrorBody;
+
+	constructor(status: number, body: AgentApiErrorBody) {
+		super(body.message);
+		this.name = "AgentApiRequestError";
+		this.status = status;
+		this.body = body;
+	}
+}
+
+async function parseErrorBody(response: Response): Promise<AgentApiErrorBody> {
+	try {
+		return (await response.json()) as AgentApiErrorBody;
+	} catch {
+		return {
+			error_code: "AGENT_INTERNAL_ERROR",
+			message: "请求失败，请稍后重试",
+			retryable: true,
+		};
+	}
+}
+
+/** 响应体结构不符合预期 schema 时，转换成与其它请求失败一致的错误态，而不是让调用方在渲染时崩溃。 */
+async function parseAgentBody(response: Response): Promise<Agent> {
+	const raw: unknown = await response.json();
+	const parsed = agentSchema.safeParse(raw);
+	if (!parsed.success) {
+		throw new AgentApiRequestError(response.status, {
+			error_code: "AGENT_INTERNAL_ERROR",
+			message: "服务返回的数据格式异常，请稍后重试",
+			retryable: true,
+		});
+	}
+	return parsed.data;
+}
+
+export async function fetchAgent(agentId: string): Promise<Agent> {
+	const response = await fetch(`${API_BASE_URL}/agents/${agentId}`, {
+		method: "GET",
+		headers: { accept: "application/json" },
+		// business-api 与 web 是不同源部署，SIWE session 以 httpOnly cookie 下发；
+		// 不带 credentials:"include" 时浏览器默认按 same-origin 处理，cookie 不会
+		// 被发送，所有请求都会得到 401（codex review T-007 P1 修复）。
+		credentials: "include",
+	});
+	if (!response.ok) {
+		throw new AgentApiRequestError(
+			response.status,
+			await parseErrorBody(response),
+		);
+	}
+	return parseAgentBody(response);
+}
+
+export async function patchAgent(
+	agentId: string,
+	patch: AgentPatchInput,
+): Promise<Agent> {
+	const response = await fetch(`${API_BASE_URL}/agents/${agentId}`, {
+		method: "PATCH",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(patch),
+		credentials: "include",
+	});
+	if (!response.ok) {
+		throw new AgentApiRequestError(
+			response.status,
+			await parseErrorBody(response),
+		);
+	}
+	return parseAgentBody(response);
+}
+
+const replaceCredentialsResultSchema = z.object({
+	keyVersion: z.number(),
+	configured: z.literal(true),
+});
+
+export type ReplaceCredentialsResult = z.infer<
+	typeof replaceCredentialsResultSchema
+>;
+
+export async function replaceAgentCredentials(
+	agentId: string,
+	credentialSecret: string,
+): Promise<ReplaceCredentialsResult> {
+	const response = await fetch(
+		`${API_BASE_URL}/agents/${agentId}/credentials`,
+		{
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ credentialSecret }),
+			credentials: "include",
+		},
+	);
+	if (!response.ok) {
+		throw new AgentApiRequestError(
+			response.status,
+			await parseErrorBody(response),
+		);
+	}
+	const raw: unknown = await response.json();
+	const parsed = replaceCredentialsResultSchema.safeParse(raw);
+	if (!parsed.success) {
+		throw new AgentApiRequestError(response.status, {
+			error_code: "AGENT_INTERNAL_ERROR",
+			message: "服务返回的数据格式异常，请稍后重试",
+			retryable: true,
+		});
+	}
+	return parsed.data;
+}

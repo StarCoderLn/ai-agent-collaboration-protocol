@@ -1,0 +1,5 @@
+packages:
+  - "evidence-research"
+
+allowBuilds:
+  esbuild: true
