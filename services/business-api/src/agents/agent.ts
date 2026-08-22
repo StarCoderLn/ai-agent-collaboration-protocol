@@ -5,6 +5,19 @@
  * （design.md 模块 1），领域类型层面同样隔离，避免任何一处 `Agent` 对象
  * 意外携带凭证相关数据。
  */
+/**
+ * `agents.id`（T-001 migration，UUID 主键）的结构校验（单一权威位置，codex review
+ * T-011 P2 修复）。非法 UUID 若直接透传给 PostgreSQL 会抛出
+ * `invalid input syntax for type uuid`，冒泡成非预期的 500 而不是 `AGENT_NOT_FOUND`
+ * 404——`get-agent.ts` 已用这条规则做过一次前置守卫，`patch-agent.ts`/`credentials.ts`
+ * 必须复用同一实现，不得各自重复判断或遗漏。
+ */
+const AGENT_ID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+export function isWellFormedAgentId(agentId: string): boolean {
+  return AGENT_ID_PATTERN.test(agentId);
+}
+
 export interface Agent {
   id: string;
   /** Ethereum 地址（0x + 40 位十六进制）。一经创建不可通过 PATCH 修改，见 AC-004。 */

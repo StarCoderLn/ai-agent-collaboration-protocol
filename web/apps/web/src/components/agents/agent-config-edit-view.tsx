@@ -2,7 +2,7 @@
 
 import { Skeleton } from "@web/ui/components/skeleton";
 import { AlertTriangle } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import AgentEditForm from "@/components/agents/agent-edit-form";
 import CredentialReplacePanel from "@/components/agents/credential-replace-panel";
 import type { Agent } from "@/lib/api/agents";
@@ -27,12 +27,21 @@ export default function AgentConfigEditView({
 	agentId,
 }: AgentConfigEditViewProps) {
 	const [state, setState] = useState<LoadState>({ kind: "loading" });
+	// 丢弃过期请求的响应：agentId 切换（或手动重试）后，若上一个 fetchAgent 在新请求
+	// 之后才 resolve，不能让它覆盖 state（否则会显示错误 Agent，且后续 PATCH 可能
+	// 提交到错误的 agentId，codex review T-007 P1 修复）。
+	const requestIdRef = useRef(0);
 
 	const load = useCallback(() => {
+		const requestId = ++requestIdRef.current;
 		setState({ kind: "loading" });
 		fetchAgent(agentId)
-			.then((agent) => setState({ kind: "loaded", agent }))
+			.then((agent) => {
+				if (requestIdRef.current !== requestId) return;
+				setState({ kind: "loaded", agent });
+			})
 			.catch((err: unknown) => {
+				if (requestIdRef.current !== requestId) return;
 				if (err instanceof AgentApiRequestError && err.status === 404) {
 					setState({ kind: "not-found" });
 					return;

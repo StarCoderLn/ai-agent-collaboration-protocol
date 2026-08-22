@@ -11,7 +11,8 @@
  */
 
 import { z } from "zod";
-import { isValidEthereumAddress } from "./ethereum-address.js";
+import { isValidEthereumAddress } from "./ethereum-address";
+import { isValidPriceAmount, PRICE_AMOUNT_INVALID_MESSAGE } from "./price-amount";
 
 // category_id 的存在性校验依赖 [[4.task-creation-and-preview]] 的 categories 表，
 // 该 feature 尚未建表（见 specs/PLAN.md 排期），本 task 范围内只能做 UUID 结构校验；
@@ -33,9 +34,7 @@ const serviceEndpointSchema = z
 // .claude/rules/security.md 第 5 条：金额禁止浮点，须用整数最小单位）。要求客户端
 // 传字符串形式的非负整数，服务端不做隐式数字转换。
 const priceSchema = z.object({
-  amount: z
-    .string()
-    .regex(/^\d+$/, { message: "price.amount 必须是非负整数字符串（最小单位）" }),
+  amount: z.string().refine(isValidPriceAmount, { message: PRICE_AMOUNT_INVALID_MESSAGE }),
   currency: z.string().trim().min(1, { message: "price.currency 不能为空" }),
 });
 

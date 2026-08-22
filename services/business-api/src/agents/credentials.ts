@@ -20,8 +20,9 @@
  */
 
 import { z } from "zod";
-import type { AgentRepository, AuditLogWriter } from "./agent.js";
-import { AgentApiError } from "./errors.js";
+import { isWellFormedAgentId, type AgentRepository, type AuditLogWriter } from "./agent";
+import { AgentApiError } from "./errors";
+import { walletAddressesMatch } from "./ethereum-address";
 
 const replaceCredentialsBodySchema = z
   .object({
@@ -87,6 +88,10 @@ export async function replaceAgentCredentials(
 ): Promise<ReplaceAgentCredentialsResult> {
   const { agentId, actorId, rawBody } = params;
 
+  if (!isWellFormedAgentId(agentId)) {
+    throw new AgentApiError("AGENT_NOT_FOUND", `Agent ${agentId} 不存在`);
+  }
+
   const parsed = replaceCredentialsBodySchema.safeParse(rawBody);
   if (!parsed.success) {
     const firstIssue = parsed.error.issues[0];
@@ -100,7 +105,7 @@ export async function replaceAgentCredentials(
     throw new AgentApiError("AGENT_NOT_FOUND", `Agent ${agentId} 不存在`);
   }
 
-  if (existing.providerWalletAddress !== actorId) {
+  if (!walletAddressesMatch(existing.providerWalletAddress, actorId)) {
     throw new AgentApiError("AGENT_ACCESS_DENIED", "无权替换该 Agent 的认证配置");
   }
 

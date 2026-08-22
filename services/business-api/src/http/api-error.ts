@@ -8,7 +8,7 @@
  * 字段级错误），不破坏基础结构，兼容只读 `error_code`/`message`/`retryable` 的客户端。
  */
 
-import type { FieldError } from "../agents/create-agent-input.js";
+import type { FieldError } from "../agents/create-agent-input";
 
 export type ApiErrorCode =
   | "VALIDATION_FAILED"

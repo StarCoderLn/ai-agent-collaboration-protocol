@@ -7,7 +7,7 @@
  */
 
 import { Pool, type QueryResultRow } from "pg";
-import { getRequiredEnv } from "../config/env.js";
+import { getRequiredEnv } from "../config/env";
 
 /**
  * 精简的查询接口：`pg.Pool` 与 `pg.PoolClient`（事务内）都满足此接口，
@@ -31,6 +31,37 @@ export interface PoolClientLike extends QueryExecutor {
 
 export function createPgPool(databaseUrl: string = getRequiredEnv("DATABASE_URL")): Pool {
   return new Pool({ connectionString: databaseUrl });
+}
+
+let cachedSharedPool: Pool | undefined;
+
+/**
+ * 进程级单例连接池（2.agent-registration T-010）：`services/business-service` 与
+ * `services/dispatch-engine` 共享同一个物理 PostgreSQL 实例，本进程内的多个仓储/
+ * 幂等存储/会话存储也应共享同一个 `Pool`，不为每个依赖各自新建连接池
+ * （原先各生产依赖装配模块各自维护私有缓存，见 create-agent-production-deps.ts
+ * 历史实现；收敛到此处单一权威位置，避免同进程内出现多个物理连接池）。
+ */
+export function getSharedPgPool(databaseUrl?: string): Pool {
+  if (!cachedSharedPool) {
+    cachedSharedPool = createPgPool(databaseUrl);
+  }
+  return cachedSharedPool;
+}
+
+/**
+ * 把 `pg.Pool` 适配为 `QueryExecutor`（2.agent-registration T-011 收敛）。
+ *
+ * `pg.Pool.query` 是重载方法，TypeScript 无法直接把它结构性匹配到 `QueryExecutor`
+ * （原先 `create-agent-production-deps.ts`/`auth-production-deps.ts` 各自复制了一份
+ * 同样的适配代码，收敛到此处单一权威位置，避免重复实现同一条转换规则）。
+ * 仅需在直接消费共享 `Pool` 时使用；事务内的 `PoolClientLike`（`withTransaction` 回调
+ * 参数）已经结构性满足 `QueryExecutor`，不需要再包一层。
+ */
+export function asQueryExecutor(pool: Pool): QueryExecutor {
+  return {
+    query: (text, params) => pool.query(text, params as unknown[]),
+  };
 }
 
 /**

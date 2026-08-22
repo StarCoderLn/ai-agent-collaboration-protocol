@@ -133,6 +133,10 @@ describe("Agent 注册集成流程：必填校验（含邮箱）", () => {
     { field: "capabilityDesc", overrides: { capabilityDesc: "" } },
     { field: "tags", overrides: { tags: [] } },
     { field: "pricingType", overrides: { pricingType: "" } },
+    {
+      field: "price.amount",
+      overrides: { price: { amount: "9223372036854775808", currency: "USDC" } },
+    },
     { field: "walletAddress", overrides: { walletAddress: "not-an-address" } },
     { field: "serviceEndpoint", overrides: { serviceEndpoint: "not-a-url" } },
     { field: "credentialSecret", overrides: { credentialSecret: "" } },
@@ -263,7 +267,7 @@ describe("Agent 注册集成流程：审计日志写入", () => {
 
 function makeAgentRecord(overrides?: Partial<Agent>): Agent {
   return {
-    id: "agent-1",
+    id: "22222222-2222-2222-2222-222222222222",
     providerWalletAddress: WALLET_ADDRESS,
     name: "Some Agent",
     categoryId: "11111111-1111-1111-1111-111111111111",

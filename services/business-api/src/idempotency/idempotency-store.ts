@@ -14,7 +14,7 @@
  *   pending 记录调用一次，重复调用或对不存在的 key 调用是调用方用法错误。
  */
 
-import type { QueryExecutor } from "../db/pool.js";
+import type { QueryExecutor } from "../db/pool";
 
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 

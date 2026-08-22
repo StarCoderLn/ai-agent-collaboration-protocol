@@ -9,7 +9,7 @@ import type { Agent, AgentRepository, AuditLogEntry, AuditLogWriter } from "./ag
 
 function makeAgent(overrides?: Partial<Agent>): Agent {
   return {
-    id: "agent-1",
+    id: "11111111-1111-1111-1111-111111111111",
     providerWalletAddress: "0x1234567890123456789012345678901234567890",
     name: "Some Agent",
     categoryId: "11111111-1111-1111-1111-111111111111",
@@ -80,6 +80,19 @@ describe("replaceAgentCredentials", () => {
     expect(result).toEqual({ keyVersion: 1, configured: true });
     expect(encryptCredential).toHaveBeenCalledWith("top-secret-key");
     expect(replace).toHaveBeenCalledWith(agent.id, "enc(top-secret-key)");
+  });
+
+  it("succeeds when actorId differs from the stored address only by EIP-55 checksum casing", async () => {
+    const agent = makeAgent({ providerWalletAddress: "0x1234567890123456789012345678901234567890" });
+    const { deps } = makeDeps({ agent });
+
+    const result = await replaceAgentCredentials(deps, {
+      agentId: agent.id,
+      actorId: "0x1234567890123456789012345678901234567890".toUpperCase().replace("0X", "0x"),
+      rawBody: { credentialSecret: "top-secret-key" },
+    });
+
+    expect(result).toEqual({ keyVersion: 1, configured: true });
   });
 
   it("returns the incremented keyVersion when a credential already exists", async () => {

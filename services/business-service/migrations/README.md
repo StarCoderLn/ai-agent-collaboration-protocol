@@ -35,3 +35,6 @@ migrate -path services/business-service/migrations \
 - `0001_agent_registration`：创建 `agents`（含 `status`/`pause_reason`，物理定义随本表，
   语义权威归属 [[3.agent-health-lifecycle]]）、`agent_credentials`、`audit_logs`（平台级共享表）三张表
   （feature 2 T-001，权威设计见 `specs/2.agent-registration/design.md` 「数据模型」）。
+- `0002_auth_nonces_and_sessions`：创建 `auth_nonces`、`auth_sessions`（均为平台级共享表）两张表，
+  承载提供者钱包认证（SIWE / EIP-4361）（feature 2 T-010，权威设计见
+  `specs/2.agent-registration/design.md` 「模块 5：提供者钱包认证」）。

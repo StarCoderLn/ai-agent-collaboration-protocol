@@ -22,17 +22,17 @@
  *    TTL 过期回收（与 Go 侧 CheckAndReserve 文档说明的语义一致，不提供"释放占位"接口）。
  */
 
-import { parseCreateAgentInput } from "./create-agent-input.js";
-import type { AgentRepository } from "./agent-repository.js";
-import type { AuditLogWriter } from "./agent.js";
-import type { Idempotency, ResponseSnapshot } from "../idempotency/idempotency-store.js";
+import { parseCreateAgentInput } from "./create-agent-input";
+import type { AgentRepository } from "./agent-repository";
+import type { AuditLogWriter } from "./agent";
+import type { Idempotency, ResponseSnapshot } from "../idempotency/idempotency-store";
 import {
   idempotencyInProgressError,
   idempotencyKeyMissingError,
   validationFailedError,
   walletOwnershipMismatchError,
   ApiError,
-} from "../http/api-error.js";
+} from "../http/api-error";
 
 const IDEMPOTENCY_OPERATION_TYPE = "agent.create";
 

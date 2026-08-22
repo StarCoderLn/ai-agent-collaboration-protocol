@@ -80,6 +80,9 @@ export async function registerAgent(
 				"content-type": "application/json",
 				"idempotency-key": idempotencyKey,
 			},
+			// business-api 与 web 是不同源部署，SIWE session 以 httpOnly cookie 下发
+			// （同 lib/api/agents.ts 的修复，codex review T-007 P1 同类问题）。
+			credentials: "include",
 			body: JSON.stringify({
 				name: values.name,
 				categoryId: values.categoryId,

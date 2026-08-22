@@ -4,7 +4,7 @@ import type { Agent, AgentPatch, AgentRepository, AuditLogEntry, AuditLogWriter 
 
 function makeAgent(overrides?: Partial<Agent>): Agent {
   return {
-    id: "agent-1",
+    id: "11111111-1111-1111-1111-111111111111",
     providerWalletAddress: "0x1234567890123456789012345678901234567890",
     name: "Original Name",
     categoryId: "11111111-1111-1111-1111-111111111111",
@@ -152,6 +152,48 @@ describe("patchAgent", () => {
     });
 
     expect(applyPatch).toHaveBeenCalledWith(agent.id, { priceAmount: 5000n });
+  });
+
+  it("rejects a priceAmount string beyond the PostgreSQL BIGINT range (would otherwise 500 at the DB layer)", async () => {
+    const agent = makeAgent();
+    const { deps, applyPatch } = makeDeps(agent);
+
+    await expect(
+      patchAgent(deps, {
+        agentId: agent.id,
+        actorId: agent.providerWalletAddress,
+        rawBody: { priceAmount: "9223372036854775808" },
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(applyPatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty tags array (registration requires at least one tag; editing must not bypass it)", async () => {
+    const agent = makeAgent();
+    const { deps, applyPatch } = makeDeps(agent);
+
+    await expect(
+      patchAgent(deps, {
+        agentId: agent.id,
+        actorId: agent.providerWalletAddress,
+        rawBody: { tags: [] },
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(applyPatch).not.toHaveBeenCalled();
+  });
+
+  it("allows editing when actorId differs from the stored address only by EIP-55 checksum casing", async () => {
+    const agent = makeAgent({ providerWalletAddress: "0x1234567890123456789012345678901234567890" });
+    const { deps, applyPatch } = makeDeps(agent);
+
+    await patchAgent(deps, {
+      agentId: agent.id,
+      // SIWE 会话把恢复出的地址归一化为 EIP-55 校验和形式，大小写与落库值不同属预期。
+      actorId: "0x1234567890123456789012345678901234567890".toUpperCase().replace("0X", "0x"),
+      rawBody: { name: "Updated Name" },
+    });
+
+    expect(applyPatch).toHaveBeenCalled();
   });
 
   it("rejects when actorId does not own the agent (cannot edit another provider's profile)", async () => {

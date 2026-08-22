@@ -8,11 +8,12 @@
 | 2026-08-20 | v2   | 说明 `PATCH /api/agents/:id` 拒绝钱包地址修改是永久约束，换绑走 [[16.agent-wallet-rebind]] 单独接口 |
 | 2026-08-20 | v3   | `agents` 表新增 `email` 必填字段 |
 | 2026-08-21 | v4   | 冻结唯一前端与 Web 技术栈，禁止平行 Vite 应用 |
+| 2026-08-22 | v5   | 新增模块 5（提供者钱包认证，SIWE），冻结 `services/business-api` 独立 Next.js API-only 应用骨架的部署形态；补充接口契约与技术决策 |
 
 ## 项目架构
 
 - 架构类型: 多服务架构
-- 涉及层: 交易/业务服务（Next.js App Router Route Handlers + AWS Lambda，承载 Agent 档案 CRUD）、PostgreSQL、前端（better-t-stack 的 `web/apps/web`）
+- 涉及层: 交易/业务服务（`services/business-api`，独立部署的 Next.js API-only 应用（无页面，仅 Route Handlers）+ AWS Lambda，承载 Agent 档案 CRUD 与 SIWE 认证）、PostgreSQL、前端（better-t-stack 的 `web/apps/web`，通过 `NEXT_PUBLIC_BUSINESS_API_URL` 跨服务调用业务 API）
 
 ## 功能模块设计
 
@@ -49,7 +50,22 @@
 - 凭证输入框提交后立即清空本地状态，不缓存明文到前端 store。
 - 注册页与编辑页必须位于唯一正式应用 `web/apps/web`，使用 Next.js 16 App Router、React 19、Tailwind CSS、`web/packages/ui`、Zod、Vitest + Testing Library 和 Biome。不得保留或新增 Vite 平行应用。
 
+### 模块 5: 提供者钱包认证（SIWE，`[v5 新增]`）
+
+**涉及层及关键设计:**
+
+- 采用 SIWE（EIP-4361）而非自定义签名方案：生态成熟、钱包客户端（MetaMask）原生支持消息展示，避免自造容易被误用的签名格式。
+- `auth_sessions` 表（`session_id PK, wallet_address, expires_at, created_at`）与 `auth_nonces` 表（`nonce PK, expires_at, consumed_at NULL`）为本模块新增的平台级共享表：任何未来 feature 需要"当前操作者是哪个钱包地址"都复用同一张 `auth_sessions`，不得各自实现会话解析。
+- session cookie 只放不透明 `session_id`（不是自解释 JWT），服务端持有 `auth_sessions` 才能校验/吊销，避免客户端可以伪造声明字段。
+- `resolveActorId` 是单一权威的身份解析函数：所有需要身份的 handler（T-003/T-004/T-005/T-011 新增的 `GET /api/agents/:id`）都通过依赖注入调用它，不允许在多个 handler 里各自解析 cookie。
+- nonce 单次使用、短 TTL（5 分钟），签名校验成功后立即标记 `consumed_at`，防止重放。
+- 会话 TTL 24 小时，过期后要求重新走一遍 SIWE 流程；非目标：多设备会话管理、refresh token 轮换体验（记录为后续可能需要的技术债，不阻塞本轮交付）。
+
 ## 接口契约
+
+- `GET /api/auth/nonce` 响应：`{ nonce, expiresAt }`。
+- `POST /api/auth/verify` 请求体：`{ message, signature }`（`message` 为完整 SIWE 消息文本）；响应：`{ walletAddress }`，并通过 `Set-Cookie` 下发 httpOnly+Secure+SameSite=Lax 的 session cookie；失败（签名不符/nonce 过期或已用/地址格式非法）一律 401，不泄露具体校验失败在哪一步。
+- `GET /api/agents/:id`（`[v5 新增]`，T-011 承接）请求：需携带有效 session；响应：Agent 档案字段（不含 `encrypted_secret`），仅归属该 `provider_wallet_address` 的 session 可读取，否则 403。
 
 - `POST /api/agents` 请求体：`{ name, categoryId, capabilityDesc, tags[], pricingType, price, walletAddress, serviceEndpoint, credentialSecret, email }`（`[v3]` 新增 `email`）；响应：`{ agentId, status: "pending_review" }`，状态值以 [[3.agent-health-lifecycle]] 的状态机为权威定义。
 - `PUT /api/agents/:id/credentials` 请求体：`{ credentialSecret }`；响应：`{ keyVersion, configured: true }`，不回显任何密钥相关字段。
@@ -60,6 +76,8 @@
 - `agents(id PK, provider_wallet_address, name, category_id, capability_desc, tags TEXT[], pricing_type, price_amount, price_currency, service_endpoint, email, status, created_at, updated_at)`（`[v3]` 新增 `email`）
 - `agent_credentials(agent_id PK FK, encrypted_secret, key_version, updated_at)`
 - `audit_logs(id PK, actor_id, actor_type, action, target_type, target_id, before_summary JSONB, after_summary JSONB, created_at)`（平台共享表，凭证类字段禁止写入 `before_summary`/`after_summary`）
+- `auth_nonces(nonce PK, expires_at, consumed_at NULL, created_at)`（`[v5 新增]`，平台共享表）
+- `auth_sessions(session_id PK, wallet_address, expires_at, created_at)`（`[v5 新增]`，平台共享表）
 
 ## 安全考虑
 
@@ -73,3 +91,5 @@
 | 承载服务 | Next.js + AWS Lambda（选中）vs Go 分发引擎 | 注册配置属于低频用户面 CRUD，Go 分发引擎应保持专注于派发路径的深模块职责，混入 CRUD 会扩大其接口面 |
 | 前端工程 | better-t-stack `web/apps/web`（选中）vs 独立 Vite 应用 | 单一 App Router 应用统一路由、设计系统、环境变量、测试和部署边界，避免重复脚手架与迁移成本 |
 | 凭证存储 | 应用层信封加密 + 物理分表（选中）vs 数据库透明加密（TDE） | TDE 无法阻止“查询到但被解密返回”的误用路径；应用层加密从接口设计上直接消除“读明文”的可能性 |
+| `services/business-api` 部署形态 | 独立 Next.js API-only 应用（选中）vs 合并进 `web/apps/web` | 用户 2026-08-22 确认维持既有冻结决定：业务 API 需要独立的数据库/KMS 权限边界，与前端部署单元分开；代价是多一套 Next.js 脚手架与构建/部署流水线，已知悉并接受 |
+| 提供者钱包认证协议 | SIWE / EIP-4361（选中）vs 请求级签名校验（无会话） | 用户 2026-08-22 确认选 SIWE：生态成熟、钱包客户端原生支持消息展示；代价是需要新增 `auth_nonces`/`auth_sessions` 两张表和会话生命周期管理，比无会话的请求级签名复杂，但用户体验更好（不必每次请求都弹签名） |

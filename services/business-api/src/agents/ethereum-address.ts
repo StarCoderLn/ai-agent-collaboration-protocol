@@ -35,6 +35,19 @@ export function isValidEthereumAddress(address: string): boolean {
   return address === toChecksumAddress(address);
 }
 
+/**
+ * 判断两个以太坊地址是否指向同一账户（单一权威位置，2.agent-registration T-010/T-011 review）。
+ *
+ * 背景：注册（`isValidEthereumAddress`）允许纯小写地址原样落库，但 SIWE 登录
+ * （`verify-siwe.ts`）把 `personal_sign` 恢复出的地址归一化为 EIP-55 校验和形式写入
+ * session。若归属校验直接做字符串相等比较（`===`），以小写地址注册的合法所有者登录后
+ * 会被错误拒绝（`AGENT_ACCESS_DENIED`）。地址大小写在协议层不影响身份，比较前必须先
+ * 归一化，不得在多处各自用 `===`/`toLowerCase()` 重复实现这条判断。
+ */
+export function walletAddressesMatch(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 /** 按 EIP-55 算法计算给定地址的标准大小写校验和形式（输入不要求已通过校验）。 */
 export function toChecksumAddress(address: string): string {
   const hexPart = address.slice(2).toLowerCase();

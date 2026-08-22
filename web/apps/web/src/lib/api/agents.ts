@@ -1,4 +1,5 @@
 import { env } from "@web/env/web";
+import { z } from "zod";
 
 /**
  * business-api（2.agent-registration）Agent 档案接口的前端客户端。
@@ -17,24 +18,32 @@ import { env } from "@web/env/web";
 
 const API_BASE_URL = env.NEXT_PUBLIC_BUSINESS_API_URL;
 
-export interface Agent {
-	id: string;
-	providerWalletAddress: string;
-	name: string;
-	categoryId: string;
-	capabilityDesc: string;
-	tags: string[];
-	pricingType: string;
+/**
+ * 运行时校验 business-api 的响应体（codex review T-007 P2 修复：外部输入必须在边界
+ * 校验，见 .claude/rules/frontend.md 第 6 条）。网关返回结构不一致或字段缺失时
+ * （如 `tags` 缺失/非数组）此前会直接进入可信表单状态，可能在 `agent.tags.join(...)`
+ * 等处崩溃；现在会在边界处抛出 `AgentApiRequestError`，由调用方统一的错误态承接。
+ */
+const agentSchema = z.object({
+	id: z.string(),
+	providerWalletAddress: z.string(),
+	name: z.string(),
+	categoryId: z.string(),
+	capabilityDesc: z.string(),
+	tags: z.array(z.string()),
+	pricingType: z.string(),
 	/** 最小单位整数金额，以十进制字符串传输，避免 JSON number 精度丢失。 */
-	priceAmount: string;
-	priceCurrency: string;
-	serviceEndpoint: string;
-	email: string;
-	status: "pending_review" | "active" | "paused" | "delisted";
-	pauseReason: "health_check" | "manual" | null;
-	createdAt: string;
-	updatedAt: string;
-}
+	priceAmount: z.string(),
+	priceCurrency: z.string(),
+	serviceEndpoint: z.string(),
+	email: z.string(),
+	status: z.enum(["pending_review", "active", "paused", "delisted"]),
+	pauseReason: z.enum(["health_check", "manual"]).nullable(),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+});
+
+export type Agent = z.infer<typeof agentSchema>;
 
 /** `PATCH /api/agents/:id` 允许编辑的字段集合，与后端 `AGENT_PATCHABLE_FIELDS` 保持一致。 */
 export interface AgentPatchInput {
@@ -80,10 +89,28 @@ async function parseErrorBody(response: Response): Promise<AgentApiErrorBody> {
 	}
 }
 
+/** 响应体结构不符合预期 schema 时，转换成与其它请求失败一致的错误态，而不是让调用方在渲染时崩溃。 */
+async function parseAgentBody(response: Response): Promise<Agent> {
+	const raw: unknown = await response.json();
+	const parsed = agentSchema.safeParse(raw);
+	if (!parsed.success) {
+		throw new AgentApiRequestError(response.status, {
+			error_code: "AGENT_INTERNAL_ERROR",
+			message: "服务返回的数据格式异常，请稍后重试",
+			retryable: true,
+		});
+	}
+	return parsed.data;
+}
+
 export async function fetchAgent(agentId: string): Promise<Agent> {
 	const response = await fetch(`${API_BASE_URL}/agents/${agentId}`, {
 		method: "GET",
 		headers: { accept: "application/json" },
+		// business-api 与 web 是不同源部署，SIWE session 以 httpOnly cookie 下发；
+		// 不带 credentials:"include" 时浏览器默认按 same-origin 处理，cookie 不会
+		// 被发送，所有请求都会得到 401（codex review T-007 P1 修复）。
+		credentials: "include",
 	});
 	if (!response.ok) {
 		throw new AgentApiRequestError(
@@ -91,7 +118,7 @@ export async function fetchAgent(agentId: string): Promise<Agent> {
 			await parseErrorBody(response),
 		);
 	}
-	return (await response.json()) as Agent;
+	return parseAgentBody(response);
 }
 
 export async function patchAgent(
@@ -102,6 +129,7 @@ export async function patchAgent(
 		method: "PATCH",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify(patch),
+		credentials: "include",
 	});
 	if (!response.ok) {
 		throw new AgentApiRequestError(
@@ -109,13 +137,17 @@ export async function patchAgent(
 			await parseErrorBody(response),
 		);
 	}
-	return (await response.json()) as Agent;
+	return parseAgentBody(response);
 }
 
-export interface ReplaceCredentialsResult {
-	keyVersion: number;
-	configured: true;
-}
+const replaceCredentialsResultSchema = z.object({
+	keyVersion: z.number(),
+	configured: z.literal(true),
+});
+
+export type ReplaceCredentialsResult = z.infer<
+	typeof replaceCredentialsResultSchema
+>;
 
 export async function replaceAgentCredentials(
 	agentId: string,
@@ -127,6 +159,7 @@ export async function replaceAgentCredentials(
 			method: "PUT",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ credentialSecret }),
+			credentials: "include",
 		},
 	);
 	if (!response.ok) {
@@ -135,5 +168,14 @@ export async function replaceAgentCredentials(
 			await parseErrorBody(response),
 		);
 	}
-	return (await response.json()) as ReplaceCredentialsResult;
+	const raw: unknown = await response.json();
+	const parsed = replaceCredentialsResultSchema.safeParse(raw);
+	if (!parsed.success) {
+		throw new AgentApiRequestError(response.status, {
+			error_code: "AGENT_INTERNAL_ERROR",
+			message: "服务返回的数据格式异常，请稍后重试",
+			retryable: true,
+		});
+	}
+	return parsed.data;
 }

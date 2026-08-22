@@ -71,6 +71,16 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 		value: AgentEditFormValues[K],
 	) {
 		setValues((prev) => ({ ...prev, [field]: value }));
+		// 修改字段后清除该字段的旧错误与整体提交状态，避免"已保存"提示或上一次的
+		// 失败错误在用户继续编辑后仍然显示（codex review T-007 P2 修复）。
+		setErrors((prev) => {
+			if (!(field in prev)) return prev;
+			const next = { ...prev };
+			delete next[field];
+			return next;
+		});
+		setStatus("idle");
+		setSubmitError(null);
 	}
 
 	function handleTagsChange(raw: string) {
@@ -247,7 +257,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 				</div>
 
 				<div className="mt-4">
-					<Field label="标签（逗号分隔）" htmlFor="tags">
+					<Field label="标签（逗号分隔）" htmlFor="tags" error={errors.tags}>
 						<Input
 							id="tags"
 							value={tagsInput}

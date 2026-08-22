@@ -24,20 +24,21 @@
 import { z } from "zod";
 import {
   AGENT_PATCHABLE_FIELDS,
+  isWellFormedAgentId,
   type Agent,
   type AgentPatch,
   type AgentRepository,
   type AuditLogWriter,
-} from "./agent.js";
-import { AgentApiError } from "./errors.js";
+} from "./agent";
+import { AgentApiError } from "./errors";
+import { walletAddressesMatch } from "./ethereum-address";
+import { isValidPriceAmount, PRICE_AMOUNT_INVALID_MESSAGE } from "./price-amount";
 
 /** 与 T-001 migration 的 `service_endpoint` CHECK 约束保持一致（`^https?://`）。 */
 /** 与 T-001 migration 的 `email` CHECK 约束保持一致（基础结构校验，不做真实性校验）。 */
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 /** 与 T-001 migration 的 `category_id` 列类型（UUID）保持一致。 */
 const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-/** 金额以十进制数字字符串传输，避免 JSON number 精度丢失（安全规则第 5 条）。 */
-const NON_NEGATIVE_INTEGER_STRING_PATTERN = /^\d+$/;
 
 /**
  * 请求体 schema。使用 `.strict()`：任何未在可编辑字段集合中的 key
@@ -49,11 +50,11 @@ const patchAgentBodySchema = z
     name: z.string().trim().min(1, "名称不能为空").optional(),
     categoryId: z.string().regex(UUID_PATTERN, "分类 ID 格式非法").optional(),
     capabilityDesc: z.string().trim().min(1, "能力描述不能为空").optional(),
-    tags: z.array(z.string().trim().min(1)).optional(),
+    tags: z.array(z.string().trim().min(1)).min(1, "tags 至少包含一个标签").optional(),
     pricingType: z.string().trim().min(1, "计价方式不能为空").optional(),
     priceAmount: z
       .string()
-      .regex(NON_NEGATIVE_INTEGER_STRING_PATTERN, "报价必须是非负整数字符串（最小单位）")
+      .refine(isValidPriceAmount, PRICE_AMOUNT_INVALID_MESSAGE)
       .optional(),
     priceCurrency: z.string().trim().min(1, "币种不能为空").optional(),
     serviceEndpoint: z
@@ -96,6 +97,10 @@ const WALLET_ADDRESS_KEYS = ["walletAddress", "providerWalletAddress"] as const;
 export async function patchAgent(deps: PatchAgentDeps, params: PatchAgentParams): Promise<Agent> {
   const { agentId, actorId, rawBody } = params;
 
+  if (!isWellFormedAgentId(agentId)) {
+    throw new AgentApiError("AGENT_NOT_FOUND", `Agent ${agentId} 不存在`);
+  }
+
   rejectWalletAddressField(rawBody);
 
   const parsed = patchAgentBodySchema.safeParse(rawBody);
@@ -108,7 +113,7 @@ export async function patchAgent(deps: PatchAgentDeps, params: PatchAgentParams)
     throw new AgentApiError("AGENT_NOT_FOUND", `Agent ${agentId} 不存在`);
   }
 
-  if (existing.providerWalletAddress !== actorId) {
+  if (!walletAddressesMatch(existing.providerWalletAddress, actorId)) {
     throw new AgentApiError("AGENT_ACCESS_DENIED", "无权编辑该 Agent 档案");
   }
 

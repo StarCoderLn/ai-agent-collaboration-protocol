@@ -3,6 +3,7 @@ import { createAgentHttpHandler, type CreateAgentHttpDeps } from "./create-agent
 import type { AgentRepository, CreatedAgent } from "../agents/agent-repository.js";
 import { Idempotency, type IdempotencyStore } from "../idempotency/idempotency-store.js";
 import type { CreateAgentInput } from "../agents/create-agent-input.js";
+import { SessionInvalidError } from "../auth/resolve-actor-id.js";
 
 const WALLET_ADDRESS = "0x1234567890123456789012345678901234567890";
 const OTHER_WALLET_ADDRESS = "0x0000000000000000000000000000000000dEaD";
@@ -44,12 +45,13 @@ function makeDeps(actorId: string): CreateAgentHttpDeps & {
 
   const auditLogWriter = { write: vi.fn(async () => {}) };
 
+  const txDeps = { repository, encryptor, idempotency, auditLogWriter };
+
   return {
-    repository,
-    encryptor,
-    idempotency,
-    auditLogWriter,
     resolveActorId: vi.fn(async (_req: Request) => actorId),
+    // 单元测试不开真实事务：直接把同一份 fake deps 交给业务逻辑，只验证接线正确。
+    runInTransaction: (<T,>(fn: (deps: typeof txDeps) => Promise<T>) => fn(txDeps)),
+    allowedOrigin: "https://app.example.com",
     createAgentWithCredential,
   };
 }
@@ -87,10 +89,10 @@ describe("createAgentHttpHandler", () => {
     expect(deps.createAgentWithCredential).not.toHaveBeenCalled();
   });
 
-  it("returns 401 when resolveActorId rejects (unauthenticated request)", async () => {
+  it("returns 401 when resolveActorId rejects with SessionInvalidError (unauthenticated request)", async () => {
     const deps = makeDeps(WALLET_ADDRESS);
     deps.resolveActorId = vi.fn(async () => {
-      throw new Error("no session");
+      throw new SessionInvalidError();
     });
     const handler = createAgentHttpHandler(deps);
 
@@ -99,6 +101,21 @@ describe("createAgentHttpHandler", () => {
 
     expect(response.status).toBe(401);
     expect(body.error_code).toBe("UNAUTHENTICATED");
+    expect(deps.createAgentWithCredential).not.toHaveBeenCalled();
+  });
+
+  it("returns a retryable 503 (not 401) when resolveActorId fails for a reason other than an invalid session", async () => {
+    const deps = makeDeps(WALLET_ADDRESS);
+    deps.resolveActorId = vi.fn(async () => {
+      throw new Error("session store connection reset");
+    });
+    const handler = createAgentHttpHandler(deps);
+
+    const response = await handler(makeRequest(validBody()));
+    const body = (await response.json()) as { error_code: string; retryable: boolean };
+
+    expect(response.status).toBe(503);
+    expect(body.retryable).toBe(true);
     expect(deps.createAgentWithCredential).not.toHaveBeenCalled();
   });
 });
