@@ -1,29 +1,46 @@
 import type { Metadata } from "next";
+import { cookies, headers } from "next/headers";
 
 import "../index.css";
+import Footer from "@/components/footer";
 import Header from "@/components/header";
 import Providers from "@/components/providers";
+import { LOCALE_COOKIE, resolveAppLocale } from "@/lib/i18n/locale";
 
-export const metadata: Metadata = {
-	title: "AI Agent 协作平台",
-	description: "可信的 AI Agent 任务协作平台",
-};
+export async function generateMetadata(): Promise<Metadata> {
+	const locale = await requestLocale();
+	return locale === "en" ? {
+		title: "AICP · Verifiable Agent Collaboration Network",
+		description: "Post tasks, compare Agents, orchestrate workflows, and complete delivery through verifiable escrow and approval.",
+	} : {
+		title: "AICP · 可信 Agent 协作网络",
+		description: "发布任务、比较 Agent、编排工作流，并用可验证的托管与验收完成交付。",
+	};
+}
 
-export default function RootLayout({
+export default async function RootLayout({
 	children,
 }: Readonly<{
 	children: React.ReactNode;
 }>) {
+	const locale = await requestLocale();
 	return (
-		<html lang="zh-CN" suppressHydrationWarning>
-			<body className="antialiased">
-				<Providers>
-					<div className="grid h-svh grid-rows-[auto_1fr]">
+		<html lang={locale} suppressHydrationWarning>
+			<body className="cyber-theme antialiased">
+				<Providers initialLocale={locale}>
+					<div className="site-ambient" aria-hidden />
+					<div className="relative flex min-h-svh flex-col">
 						<Header />
-						{children}
+						<div className="flex-1">{children}</div>
+						<Footer />
 					</div>
 				</Providers>
 			</body>
 		</html>
 	);
+}
+
+async function requestLocale() {
+	const [cookieStore, requestHeaders] = await Promise.all([cookies(), headers()]);
+	return resolveAppLocale(cookieStore.get(LOCALE_COOKIE)?.value, requestHeaders.get("accept-language") ?? "");
 }

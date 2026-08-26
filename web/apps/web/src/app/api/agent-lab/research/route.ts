@@ -43,7 +43,7 @@ export async function POST(request: Request): Promise<Response> {
 		return errorResponse(
 			503,
 			"AGENT_LAB_NOT_CONFIGURED",
-			"Agent Lab 尚未完成本地配置，请检查 Web 服务端环境变量",
+			"Agent Lab 服务尚未完成配置",
 			false,
 		);
 	}
@@ -119,7 +119,7 @@ function mapAgentFailure(status: number): Response {
 		return errorResponse(
 			502,
 			"AGENT_AUTH_FAILED",
-			"Web 与本地 Agent 的签名密钥不一致",
+			"Web 与 Agent 的签名密钥不一致",
 			false,
 		);
 	}

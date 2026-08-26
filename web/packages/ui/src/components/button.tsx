@@ -3,7 +3,7 @@ import { cn } from "@web/ui/lib/utils";
 import { cva, type VariantProps } from "class-variance-authority";
 
 const buttonVariants = cva(
-	"group/button inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap rounded-none border border-transparent bg-clip-padding font-medium text-xs outline-none transition-all focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-1 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+	"group/button inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap rounded-lg border border-transparent bg-clip-padding font-medium text-xs outline-none transition-all focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-1 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
 	{
 		variants: {
 			variant: {
@@ -21,13 +21,13 @@ const buttonVariants = cva(
 			size: {
 				default:
 					"h-8 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-				xs: "h-6 gap-1 rounded-none px-2 text-xs has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-				sm: "h-7 gap-1 rounded-none px-2.5 has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+				xs: "h-6 gap-1 rounded-md px-2 text-xs has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
+				sm: "h-7 gap-1 rounded-md px-2.5 has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
 				// h-11 (44px) 满足 docs/DESIGN.md 可访问性「44px 最小可交互目标」，用于表单主操作按钮。
 				lg: "h-11 gap-1.5 px-4 text-sm has-data-[icon=inline-end]:pr-3 has-data-[icon=inline-start]:pl-3",
 				icon: "size-8",
-				"icon-xs": "size-6 rounded-none [&_svg:not([class*='size-'])]:size-3",
-				"icon-sm": "size-7 rounded-none",
+				"icon-xs": "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3",
+				"icon-sm": "size-7 rounded-md",
 				"icon-lg": "size-9",
 			},
 		},
@@ -42,12 +42,21 @@ function Button({
 	className,
 	variant = "default",
 	size = "default",
+	render,
+	nativeButton,
 	...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
 	return (
 		<ButtonPrimitive
 			data-slot="button"
 			className={cn(buttonVariants({ variant, size, className }))}
+			/*
+			 * Base UI 默认要求底层元素是原生 button。传入 render={<Link />} 时底层已经
+			 * 变成链接，必须关闭 nativeButton，否则会产生错误的可访问性语义和开发警告。
+			 * 在共享边界推导一次，避免每个产品页面重复了解 Base UI 的内部约束。
+			 */
+			nativeButton={nativeButton ?? render === undefined}
+			render={render}
 			{...props}
 		/>
 	);

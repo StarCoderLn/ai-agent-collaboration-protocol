@@ -1,5 +1,11 @@
-import { env } from "@web/env/web";
 import { z } from "zod";
+import {
+	isMatchingTagSyntaxValid,
+	MAX_MATCHING_TAG_COUNT,
+	MAX_MATCHING_TAG_LENGTH,
+	normalizeMatchingTag,
+} from "@/lib/platform/matching-tags";
+import { BUSINESS_API_BASE_URL } from "./base-url";
 
 const ETHEREUM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 
@@ -7,7 +13,20 @@ export const agentRegistrationSchema = z.object({
 	name: z.string().trim().min(1, "名称不能为空"),
 	categoryId: z.uuid("分类 ID 必须是合法的 UUID"),
 	capabilityDesc: z.string().trim().min(1, "能力描述不能为空"),
-	tags: z.array(z.string().trim().min(1)).min(1, "至少填写一个标签"),
+	tags: z
+		.array(
+			z
+				.string()
+				.trim()
+				.min(1)
+				.max(MAX_MATCHING_TAG_LENGTH)
+				.refine(isMatchingTagSyntaxValid, "标签包含不支持的字符"),
+		)
+		.min(1, "至少填写一个标签")
+		.max(MAX_MATCHING_TAG_COUNT, `最多填写 ${MAX_MATCHING_TAG_COUNT} 个标签`)
+		.transform((tags) => [
+			...new Set(tags.map(normalizeMatchingTag).filter(Boolean)),
+		]),
 	pricingType: z.string().trim().min(1, "计价方式不能为空"),
 	priceAmount: z.string().trim().regex(/^\d+$/, "报价必须是非负整数"),
 	priceCurrency: z.string().trim().min(1, "币种不能为空"),
@@ -15,6 +34,10 @@ export const agentRegistrationSchema = z.object({
 		.string()
 		.trim()
 		.regex(ETHEREUM_ADDRESS_PATTERN, "钱包地址必须是合法的以太坊地址"),
+	payoutWalletAddress: z
+		.string()
+		.trim()
+		.regex(ETHEREUM_ADDRESS_PATTERN, "收款钱包必须是合法的以太坊地址"),
 	serviceEndpoint: z
 		.url("服务地址必须是合法 URL")
 		.regex(/^https?:\/\//, "服务地址必须使用 http(s) 协议"),
@@ -74,7 +97,7 @@ export async function registerAgent(
 ): Promise<RegisterAgentResult> {
 	let response: Response;
 	try {
-		response = await fetch(`${env.NEXT_PUBLIC_BUSINESS_API_URL}/agents`, {
+		response = await fetch(`${BUSINESS_API_BASE_URL}/agents`, {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -94,6 +117,7 @@ export async function registerAgent(
 					currency: values.priceCurrency,
 				},
 				walletAddress: values.walletAddress,
+				payoutWalletAddress: values.payoutWalletAddress,
 				serviceEndpoint: values.serviceEndpoint,
 				credentialSecret: values.credentialSecret,
 				email: values.email,

@@ -8,45 +8,109 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AgentRegistrationForm from "./agent-registration-form";
 
-function fillValidForm() {
-	fireEvent.change(screen.getByLabelText("名称"), {
+const CATEGORY_ID = "3f9e2c2e-6b2a-4f0e-9c1a-2f7a5b6c8d9e";
+const CATEGORY_GROUP_ID = "40000000-0000-4000-8000-000000000001";
+const CONNECTED_WALLET = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+const PAYOUT_WALLET = "0x000000000000000000000000000000000000dEaD";
+const writeText = vi.fn(async (_value: string) => {});
+
+vi.mock("@/components/auth/wallet-session-provider", () => ({
+	useWalletSession: () => ({
+		status: "connected",
+		walletAddress: CONNECTED_WALLET,
+		error: null,
+		connect: vi.fn(),
+		logout: vi.fn(),
+	}),
+}));
+
+function categoryResponse() {
+	return new Response(
+		JSON.stringify({
+			categories: [
+				{
+					id: CATEGORY_GROUP_ID,
+					parentId: null,
+					name: "产品与开发",
+					slug: "product-development",
+					version: 1,
+					children: [
+						{
+							id: CATEGORY_ID,
+							parentId: CATEGORY_GROUP_ID,
+							name: "软件开发",
+							slug: "software-development",
+							version: 1,
+							children: [],
+						},
+					],
+				},
+			],
+		}),
+		{ status: 200, headers: { "content-type": "application/json" } },
+	);
+}
+
+function tagResponse() {
+	return new Response(
+		JSON.stringify({
+			query: "",
+			suggestions: [
+				{ canonicalName: "next.js", matchedAlias: null },
+				{ canonicalName: "typescript", matchedAlias: null },
+			],
+		}),
+		{ status: 200, headers: { "content-type": "application/json" } },
+	);
+}
+
+function mockTaxonomyResponses() {
+	vi.mocked(fetch)
+		.mockResolvedValueOnce(categoryResponse())
+		.mockResolvedValueOnce(tagResponse());
+}
+
+async function fillValidForm() {
+	await screen.findByLabelText("Agent 名称");
+	fireEvent.change(screen.getByLabelText("Agent 名称"), {
 		target: { value: "Translator Agent" },
 	});
-	fireEvent.change(screen.getByLabelText("分类 ID"), {
-		target: { value: "3f9e2c2e-6b2a-4f0e-9c1a-2f7a5b6c8d9e" },
-	});
-	fireEvent.change(screen.getByLabelText("邮箱"), {
-		target: { value: "provider@example.com" },
-	});
-	fireEvent.change(screen.getByLabelText("服务地址"), {
-		target: { value: "https://agent.example.com/run" },
-	});
-	fireEvent.change(screen.getByLabelText("计价方式"), {
-		target: { value: "per_task" },
-	});
-	fireEvent.change(screen.getByLabelText("报价（最小单位）"), {
-		target: { value: "1000" },
-	});
-	fireEvent.change(screen.getByLabelText("币种"), {
-		target: { value: "USDC" },
-	});
-	fireEvent.change(screen.getByLabelText("钱包地址"), {
-		target: { value: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" },
-	});
-	fireEvent.change(screen.getByLabelText("能力描述"), {
+	fireEvent.change(screen.getByLabelText("能力说明"), {
 		target: { value: "中英互译" },
 	});
-	fireEvent.change(screen.getByLabelText("标签（逗号分隔）"), {
-		target: { value: "翻译" },
+	fireEvent.change(screen.getByLabelText("Agent 执行地址"), {
+		target: { value: "https://agent.example.com/run" },
 	});
-	fireEvent.change(screen.getByLabelText("调用凭证"), {
+	fireEvent.change(screen.getByLabelText("共享签名密钥"), {
 		target: { value: "secret" },
 	});
+	fireEvent.change(screen.getByLabelText("联系邮箱"), {
+		target: { value: "provider@example.com" },
+	});
+	fireEvent.change(screen.getByLabelText("每个任务报价（ETH）"), {
+		target: { value: "0.0012" },
+	});
+	fireEvent.change(screen.getByLabelText("收款钱包"), {
+		target: { value: PAYOUT_WALLET },
+	});
+	const category = screen.getByRole("combobox", { name: "服务分类" });
+	fireEvent.click(category);
+	const categoryOption = await screen.findByRole("option", {
+		name: "代码开发",
+	});
+	fireEvent.pointerDown(categoryOption, { pointerType: "mouse" });
+	fireEvent.click(categoryOption);
+	fireEvent.click(await screen.findByRole("button", { name: "next.js" }));
 }
 
 describe("AgentRegistrationForm", () => {
 	beforeEach(() => {
 		vi.stubGlobal("fetch", vi.fn());
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: { writeText },
+		});
+		writeText.mockClear();
 	});
 
 	afterEach(() => {
@@ -55,14 +119,84 @@ describe("AgentRegistrationForm", () => {
 	});
 
 	it("拒绝空表单并展示字段级错误", async () => {
+		mockTaxonomyResponses();
 		render(<AgentRegistrationForm />);
-		fireEvent.click(screen.getByRole("button", { name: "提交注册" }));
+		const submit = screen.getByRole("button", { name: "提交审核" });
+		await waitFor(() => expect(submit).toBeEnabled());
+		fireEvent.click(submit);
 
 		expect(await screen.findAllByRole("alert")).not.toHaveLength(0);
-		expect(fetch).not.toHaveBeenCalled();
+		expect(fetch).toHaveBeenCalledTimes(2);
+	});
+
+	it("在一个页面完成上架，默认填入登录钱包并允许修改收款地址", async () => {
+		mockTaxonomyResponses();
+		render(<AgentRegistrationForm />);
+
+		expect(await screen.findByLabelText("Agent 名称")).toBeInTheDocument();
+		expect(screen.queryByText("第 1 步，共 2 步")).not.toBeInTheDocument();
+		expect(
+			screen.queryByText("填写一次，即可提交审核"),
+		).not.toBeInTheDocument();
+		expect(screen.getByText("市场资料")).toBeInTheDocument();
+		expect(
+			await screen.findByRole("combobox", { name: "服务分类" }),
+		).toBeInTheDocument();
+		expect(screen.getByRole("group", { name: "技能标签" })).toBeInTheDocument();
+		expect(screen.getByRole("textbox", { name: "技能标签" })).toHaveAttribute(
+			"placeholder",
+			"输入自定义标签，按回车添加",
+		);
+		expect(screen.getByLabelText("收款钱包")).toHaveValue(CONNECTED_WALLET);
+		fireEvent.change(screen.getByLabelText("收款钱包"), {
+			target: { value: PAYOUT_WALLET },
+		});
+		expect(screen.getByLabelText("收款钱包")).toHaveValue(PAYOUT_WALLET);
+	});
+
+	it("允许在平台推荐标签之外添加、规范化并移除自定义标签", async () => {
+		mockTaxonomyResponses();
+		render(<AgentRegistrationForm />);
+
+		const input = await screen.findByRole("textbox", { name: "技能标签" });
+		fireEvent.change(input, { target: { value: "  RAG   Workflow  " } });
+		fireEvent.keyDown(input, { key: "Enter" });
+
+		const remove = screen.getByRole("button", {
+			name: "移除标签 rag workflow",
+		});
+		expect(remove).toBeInTheDocument();
+		expect(screen.getByText("已选择 1/10")).toBeInTheDocument();
+		fireEvent.click(remove);
+		expect(
+			screen.queryByRole("button", { name: "移除标签 rag workflow" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("展示并复制可直接运行的 TypeScript AICP 接入模板", async () => {
+		mockTaxonomyResponses();
+		render(<AgentRegistrationForm />);
+
+		fireEvent.click(screen.getByRole("button", { name: "查看接入示例" }));
+
+		const dialog = screen.getByRole("dialog", {
+			name: "可直接使用的 AICP 接入模板",
+		});
+		expect(dialog).toHaveTextContent("createServer");
+		expect(dialog).toHaveTextContent("/healthz");
+		expect(dialog).toHaveTextContent("Idempotency-Key");
+		expect(dialog).toHaveTextContent("X-Signature");
+
+		fireEvent.click(screen.getByRole("button", { name: "复制完整代码" }));
+		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+		expect(writeText.mock.calls[0]?.[0]).toContain("createHmac");
+		expect(
+			screen.getByRole("button", { name: "代码已复制" }),
+		).toBeInTheDocument();
 	});
 
 	it("提交成功后清空凭证并链接到正式编辑页", async () => {
+		mockTaxonomyResponses();
 		vi.mocked(fetch).mockResolvedValueOnce(
 			new Response(
 				JSON.stringify({ agentId: "agent-123", status: "pending_review" }),
@@ -74,24 +208,38 @@ describe("AgentRegistrationForm", () => {
 		);
 
 		render(<AgentRegistrationForm />);
-		fillValidForm();
-		fireEvent.click(screen.getByRole("button", { name: "提交注册" }));
+		await fillValidForm();
+		fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
 
 		await waitFor(() =>
 			expect(screen.getByRole("status")).toHaveTextContent("创建成功"),
 		);
-		expect(fetch).toHaveBeenCalledWith(
+		expect(fetch).toHaveBeenLastCalledWith(
 			"https://business-api.test/api/agents",
-			expect.objectContaining({ method: "POST" }),
+			expect.objectContaining({
+				method: "POST",
+				body: expect.stringContaining('"tags":["next.js"]'),
+			}),
+		);
+		const request = vi.mocked(fetch).mock.calls.at(-1)?.[1];
+		expect(request?.body).toEqual(
+			expect.stringContaining('"amount":"1200000000000000"'),
+		);
+		expect(request?.body).toEqual(
+			expect.stringContaining(`"walletAddress":"${CONNECTED_WALLET}"`),
+		);
+		expect(request?.body).toEqual(
+			expect.stringContaining(`"payoutWalletAddress":"${PAYOUT_WALLET}"`),
 		);
 		expect(screen.getByRole("link", { name: "继续配置" })).toHaveAttribute(
 			"href",
 			"/agents/agent-123/edit",
 		);
-		expect(screen.getByLabelText("调用凭证")).toHaveValue("");
+		expect(screen.getByLabelText("共享签名密钥")).toHaveValue("");
 	});
 
 	it("将服务端嵌套报价错误映射到报价输入项", async () => {
+		mockTaxonomyResponses();
 		vi.mocked(fetch).mockResolvedValueOnce(
 			new Response(
 				JSON.stringify({
@@ -105,8 +253,8 @@ describe("AgentRegistrationForm", () => {
 		);
 
 		render(<AgentRegistrationForm />);
-		fillValidForm();
-		fireEvent.click(screen.getByRole("button", { name: "提交注册" }));
+		await fillValidForm();
+		fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
 
 		expect(await screen.findByText("报价超出允许范围")).toBeInTheDocument();
 	});

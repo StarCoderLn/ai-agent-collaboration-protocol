@@ -7,6 +7,13 @@
  * （requirements.md AC-001/AC-006），避免用户等待一次网络往返才发现格式问题。
  */
 
+import {
+	isMatchingTagSyntaxValid,
+	MAX_MATCHING_TAG_COUNT,
+	MAX_MATCHING_TAG_LENGTH,
+	normalizeMatchingTag,
+} from "@/lib/platform/matching-tags";
+
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const SERVICE_ENDPOINT_PATTERN = /^https?:\/\//;
 const UUID_PATTERN =
@@ -42,6 +49,22 @@ export function validateAgentEditForm(
 	}
 	if (values.capabilityDesc.trim().length === 0) {
 		errors.capabilityDesc = "能力描述不能为空";
+	}
+	const normalizedTags = [
+		...new Set(values.tags.map(normalizeMatchingTag).filter(Boolean)),
+	];
+	if (normalizedTags.length === 0) {
+		errors.tags = "至少填写一个标签";
+	} else if (normalizedTags.length > MAX_MATCHING_TAG_COUNT) {
+		errors.tags = `最多填写 ${MAX_MATCHING_TAG_COUNT} 个标签`;
+	} else if (
+		normalizedTags.some(
+			(tag) =>
+				[...tag].length > MAX_MATCHING_TAG_LENGTH ||
+				!isMatchingTagSyntaxValid(tag),
+		)
+	) {
+		errors.tags = `每个标签最多 ${MAX_MATCHING_TAG_LENGTH} 个字符，且不能包含逗号或控制字符`;
 	}
 	if (values.pricingType.trim().length === 0) {
 		errors.pricingType = "计价方式不能为空";

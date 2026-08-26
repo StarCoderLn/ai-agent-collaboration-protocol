@@ -6,6 +6,7 @@ import { Label } from "@web/ui/components/label";
 import { Textarea } from "@web/ui/components/textarea";
 import { AlertCircle, CheckCircle2, Loader2, X } from "lucide-react";
 import { useState } from "react";
+import { useLocale } from "@/components/i18n/locale-provider";
 import {
 	type AgentEditFormErrors,
 	type AgentEditFormValues,
@@ -58,6 +59,7 @@ type SubmitStatus = "idle" | "submitting" | "success" | "error";
  * 这条判断逻辑，只是从不把它放进请求体，避免同一条规则出现第二个权威来源。
  */
 export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
+	const { t } = useLocale();
 	const [values, setValues] = useState<AgentEditFormValues>(() =>
 		toFormValues(agent),
 	);
@@ -120,7 +122,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 					setErrors((prev) => ({ ...prev, ...err.body.fields }));
 				}
 			} else {
-				setSubmitError("保存失败，请稍后重试");
+				setSubmitError(t("保存失败，请稍后重试"));
 			}
 		}
 	}
@@ -128,13 +130,13 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 	return (
 		<form onSubmit={handleSubmit} className="flex flex-col gap-6" noValidate>
 			<section className="rounded-lg border border-border bg-card p-6">
-				<h2 className="mb-1 font-semibold text-foreground text-lg">基本信息</h2>
+				<h2 className="mb-1 font-semibold text-foreground text-lg">{t("基本信息")}</h2>
 				<p className="mb-4 text-muted-foreground text-sm">
-					钱包地址一经创建不可通过本页面修改，如需更换请前往钱包换绑流程。
+					{t("钱包地址一经创建不可通过本页面修改，如需更换请前往钱包换绑流程。")}
 				</p>
 
 				<div className="grid gap-4 md:grid-cols-2">
-					<Field label="钱包地址" htmlFor="wallet-address">
+					<Field label={t("钱包地址")} htmlFor="wallet-address">
 						<Input
 							id="wallet-address"
 							value={agent.providerWalletAddress}
@@ -144,7 +146,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 						/>
 					</Field>
 
-					<Field label="名称" htmlFor="name" error={errors.name}>
+					<Field label={t("名称")} htmlFor="name" error={errors.name}>
 						<Input
 							id="name"
 							value={values.name}
@@ -153,7 +155,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 						/>
 					</Field>
 
-					<Field label="分类 ID" htmlFor="categoryId" error={errors.categoryId}>
+					<Field label={t("分类 ID")} htmlFor="categoryId" error={errors.categoryId}>
 						<Input
 							id="categoryId"
 							value={values.categoryId}
@@ -164,7 +166,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 						/>
 					</Field>
 
-					<Field label="邮箱" htmlFor="email" error={errors.email}>
+					<Field label={t("邮箱")} htmlFor="email" error={errors.email}>
 						<Input
 							id="email"
 							type="email"
@@ -175,7 +177,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 					</Field>
 
 					<Field
-						label="服务地址"
+						label={t("服务地址")}
 						htmlFor="serviceEndpoint"
 						error={errors.serviceEndpoint}
 					>
@@ -191,7 +193,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 					</Field>
 
 					<Field
-						label="计价方式"
+						label={t("计价方式")}
 						htmlFor="pricingType"
 						error={errors.pricingType}
 					>
@@ -206,7 +208,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 					</Field>
 
 					<Field
-						label="报价（最小单位整数）"
+						label={t("报价（最小单位整数）")}
 						htmlFor="priceAmount"
 						error={errors.priceAmount}
 					>
@@ -223,7 +225,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 					</Field>
 
 					<Field
-						label="币种"
+						label={t("币种")}
 						htmlFor="priceCurrency"
 						error={errors.priceCurrency}
 					>
@@ -240,13 +242,13 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 
 				<div className="mt-4">
 					<Field
-						label="能力描述"
+						label={t("能力描述")}
 						htmlFor="capabilityDesc"
 						error={errors.capabilityDesc}
 					>
 						<Textarea
 							id="capabilityDesc"
-							className="min-h-24 rounded-sm"
+							className="min-h-24 rounded-lg"
 							value={values.capabilityDesc}
 							onChange={(event) =>
 								updateField("capabilityDesc", event.target.value)
@@ -257,7 +259,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 				</div>
 
 				<div className="mt-4">
-					<Field label="标签（逗号分隔）" htmlFor="tags" error={errors.tags}>
+					<Field label={t("标签（逗号分隔）")} htmlFor="tags" error={errors.tags}>
 						<Input
 							id="tags"
 							value={tagsInput}
@@ -272,10 +274,10 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 					{status === "submitting" ? (
 						<>
 							<Loader2 className="size-4 animate-spin" aria-hidden />
-							保存中…
+							{t("保存中…")}
 						</>
 					) : (
-						"保存修改"
+						t("保存修改")
 					)}
 				</Button>
 
@@ -285,7 +287,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 						role="status"
 					>
 						<CheckCircle2 className="size-4" strokeWidth={1.5} aria-hidden />
-						已保存
+						{t("已保存")}
 					</span>
 				)}
 			</div>

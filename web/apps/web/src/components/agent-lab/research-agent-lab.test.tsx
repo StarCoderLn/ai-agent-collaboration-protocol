@@ -51,12 +51,14 @@ describe("ResearchAgentLab", () => {
 		);
 
 		render(<ResearchAgentLab />);
-		fireEvent.click(screen.getByRole("button", { name: "开始论文调研" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: "派发任务并开始执行" }),
+		);
 
 		await waitFor(() =>
 			expect(screen.getByText("可靠 Agent 研究报告")).toBeInTheDocument(),
 		);
-		expect(screen.getByText("沙箱任务完成")).toBeInTheDocument();
+		expect(screen.getByText("测试任务完成")).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: /真实论文来源/ })).toHaveAttribute(
 			"href",
 			"https://openalex.org/W1",
@@ -65,6 +67,11 @@ describe("ResearchAgentLab", () => {
 			"/api/agent-lab/research",
 			expect.objectContaining({ method: "POST" }),
 		);
+
+		fireEvent.click(screen.getByRole("button", { name: "验收并完成体验" }));
+		expect(
+			screen.getByText("验收完成，Agent 测试流程已跑通"),
+		).toBeInTheDocument();
 	});
 
 	it("validates the year range in the browser before submitting", async () => {
@@ -75,11 +82,22 @@ describe("ResearchAgentLab", () => {
 		fireEvent.change(screen.getByLabelText("结束年份"), {
 			target: { value: "2020" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "开始论文调研" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: "派发任务并开始执行" }),
+		);
 
 		expect(await screen.findByRole("alert")).toHaveTextContent(
 			"起始年份不能晚于结束年份",
 		);
 		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	it("shows only the real callable Agent as the selected candidate", () => {
+		render(<ResearchAgentLab />);
+
+		expect(
+			screen.getByRole("radio", { name: /论文检索与综述 Agent/ }),
+		).toBeChecked();
+		expect(screen.getByText("真实可调用")).toBeInTheDocument();
 	});
 });

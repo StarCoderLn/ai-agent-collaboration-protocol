@@ -5,6 +5,7 @@ import { Input } from "@web/ui/components/input";
 import { Label } from "@web/ui/components/label";
 import { CheckCircle2, KeyRound, Loader2 } from "lucide-react";
 import { useId, useState } from "react";
+import { useLocale } from "@/components/i18n/locale-provider";
 import {
 	AgentApiRequestError,
 	replaceAgentCredentials,
@@ -32,6 +33,7 @@ type SubmitState =
 export default function CredentialReplacePanel({
 	agentId,
 }: CredentialReplacePanelProps) {
+	const { t } = useLocale();
 	const inputId = useId();
 	const [secret, setSecret] = useState("");
 	const [state, setState] = useState<SubmitState>({ kind: "idle" });
@@ -57,7 +59,7 @@ export default function CredentialReplacePanel({
 			const message =
 				err instanceof AgentApiRequestError
 					? err.body.message
-					: "凭证替换失败，请稍后重试";
+					: t("凭证替换失败，请稍后重试");
 			setState({ kind: "error", message });
 		}
 	}
@@ -77,21 +79,21 @@ export default function CredentialReplacePanel({
 					id={`${inputId}-heading`}
 					className="font-semibold text-foreground text-lg"
 				>
-					调用凭证
+					{t("调用凭证")}
 				</h2>
 			</div>
 			<p className="mb-4 text-muted-foreground text-sm">
-				凭证保存后无法再次以明文查看，仅支持整体替换。替换后旧凭证立即失效。
+				{t("凭证保存后无法再次以明文查看，仅支持整体替换。替换后旧凭证立即失效。")}
 			</p>
 
 			<form onSubmit={handleSubmit} className="flex flex-col gap-3">
 				<div className="flex flex-col gap-1.5">
-					<Label htmlFor={inputId}>新认证配置</Label>
+					<Label htmlFor={inputId}>{t("新认证配置")}</Label>
 					<Input
 						id={inputId}
 						type="password"
 						autoComplete="off"
-						placeholder="输入新的凭证明文"
+						placeholder={t("输入新的凭证明文")}
 						value={secret}
 						onChange={(event) => setSecret(event.target.value)}
 						disabled={isSubmitting}
@@ -104,10 +106,10 @@ export default function CredentialReplacePanel({
 						{isSubmitting ? (
 							<>
 								<Loader2 className="size-4 animate-spin" aria-hidden />
-								替换中…
+								{t("替换中…")}
 							</>
 						) : (
-							"替换凭证"
+							t("替换凭证")
 						)}
 					</Button>
 
@@ -117,7 +119,7 @@ export default function CredentialReplacePanel({
 							role="status"
 						>
 							<CheckCircle2 className="size-4" strokeWidth={1.5} aria-hidden />
-							已替换（key_version {state.keyVersion}）
+							{t("已替换（key_version {version}）", { version: state.keyVersion })}
 						</span>
 					)}
 				</div>

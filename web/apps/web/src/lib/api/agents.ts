@@ -1,5 +1,6 @@
-import { env } from "@web/env/web";
 import { z } from "zod";
+
+import { BUSINESS_API_BASE_URL } from "./base-url";
 
 /**
  * business-api（2.agent-registration）Agent 档案接口的前端客户端。
@@ -16,7 +17,7 @@ import { z } from "zod";
  * （docs/DESIGN.md「Loading and empty states」）。
  */
 
-const API_BASE_URL = env.NEXT_PUBLIC_BUSINESS_API_URL;
+const API_BASE_URL = BUSINESS_API_BASE_URL;
 
 /**
  * 运行时校验 business-api 的响应体（codex review T-007 P2 修复：外部输入必须在边界

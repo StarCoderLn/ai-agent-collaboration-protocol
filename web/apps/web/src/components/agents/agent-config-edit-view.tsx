@@ -5,6 +5,7 @@ import { AlertTriangle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import AgentEditForm from "@/components/agents/agent-edit-form";
 import CredentialReplacePanel from "@/components/agents/credential-replace-panel";
+import { useLocale } from "@/components/i18n/locale-provider";
 import type { Agent } from "@/lib/api/agents";
 import { AgentApiRequestError, fetchAgent } from "@/lib/api/agents";
 
@@ -26,6 +27,7 @@ type LoadState =
 export default function AgentConfigEditView({
 	agentId,
 }: AgentConfigEditViewProps) {
+	const { t } = useLocale();
 	const [state, setState] = useState<LoadState>({ kind: "loading" });
 	// 丢弃过期请求的响应：agentId 切换（或手动重试）后，若上一个 fetchAgent 在新请求
 	// 之后才 resolve，不能让它覆盖 state（否则会显示错误 Agent，且后续 PATCH 可能
@@ -49,10 +51,10 @@ export default function AgentConfigEditView({
 				const message =
 					err instanceof AgentApiRequestError
 						? err.body.message
-						: "加载失败，请重试";
+						: t("加载失败，请重试");
 				setState({ kind: "error", message });
 			});
-	}, [agentId]);
+	}, [agentId, t]);
 
 	useEffect(() => {
 		load();
@@ -61,7 +63,7 @@ export default function AgentConfigEditView({
 	if (state.kind === "loading") {
 		return (
 			<div className="flex flex-col gap-6">
-				<Skeleton className="h-8 w-48 rounded-sm" />
+				<Skeleton className="h-8 w-48 rounded-lg" />
 				<Skeleton className="h-72 w-full rounded-lg" />
 				<Skeleton className="h-40 w-full rounded-lg" />
 			</div>
@@ -71,8 +73,8 @@ export default function AgentConfigEditView({
 	if (state.kind === "not-found") {
 		return (
 			<EmptyState
-				title="未找到该 Agent 档案"
-				description="档案可能已被删除，或链接中的 ID 不正确，请返回列表重新进入。"
+				title={t("未找到该 Agent 档案")}
+				description={t("档案可能已被删除，或链接中的 ID 不正确，请返回列表重新进入。")}
 			/>
 		);
 	}
@@ -80,9 +82,9 @@ export default function AgentConfigEditView({
 	if (state.kind === "error") {
 		return (
 			<EmptyState
-				title="加载失败"
+				title={t("加载失败")}
 				description={state.message}
-				action={{ label: "重试", onClick: load }}
+				action={{ label: t("重试"), onClick: load }}
 				tone="error"
 			/>
 		);
@@ -91,7 +93,7 @@ export default function AgentConfigEditView({
 	return (
 		<div className="flex flex-col gap-6">
 			<header>
-				<h1 className="font-bold text-2xl text-foreground">编辑 Agent 配置</h1>
+				<h1 className="font-bold text-2xl text-foreground">{t("编辑 Agent 配置")}</h1>
 				<p className="text-muted-foreground text-sm">{state.agent.name}</p>
 			</header>
 			<AgentEditForm
@@ -133,7 +135,7 @@ function EmptyState({
 				<button
 					type="button"
 					onClick={action.onClick}
-					className="mt-2 h-11 rounded-sm border border-primary px-4 font-medium text-primary text-sm transition-colors hover:bg-primary-container"
+					className="mt-2 h-11 rounded-lg border border-primary px-4 font-medium text-primary text-sm transition-colors hover:bg-primary-container"
 				>
 					{action.label}
 				</button>
