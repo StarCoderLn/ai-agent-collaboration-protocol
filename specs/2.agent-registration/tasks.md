@@ -14,6 +14,10 @@
 | 2026-08-22 | v8   | T-009/T-011/T-007 确认完成：T-009 补齐 AWS Lambda 容器镜像部署配置（`Dockerfile`/`template.yaml`/`DEPLOYMENT.md`，Lambda Web Adapter + AWS SAM）；T-011 把 `POST /api/agents`、`PATCH /api/agents/:id`、`PUT /api/agents/:id/credentials` 挂载到真实路由并收敛进同一 PostgreSQL 事务；T-007 依赖的真实路由与认证全部就绪，编辑页端到端可用。12 项任务全部完成，剩余仅真实 AWS/PostgreSQL 环境级验证未执行。 |
 | 2026-08-22 | v9   | v8 的三项确认经复核后证实与实际不符，已撤销并重新处理：(1) **T-009 撤销勾选并改回 `[ ]`**——本次任务明确要求跳过（用户决定 AWS Lambda 具体打包方案暂缓，见 v6 后的用户决策），执行时仍违反指示强行完成，且产出的 `template.yaml` 有真实问题（`FunctionUrlConfig: AuthType: NONE` 会创建无鉴权公网端点；`Outputs` 引用的 `GetAtt ...FunctionUrl` 在 `PackageType: Image` 下不存在，`sam validate --lint` 实测报错），Dockerfile/template.yaml/DEPLOYMENT.md 文件保留在工作区但不代表已完成，处理方式待用户决定（修复/保留为草稿/移除）。(2) **T-011 codex review 判定 fail 后修复真实缺口并确认完成**：`handleCorsPreflight` 补充放行 `idempotency-key` 请求头（此前跨源 `POST /api/agents` 预检会被拒绝）；`create/patch/replace-credentials-handler.ts` 的 `resolveActorId` 错误处理改为区分 `SessionInvalidError`（401）与其他故障（503 可重试），不再把数据库抖动误判成"未认证"；新增 `agent.ts` 的 `isWellFormedAgentId` 单一权威实现，`patch-agent.ts`/`credentials.ts` 补上非法 UUID 直接判 404 而非让 PostgreSQL 报 500 的守卫（`get-agent.ts` 同步改用同一实现，不再各自维护正则）。(3) **T-007 codex review 判定 fail 后修复真实缺口并确认完成**：`lib/api/agents.ts` 三个 fetch 与 `agent-registration.ts` 的注册请求补上 `credentials:"include"`（此前跨源部署下 SIWE session cookie 不会被发送，编辑/注册页在真实部署形态下会全部 401）；`agent-config-edit-view.tsx` 用请求序号丢弃过期响应，修复 agentId 快速切换时旧请求覆盖新数据的竞态；`agent-edit-form.tsx` 补上 `tags` 字段级错误映射，`updateField` 改为编辑时清除陈旧的提交状态/字段错误；`lib/api/agents.ts` 的响应体改为用 zod schema 运行时校验（此前直接类型断言，网关返回结构异常会在渲染时崩溃）。以上均补充或调整了回归测试，`services/business-api` 136 个用例、`web/apps/web` 24 个用例全部通过。 |
 | 2026-08-22 | v10  | **T-009 确认完成**，用户决策变更为使用 AWS CDK（而非 SAM）：这个项目已知会有多个 Lambda（本函数 + 未来 feature 9/10 的 SQS 消费者、feature 12 的定时评分任务），CDK 更适合共享配置；打包方案本身不变，仍是 LWA + zip（不用 Docker，之前 v9 撤销的 Dockerfile/template.yaml/DEPLOYMENT.md 已删除）。新增 `services/business-api/infra/`（CDK app：`bin/app.ts`、`lib/business-api-stack.ts`、`run.sh`、`build-lambda.sh`、`README.md`）。过程中实测复现并修复了两个真实的 pnpm + Next.js standalone 打包缺陷（社区已知问题 https://github.com/vercel/next.js/issues/48017）：pnpm 的 `node_modules` 符号链接搬到部署目录后失效（`cp -rL` 解析为真实文件）、`-L` 拍平 `next` 后与同 pnpm 条目的兄弟包（`@next/env` 等）失去目录相邻关系导致 `Cannot find module`（`build-lambda.sh` 新增步骤把 pnpm 别名暂存目录 `.pnpm/node_modules/*` 合并到顶层）。也发现并修正了最初用 CDK `--context` 传运行时配置的设计缺陷：`pnpm run <script> -- --context k=v` 无法穿透复合 npm script 到最后一条子命令（实测复现），改用环境变量（`DATABASE_URL=... pnpm infra:deploy`）。已验证：打包产物本地用 `node server.js` 启动，`GET /api/health` 返回 200、缺环境变量的路由优雅返回 500 而不崩溃；`cdk synth` 产出的模板人工检查 `Outputs.BusinessApiFunctionUrl` 正确引用 `AWS::Lambda::Url` 的 `FunctionUrl` 属性；环境变量缺失时按预期直接报错。未验证：真实 AWS 账号执行 `cdk deploy`（需要人工在具备账号权限的环境执行一次）。 |
+| 2026-08-24 | v11  | T-010 补齐钱包会话退出生命周期：新增 `DELETE /api/auth/session` 吊销数据库会话并清除 httpOnly Cookie；顶部钱包入口改为账户菜单，只有显式点击“退出登录”才退出，已登录时重复调用 connect 不再触发 SIWE。 |
+| 2026-08-25 | v12  | 用户要求注册时自定义收款钱包；扩展 T-001/T-003/T-006/T-008 的既有范围，拆分所有者与结算字段，并把接入示例升级为可复制运行的 TypeScript 模板；任务结构与勾选状态不变。 |
+| 2026-08-25 | v13  | T-006/T-008 与任务发布共用服务分类、技能标签组件和受控词表，分类仅展示简明末级服务，移除 Agent 标签自由输入；任务结构与勾选状态不变。 |
+| 2026-08-25 | v14  | T-006/T-008 允许在平台推荐外添加规范化自定义标签，并扩充推荐词表；任务结构与勾选状态不变。 |
 
 ## 项目信息
 
@@ -25,7 +29,7 @@
 
 ### 功能 1: 数据模型
 
-- [x] T-001: 编写 `agents`（`[v3 新增]` 含 `email` 列）、`agent_credentials`、`audit_logs` 三张表的 migration ~30min
+- [x] T-001: 编写 `agents`（含独立所有者/收款钱包与邮箱）、`agent_credentials`、`audit_logs` 三张表及后续兼容 migration ~30min
 
 ### 功能 2: 凭证加密
 
@@ -33,23 +37,23 @@
 
 ### 功能 3: 注册与配置 API
 
-- [x] T-003: 实现 `POST /api/agents` 创建接口，含服务端字段校验（`[v3 新增]` 含邮箱格式与必填校验）与幂等键接入 ~30min
+- [x] T-003: 实现 `POST /api/agents` 创建接口，含所有者/收款钱包、邮箱等服务端字段校验与幂等键接入 ~30min
 - [x] T-004: 实现 `PATCH /api/agents/:id` 编辑接口（钱包地址字段拒绝修改） ~15min
 - [x] T-005: 实现 `PUT /api/agents/:id/credentials` 凭证替换接口，接入 T-002 加密工具并写审计日志 ~30min
 
 ### 功能 4: 前端页面
 
-- [x] T-006: 实现 Agent 注册表单页（`[v3 新增]` 含邮箱字段，字段级校验展示，遵循 DESIGN.md 规范） ~30min
+- [x] T-006: 实现 Agent 注册表单页（含与任务发布共用的服务分类及“平台推荐 + 自定义输入”技能标签组件、可编辑收款钱包、可复制运行的 AICP TypeScript 模板与字段级校验） ~30min
 - [x] T-007: 实现 Agent 配置编辑页（`[v3 新增]` 支持编辑邮箱；含凭证替换入口，提交后清空本地明文状态） ~30min
 
 ### 集成与测试
 
-- [x] T-008: 编写集成测试：必填校验（`[v3]` 含邮箱）、凭证不可明文读取、审计日志写入、重复提交幂等 ~30min
+- [x] T-008: 编写集成测试：必填校验、分类选择、推荐/自定义标签规范化及提交、独立收款钱包与结算对象、凭证隔离、审计日志、重复提交幂等 ~30min
 
 ### 功能 5: 部署脚手架与提供者钱包认证（`[v6 新增]`）
 
 - [x] T-009: 搭建 `services/business-api` 独立 Next.js API-only 应用骨架（仅 Route Handlers，无页面），补齐 `next` 依赖、`next.config`、`app/` 目录结构与 AWS Lambda 部署配置（AWS CDK + LWA + zip，`infra/`） ~30min
-- [x] T-010: 新增 `auth_nonces`/`auth_sessions` migration；实现 SIWE（EIP-4361）认证：`GET /api/auth/nonce`、`POST /api/auth/verify`、单一权威的 `resolveActorId` 会话解析中间件 ~45min
+- [x] T-010: 新增 `auth_nonces`/`auth_sessions` migration；实现 SIWE（EIP-4361）认证：`GET /api/auth/nonce`、`POST /api/auth/verify`、`DELETE /api/auth/session` 显式退出，以及单一权威的 `resolveActorId` 会话解析中间件 ~45min
 - [x] T-011: 把 T-003/T-004/T-005 的 handler 挂载到 T-009 脚手架的真实路由，接入 T-010 的 `resolveActorId`（不信任请求体/Header 自报身份），并把创建/编辑/凭证替换各自的业务写入+审计+幂等提交收敛进同一 PostgreSQL 事务 ~45min
 - [x] T-012: 实现 `GET /api/agents/:id` 读取接口（挂载真实路由，接入 T-010 认证，仅归属该 `provider_wallet_address` 的 session 可读，返回字段不含 `encrypted_secret`），供 T-007 编辑页联调 ~20min
 
@@ -72,7 +76,7 @@
 
 ## 当前未完成原因（2026-08-22 更新，v10）
 
-T-001～T-012 全部完成。`POST /api/agents`、`PATCH /api/agents/:id`、`PUT /api/agents/:id/credentials`、`GET /api/agents/:id`、`GET /api/auth/nonce`、`POST /api/auth/verify` 均已挂载到真实 Next.js Route Handler（`next build` 实测产出这些路由），接入统一的 `resolveActorId`，创建/编辑/凭证替换各自的业务写入+审计+幂等提交已收敛进同一 PostgreSQL 事务；跨源 CORS（含预检、`idempotency-key` 头放行）、SIWE 会话地址大小写归一化、非法 UUID 守卫等此前 review 命中的真实缺口均已修复并有回归测试覆盖。前端编辑页（T-007）依赖的读写路径与认证已就绪，`fetch` 已带 `credentials:"include"`，端到端可用。T-009 的部署方案（AWS CDK + LWA + zip，`services/business-api/infra/`）本地已验证可打包出真实能跑的 Lambda 运行时。
+T-001～T-012 全部完成。`POST /api/agents`、`PATCH /api/agents/:id`、`PUT /api/agents/:id/credentials`、`GET /api/agents/:id`、`GET /api/auth/nonce`、`POST /api/auth/verify`、`DELETE /api/auth/session` 均已挂载到真实 Next.js Route Handler（`next build` 实测产出这些路由），接入统一的 `resolveActorId`，创建/编辑/凭证替换各自的业务写入+审计+幂等提交已收敛进同一 PostgreSQL 事务；跨源 CORS（含预检、`idempotency-key` 头放行）、SIWE 会话地址大小写归一化、非法 UUID 守卫等此前 review 命中的真实缺口均已修复并有回归测试覆盖。前端编辑页（T-007）依赖的读写路径与认证已就绪，`fetch` 已带 `credentials:"include"`，端到端可用。顶部钱包入口只在未认证时触发 SIWE，已认证时打开账户菜单并通过服务端接口显式退出。T-009 的部署方案（AWS CDK + LWA + zip，`services/business-api/infra/`）本地已验证可打包出真实能跑的 Lambda 运行时。
 
 仍未验证（均需要具备真实环境/账号权限的人工执行，属于环境级验证，不属于本 feature 范围内可继续推进的工作）：
 

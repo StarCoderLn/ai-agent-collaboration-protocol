@@ -8,6 +8,7 @@
 | 2026-08-20 | v2   | 明确 `release()` 的转账拆分逻辑与 `feeReceiver` 地址管理（手续费由 Agent 提供者承担已确认） |
 | 2026-08-20 | v3   | 拆分 `TREASURY_ROLE`（原 `setFeeReceiver()` 挂在 `PAUSER_ROLE` 下不合理，两者风险等级不同）；明确三个角色各自的密钥托管方式 |
 | 2026-08-20 | v4   | 模块 3 补充多签签名人数量的分级参考表（按托管资金规模，参考 Aave 等协议实践），完整表格见 requirements.md 开放问题 |
+| 2026-08-23 | v5   | `release()` 增加实际成交额参数，将未使用的预算上限差额退回发布者，修复链上与链下结算不一致 |
 
 ## 项目架构
 
@@ -28,8 +29,8 @@
 
 **涉及层及关键设计:**
 
-- `release(taskId, payee, feeAmount)` 与 `refund(taskId)` 均要求 `msg.sender` 具备 `OPERATOR_ROLE`（OpenZeppelin `AccessControl`），且 `state == Deposited`，执行后置为终态（`Released` / `Refunded`），从状态设计上直接阻止重复执行，而不是靠外部校验。
-- `[v2]` `release()` 的转账拆分（手续费由 Agent 提供者承担，已确认）：`payee` 收到 `amount - feeAmount`，`feeAmount` 转给合约状态变量 `feeReceiver`（平台手续费接收地址）。发布者托管的 `amount` 本身不因结算而增减——手续费从 Agent 提供者应得的部分里扣，不是发布者额外多付。
+- `release(taskId, payee, agentGrossAmount, feeAmount)` 与 `refund(taskId)` 均要求 `msg.sender` 具备 `OPERATOR_ROLE`（OpenZeppelin `AccessControl`），且 `state == Deposited`，执行后置为终态（`Released` / `Refunded`），从状态设计上直接阻止重复执行，而不是靠外部校验。
+- `[v5]` `release()` 的转账拆分：`payee` 收到 `agentGrossAmount - feeAmount`，`feeReceiver` 收到 `feeAmount`，发布者收到 `escrowAmount - agentGrossAmount`。任务按预算上限托管但允许 Agent 以较低报价成交，因此不能把整笔托管额都视为 Agent 应得金额。合约强制 `agentGrossAmount <= escrowAmount`、`feeAmount <= agentGrossAmount`，三笔之和严格等于托管额。
 - `[v3]` `feeReceiver` 由专设的 `TREASURY_ROLE`（不是 `PAUSER_ROLE`）更新，不是部署时写死的常量，允许平台后续更换收款地址而不需要合约升级——见模块 3 关于为什么这条不能跟暂停权限共用。
 - 遵循 checks-effects-interactions：先校验状态、更新状态变量，再执行外部转账调用；引入 OpenZeppelin `ReentrancyGuard`。
 
@@ -50,7 +51,7 @@
 **涉及层及关键设计:**
 
 - `event Deposited(bytes32 indexed taskId, address indexed payer, uint256 amount)`
-- `event Released(bytes32 indexed taskId, address indexed payee, uint256 amount, uint256 feeAmount)`
+- `event Released(bytes32 indexed taskId, address indexed payee, uint256 escrowAmount, uint256 agentGrossAmount, uint256 feeAmount, uint256 payerRefundAmount)`
 - `event Refunded(bytes32 indexed taskId, address indexed payer, uint256 amount)`
 - `event Paused(address account)` / `event Unpaused(address account)`（继承自 OpenZeppelin `Pausable`）
 - 事件是 [[6.escrow-sync-and-wallet]] 链下同步的唯一事实来源，链下不允许仅依赖交易 receipt 状态推断资金结果。
@@ -59,7 +60,7 @@
 
 ```solidity
 function deposit(bytes32 taskId) external payable; // MVP 先支持原生 ETH，ERC20 支持视需要扩展
-function release(bytes32 taskId, address payee, uint256 feeAmount) external onlyRole(OPERATOR_ROLE);
+function release(bytes32 taskId, address payee, uint256 agentGrossAmount, uint256 feeAmount) external onlyRole(OPERATOR_ROLE);
 function refund(bytes32 taskId) external onlyRole(OPERATOR_ROLE);
 function pause() external onlyRole(PAUSER_ROLE);
 function unpause() external onlyRole(PAUSER_ROLE);
@@ -78,7 +79,7 @@ function feeReceiver() external view returns (address); // [v2 新增]
 - 重入保护：`release`/`refund` 使用 `nonReentrant` 修饰符。
 - `[v3 修改]` 权限分离：暂停（`PAUSER_ROLE`）、资金结算（`OPERATOR_ROLE`）、手续费收款地址变更（`TREASURY_ROLE`）三类操作使用三个独立角色，不是简单两两分离——任一角色的密钥泄露，影响范围都被限制在该角色自身能做的事，不会连带影响另外两类操作。
 - `[v3 新增]` 私钥托管方式按角色风险特征区分：`PAUSER_ROLE`/`TREASURY_ROLE` 用多签（阈值按响应速度需求不同：`PAUSER_ROLE` 偏小、`TREASURY_ROLE` 偏大）；`OPERATOR_ROLE` 因需要自动化高频调用，用服务持有的密钥但要求云端 KMS/HSM 托管，不落地明文私钥。具体多签人选和阈值是部署时的运维决策，不在合约代码范围内。
-- 手续费金额由调用方（授权地址）传入而非合约内置公式，避免费率变更需要合约升级；但需在链下（feature 6）对传入的 `feeAmount` 做业务规则校验，合约层只做「金额守恒」类的基础校验（如 `feeAmount <= amount`）。
+- 实际成交额和手续费金额由调用方（授权地址）传入而非合约内置业务公式；链下（feature 6）必须用验收时冻结的成交价和费率快照构造参数，合约层独立校验 `agentGrossAmount <= escrowAmount` 与 `feeAmount <= agentGrossAmount`。
 - 独立第三方审计是上线前置条件，本 feature 的 tasks 只覆盖内部测试，审计流程作为 PRD §13 上线验收清单项，不在本 feature 的完成标准内。
 
 ## 技术决策

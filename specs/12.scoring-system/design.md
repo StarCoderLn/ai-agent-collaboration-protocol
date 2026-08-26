@@ -6,6 +6,7 @@
 | ---------- | ---- | -------- |
 | 2026-08-20 | v1   | 初始设计 |
 | 2026-08-20 | v2   | 补充说明：`agent_score_snapshots`/`scoring_rule_versions` 被 [[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()` 只读查询，用于判定受控上线期（[[3.agent-health-lifecycle]] F-006），不需要本 feature 反过来做任何改动 |
+| 2026-08-23 | v3   | 落地系统响应时间、快照输入证据、最旧优先批处理和 EventBridge 定时调用 |
 
 ## 项目架构
 
@@ -19,6 +20,9 @@
 **涉及层及关键设计:**
 
 - `task_ratings` 只存发布者主观评分（质量反馈、沟通体验），系统计算的争议率、历史完成规模、响应速度不经过这张表，而是由后台任务直接从 `task_results`、[[13.dispute-and-arbitration]] 的仲裁记录、`task_assignments` 的响应时间戳计算得出，从数据模型层面杜绝「系统计算项被提供者接口误改」的可能，而不是靠权限校验兜底。
+- 早期 migration 已创建但评分公式从未读取的 `timeliness`、`requirement_fit`、`compliance`
+  列由 `0020_subjective_rating_boundary` 保留为可空历史字段；新接口严格拒绝这些字段，也
+  不再写入。这样纠正输入边界而不删除已有记录。
 
 ### 模块 2: 小样本校正与时间衰减
 
@@ -44,17 +48,23 @@
 **涉及层及关键设计:**
 
 - 定时任务按 Agent 重新计算并写入 `agent_score_snapshots`（各维度当前值、样本量、规则版本、计算时间），前端展示直接读快照，不在请求路径上现算，避免评分展示接口的响应时间随历史数据增长而变差。
+- 每个快照的 `input_evidence` 固化 rating、rated task、accepted/responded assignment、
+  completed task、arbitration decision ID；公开接口只返回证据数量，原始 ID 仅供授权审计。
+- 生产调度由 CDK 中的 EventBridge API Destination 每小时调用内部 worker，每批优先选择
+  从未计算或最久未更新的 100 个 Agent，避免固定 `ORDER BY id LIMIT N` 造成尾部饥饿。
+  Bearer token 通过 Secrets Manager 动态引用注入 Lambda 与 Connection，不进入 synth 模板。
 
 ## 接口契约
 
 - `POST /api/tasks/:id/rating`：发布者提交质量反馈与沟通体验评分（仅验收后可提交一次）。
-- `GET /api/agents/:id/score`：返回五维评分（含近期/全周期、样本量、规则版本）。
+- `GET /api/agents/:id/score`：返回五维评分（含近期/全周期、样本量、规则版本）、系统
+  响应时间和公开证据数量。
 - 内部：`ComputeAgentScoreSnapshot(agentId, ruleVersion) snapshot`（纯函数，给定相同输入和规则版本可复现）。
 
 ## 数据模型
 
 - `task_ratings(id PK, task_id FK, agent_id FK, quality_score, communication_score, submitted_at)`
-- `agent_score_snapshots(id PK, agent_id FK, dimension, recent_value, lifetime_value, sample_size, rule_version, computed_at)`
+- `agent_score_snapshots(id PK, agent_id FK, score, sample_size, dispute_rate, completed_scale, dimensions JSONB, input_evidence JSONB, rule_version, computed_at)`
 - `scoring_rule_versions(id PK, version, weights JSONB, bayesian_prior JSONB, decay_function JSONB, created_at, deprecated_at)`
 
 ## 安全考虑

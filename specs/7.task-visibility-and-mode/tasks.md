@@ -17,23 +17,23 @@
 
 ### 功能 1: 可见性脱敏
 
-- [ ] T-001: 实现 `RedactTaskForAudience()` 权威脱敏函数与私密任务访问权限校验 ~30min
-- [ ] T-002: 接入市场列表、详情、发布者预览三个接口，统一调用 T-001 ~30min
+- [x] T-001: 实现 `RedactTaskForAudience()` 权威脱敏函数与私密任务访问权限校验 ~30min
+- [x] T-002: 接入市场列表、详情、发布者预览三个接口，统一调用 T-001 ~30min
 
 ### 功能 2: 分配模式与验收模式
 
-- [ ] T-003: 扩展 `tasks` 表字段（`assignment_mode_config`、`acceptance_mode`、`acceptor_config`）migration ~15min
-- [ ] T-004: 实现 `ValidateHardConstraints()` 硬约束声明函数（预算/健康状态/准入状态/截止时间/`[v2 新增]` 受控上线期预算上限）与验收模式前置校验 ~30min
-- [ ] T-005: 实现 `PATCH /api/tasks/:id/mode-settings`（含接单后锁定、审计日志写入） ~30min
+- [x] T-003: 扩展 `tasks` 表字段（`assignment_mode_config`、`acceptance_mode`、`acceptor_config`）migration ~15min
+- [x] T-004: 实现 `ValidateHardConstraints()` 硬约束声明函数（预算/健康状态/准入状态/截止时间/`[v2 新增]` 受控上线期预算上限）与验收模式前置校验 ~30min
+- [x] T-005: 实现 `PATCH /api/tasks/:id/mode-settings`（含接单后锁定、审计日志写入） ~30min
 
 ### 功能 3: 前端
 
-- [ ] T-006: 实现公开任务市场页（关键词/分类/标签/状态筛选） ~30min
-- [ ] T-007: 实现「我的任务」工作台页（独立统计口径） ~30min
+- [x] T-006: 实现公开任务市场页（关键词/分类/标签/状态筛选） ~30min
+- [x] T-007: 实现「我的任务」工作台页（独立统计口径） ~30min
 
 ### 集成与测试
 
-- [ ] T-008: 编写测试：私密任务越权访问拒绝、脱敏字段一致性、接单后锁定模式变更、自动验收前置条件、`[v2 新增]` 受控上线期 Agent 超预算被排除、非受控期 Agent 不受此约束影响 ~30min
+- [x] T-008: 编写测试：私密任务越权访问拒绝、脱敏字段一致性、接单后锁定模式变更、自动验收前置条件、`[v2 新增]` 受控上线期 Agent 超预算被排除、非受控期 Agent 不受此约束影响 ~30min
 
 ## 依赖关系
 

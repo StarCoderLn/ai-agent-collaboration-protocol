@@ -1,32 +1,32 @@
 ---
-name: Trusted Intelligence
+name: Amethyst Intelligence
 colors:
-  background: '#F6F8FB'
-  surface: '#FFFFFF'
-  surface-container: '#F0F3F7'
-  surface-container-low: '#F8FAFC'
-  surface-container-high: '#E8EDF3'
-  on-background: '#172033'
-  on-surface: '#172033'
-  on-surface-variant: '#667085'
-  outline: '#98A2B3'
-  outline-variant: '#DCE3EC'
-  primary: '#2563EB'
-  on-primary: '#FFFFFF'
-  primary-container: '#EAF2FF'
-  on-primary-container: '#173B67'
-  secondary: '#6D5DFB'
-  on-secondary: '#FFFFFF'
-  secondary-container: '#F0EEFF'
-  on-secondary-container: '#332A8C'
-  tertiary: '#0F766E'
-  on-tertiary: '#FFFFFF'
-  tertiary-container: '#D9F2EE'
-  on-tertiary-container: '#0B4F4A'
-  success: '#16865C'
-  warning: '#B7791F'
-  error: '#C2414B'
-  error-container: '#FDEBEC'
+  background: '#080611'
+  surface: '#131020'
+  surface-container: '#211B31'
+  surface-container-low: '#191426'
+  surface-container-high: '#30204E'
+  on-background: '#F7F3FF'
+  on-surface: '#F7F3FF'
+  on-surface-variant: '#AAA2BB'
+  outline: '#A78BFA'
+  outline-variant: 'rgba(220, 200, 255, 0.14)'
+  primary: '#A78BFA'
+  on-primary: '#1D1035'
+  primary-container: '#30204E'
+  on-primary-container: '#E9DDFF'
+  secondary: '#22D3EE'
+  on-secondary: '#062D36'
+  secondary-container: '#123440'
+  on-secondary-container: '#B9F5FF'
+  tertiary: '#34D399'
+  on-tertiary: '#052E23'
+  tertiary-container: '#123B31'
+  on-tertiary-container: '#B6F4DD'
+  success: '#34D399'
+  warning: '#FBBF24'
+  error: '#FB7185'
+  error-container: '#3F1721'
 typography:
   display:
     fontFamily: Inter
@@ -77,13 +77,15 @@ icon:
   sizes: [16px, 20px, 24px]
 ---
 
-# Trusted Intelligence
+# Amethyst Intelligence
 
 ## Brand and style
 
-A trustworthy fintech interface with restrained AI accents for an AI Agent task collaboration platform. The experience is professional, transparent, calm, secure, and technically advanced without looking speculative.
+A trustworthy AI infrastructure interface with an amethyst brand core. The experience is professional, transparent and technically advanced, while the purple visual language makes Agent selection and workflow orchestration memorable.
 
-Use a light neutral background and white surfaces. Blue expresses trust and primary action. Teal is reserved for escrow protection and confirmed financial states. Violet is used only for AI, Agent matching, and recommendation. Green means successful completion. Amber means pending or attention required. Red means error, dispute, or irreversible risk. Always pair semantic color with text and an icon.
+Use a deep violet-black background across the product, including first-time visits and users with an old saved light preference. Violet expresses the brand, primary actions, AI capability and orchestration. Cyan is a sparse high-energy accent for live protocol signals. Teal remains reserved for escrow protection and confirmed financial states. Green means successful completion. Amber means pending or attention required. Red means error, dispute, or irreversible risk. Always pair semantic color with text and an icon.
+
+Brand glow is allowed only around hero focal points, selected Agent cards and active workflow nodes. It must fade into the surrounding surface and may never reduce text contrast. Gradients should reinforce hierarchy rather than fill every component.
 
 ## Typography
 
@@ -91,7 +93,7 @@ Use Inter with Chinese system sans-serif fallback. Amounts, task status, deadlin
 
 ## Layout
 
-Use an 8px spacing system, 12-column desktop grid, 1280px maximum content width, and 24px gutters. Desktop-first at 1440px. Cards use 12px radius and form controls use 8px radius. Prefer subtle borders and tonal surfaces over heavy shadows.
+Use an 8px spacing system, 12-column desktop grid, 1280px maximum content width, and 24px gutters. Desktop-first at 1440px. Cards use 12px radius and form controls use 8px radius. Prefer translucent borders, tonal surfaces and layered depth. Use glow shadows only on branded focal points; dense operational views remain calm and scannable.
 
 ## Components
 
@@ -135,4 +137,4 @@ Every async view (candidate matching, execution progress, transaction confirmati
 
 ## Avoid
 
-No crypto casino aesthetics, neon glow, cyberpunk terminal styling, large decorative gradients, excessive glassmorphism, speculative token widgets, unrelated crypto charts, mixed-language UI, or generic chatbot layouts.
+No crypto casino aesthetics, rainbow neon, cyberpunk terminal styling, excessive glassmorphism, speculative token widgets, unrelated crypto charts, mixed-language UI, or generic chatbot layouts. Purple and cyan effects must remain subordinate to content and status semantics.

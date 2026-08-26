@@ -46,6 +46,7 @@
 
 - 内部：`RunMatching(taskId) JobDistributionRecord`（幂等键：`taskId + task更新时间戳`，避免任务未变更时的重复无意义匹配，具体幂等策略见风险点）。
 - `GET /api/tasks/:id/candidates`：返回最新一次 `JobDistributionRecord` 的候选集合与匹配理由。
+- `PATCH /api/tasks/:id/match-criteria`：仅在「待匹配」状态允许发布者调整分类、受控标签或截止时间；预算与币种因已托管保持锁定。成功后递增任务版本并原子写事件、审计和幂等响应。
 - `POST /api/tasks/:id/rematch`：任务修改后触发重新匹配（仅任务处于「待匹配」状态时允许）。
 
 ## 数据模型

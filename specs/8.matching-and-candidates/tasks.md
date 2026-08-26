@@ -17,26 +17,26 @@
 
 ### 功能 1: 数据模型
 
-- [ ] T-001: 编写 `job_distribution_records`、`ranking_rule_versions` 表 migration ~15min
+- [x] T-001: 编写 `job_distribution_records`、`ranking_rule_versions` 表 migration ~15min
 
 ### 功能 2: 匹配管道
 
-- [ ] T-002: 实现 `FilterByCategory` 与 `FilterByEligibility`（复用 `7.ValidateHardConstraints`） ~30min
-- [ ] T-003: 实现 `MatchByTags` 标签匹配 ~30min
-- [ ] T-004: 实现 `RankByRules` 规则排序（纯函数，读取 `ranking_rule_versions`） ~30min
+- [x] T-002: 实现 `FilterByCategory` 与 `FilterByEligibility`（复用 `7.ValidateHardConstraints`） ~30min
+- [x] T-003: 实现 `MatchByTags` 标签匹配 ~30min
+- [x] T-004: 实现 `RankByRules` 规则排序（纯函数，读取 `ranking_rule_versions`） ~30min
 
 ### 功能 3: 记录与 API
 
-- [ ] T-005: 实现 `JobDistributionRecord` 生成与持久化（含无候选场景的 `filter_reasons`） ~30min
-- [ ] T-006: 实现 `GET /api/tasks/:id/candidates`、`POST /api/tasks/:id/rematch` ~30min
+- [x] T-005: 实现 `JobDistributionRecord` 生成与持久化（含无候选场景的 `filter_reasons`） ~30min
+- [x] T-006: 实现 `GET /api/tasks/:id/candidates`、`POST /api/tasks/:id/rematch` ~30min
 
 ### 功能 4: 前端
 
-- [ ] T-007: 实现候选列表页（列表模式，匹配标签/报价/时长/评分/历史完成量/新入驻标识） ~30min
+- [x] T-007: 实现候选列表页（列表模式，匹配标签/报价/时长/评分/历史完成量/新入驻标识） ~30min
 
 ### 集成与测试
 
-- [ ] T-008: 编写测试：可复现性（同输入同版本结果一致）、资格过滤排除、无候选场景提示 ~30min
+- [x] T-008: 编写测试：可复现性（同输入同版本结果一致）、资格过滤排除、无候选场景提示 ~30min
 
 ## 依赖关系
 

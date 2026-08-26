@@ -16,26 +16,26 @@
 
 ### 功能 1: 事件日志
 
-- [ ] T-001: 编写 `task_events`、`webhook_deliveries` 表 migration ~15min
-- [ ] T-002: 实现 `EmitTaskEvent()`（状态版本单调递增，接入 [[9.dispatch-and-acceptance]] 的状态变化点） ~30min
+- [x] T-001: 编写 `task_events`、`webhook_deliveries` 表 migration ~15min
+- [x] T-002: 实现 `EmitTaskEvent()`（状态版本单调递增，接入 [[9.dispatch-and-acceptance]] 的状态变化点） ~30min
 
 ### 功能 2: Webhook 投递
 
-- [ ] T-003: 实现 Webhook 投递与退避重试（复用协议 1 的错误分类与签名） ~30min
-- [ ] T-004: 实现死信队列达到上限的告警与查询接口 ~30min
+- [x] T-003: 实现 Webhook 投递与退避重试（复用协议 1 的错误分类与签名） ~30min
+- [x] T-004: 实现死信队列达到上限的告警与查询接口 ~30min
 
 ### 功能 3: SSE 推送与补拉
 
-- [ ] T-005: 实现 SSE 推送端点（`Last-Event-ID` 断线续传） ~30min
-- [ ] T-006: 实现 `GET /api/tasks/:id/status` 状态补拉接口 ~15min
+- [x] T-005: 实现 SSE 推送端点（`Last-Event-ID` 断线续传） ~30min
+- [x] T-006: 实现 `GET /api/tasks/:id/status` 状态补拉接口 ~15min
 
 ### 功能 4: 前端
 
-- [ ] T-007: 实现前端 SSE 订阅与断线降级轮询 ~30min
+- [x] T-007: 实现前端 SSE 订阅与断线降级轮询 ~30min
 
 ### 集成与测试
 
-- [ ] T-008: 编写测试：重复事件安全忽略、Webhook 达到重试上限进死信、SSE 断线续传不丢不重、补拉接口状态一致性 ~30min
+- [x] T-008: 编写测试：重复事件安全忽略、Webhook 达到重试上限进死信、SSE 断线续传不丢不重、补拉接口状态一致性 ~30min
 
 ## 依赖关系
 

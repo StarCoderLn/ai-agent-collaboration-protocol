@@ -11,3 +11,13 @@
 - [2.agent-registration/T-010] 生产依赖装配函数(如读 `DATABASE_URL`)不得在 `route.ts` 模块顶层调用——Lambda 场景下运行时变量只在调用时注入，`next build` 阶段没有会直接构建失败；须延迟到 handler 首次调用执行(惰性单例)。
 - [2.agent-registration/T-009] 任务含『AWS Lambda 部署配置』时仅设 `next.config output:standalone` 不算完成，需打包/IaC 或明确降级范围再勾选；IaC 模板/代码改动即使无 AWS 凭证也应先跑本地校验（`sam validate --lint` 或 `cdk synth`）。Function URL 的 `AuthType: NONE` 不是默认禁止项——前端需要跨源直接调用、且认证由应用层机制（如 SIWE session）兜底时可以用，但必须在代码里写明这个判断依据（见 `infra/lib/business-api-stack.ts`），不能没有说明地留白，否则无法区分"深思后的选择"和"随手漏配"。
 - [2.agent-registration/T-011] 完成任务前须检查代码里给自己留的 TODO 注释(如"留给 T-011 处理")，不能只对照任务描述验收。
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

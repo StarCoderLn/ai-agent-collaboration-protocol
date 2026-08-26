@@ -9,6 +9,7 @@
 | 2026-08-20 | v3   | T-003 描述细化连续失败计数规则；T-008 增补对应测试用例；任务结构和数量不变 |
 | 2026-08-20 | v4   | T-003 扩展为同时处理自动恢复计数；T-005 扩展为含恢复 API；T-006 扩展前端恢复按钮；T-008 增补恢复相关测试；任务结构和数量不变（仍 8 个） |
 | 2026-08-20 | v5   | T-001 迁移的 `agent_status_config` 字段调整（`probation_budget_cap_percentile` 替换 `trial_risk_cap_amount`）；T-006 措辞由"试运行标识"改为"受控上线期/新入驻"；`IsInProbation()` 与预算上限的实际执行逻辑移到 [[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()`（与其它硬约束走同一实现路径，不在本 feature 重复实现），任务结构和数量不变（仍 8 个） |
+| 2026-08-23 | v6   | 对齐 PLAN：T-004 在 Feature 15 延后期间采用授权人工审核理由，并补通过/驳回两类操作 |
 
 ## 项目信息
 
@@ -20,26 +21,26 @@
 
 ### 功能 1: 状态机
 
-- [ ] T-001: 定义 Agent 状态枚举、合法迁移表与迁移事件类型（Go，可辨识联合），并编写 `agent_health_checks`、`agent_status_config` 表 migration ~30min
+- [x] T-001: 定义 Agent 状态枚举、合法迁移表与迁移事件类型（Go，可辨识联合），并编写 `agent_health_checks`、`agent_status_config` 表 migration ~30min
 
 ### 功能 2: 健康检查
 
-- [ ] T-002: 实现健康检查定时任务（按 Agent 调度、调用端点、分类结果写入） ~30min
-- [ ] T-003: 实现健康检查结果处理（`[v3]` 连续失败计数与自动暂停：仅认证失败/协议不兼容/连接超时三类计数，`Agent 内部错误`记录但不计数，任意一次成功清零失败计数器；`[v4]` 连续成功计数与自动恢复：仅当 `pause_reason=health_check` 时生效，达到 `resume_success_threshold` 触发 `AutoResumeHealthCheck`）；仅统计健康检查探测，不含真实任务失败 ~30min
+- [x] T-002: 实现健康检查定时任务（按 Agent 调度、调用端点、分类结果写入） ~30min
+- [x] T-003: 实现健康检查结果处理（`[v3]` 连续失败计数与自动暂停：仅认证失败/协议不兼容/连接超时三类计数，`Agent 内部错误`记录但不计数，任意一次成功清零失败计数器；`[v4]` 连续成功计数与自动恢复：仅当 `pause_reason=health_check` 时生效，达到 `resume_success_threshold` 触发 `AutoResumeHealthCheck`）；仅统计健康检查探测，不含真实任务失败 ~30min
 
 ### 功能 3: 审核与操作 API
 
-- [ ] T-004: 实现运营审核 API（试运行→可接单，记录触发条件与审核人；`[v2]` 触发条件为 [[15.agent-sandbox-admission]] 的清单判定通过，`reason` 引用判定记录 ID） ~30min
-- [ ] T-005: 实现提供者暂停/恢复/下架 API（校验合法迁移，不影响已接任务；`[v4 新增]` 恢复接口仅 `pause_reason=manual` 放行，`pause_reason=health_check` 返回 `RESUME_REQUIRES_HEALTH_RECOVERY`） ~30min
+- [x] T-004: 实现运营审核 API（`[v6]` MVP 由授权审核员填写理由并通过/驳回，记录触发条件与审核人；Feature 15 启用后通过理由改引用沙箱判定记录 ID） ~30min
+- [x] T-005: 实现提供者暂停/恢复/下架 API（校验合法迁移，不影响已接任务；`[v4 新增]` 恢复接口仅 `pause_reason=manual` 放行，`pause_reason=health_check` 返回 `RESUME_REQUIRES_HEALTH_RECOVERY`） ~30min
 
 ### 功能 4: 前端
 
-- [ ] T-006: 实现提供者视角的 Agent 状态展示（`[v5]` 含受控上线期"新入驻"状态与预算上限说明，读取 `3.IsInProbation()`）与暂停/恢复/下架操作入口（`[v4]` 仅 `pause_reason=manual` 展示"恢复接单"按钮，`health_check` 原因展示"自动探测恢复中"说明文字） ~30min
-- [ ] T-007: 实现运营审核后台最小页面（列表 + 审核通过/驳回操作） ~30min
+- [x] T-006: 实现提供者视角的 Agent 状态展示（`[v5]` 含受控上线期"新入驻"状态与预算上限说明，读取 `3.IsInProbation()`）与暂停/恢复/下架操作入口（`[v4]` 仅 `pause_reason=manual` 展示"恢复接单"按钮，`health_check` 原因展示"自动探测恢复中"说明文字） ~30min
+- [x] T-007: 实现运营审核后台最小页面（列表 + 审核通过/驳回操作） ~30min
 
 ### 集成与测试
 
-- [ ] T-008: 编写测试：非法状态迁移拒绝、自动暂停不影响已接任务、审核审计留痕、`[v3]` `Agent 内部错误`不计入连续失败、成功探测清零计数器、真实任务失败不影响健康检查计数、`[v4 新增]` 连续成功达到阈值自动恢复、提供者无法强制恢复健康检查暂停的 Agent、手动暂停可被提供者正常恢复 ~30min
+- [x] T-008: 编写测试：非法状态迁移拒绝、自动暂停不影响已接任务、审核审计留痕、`[v3]` `Agent 内部错误`不计入连续失败、成功探测清零计数器、真实任务失败不影响健康检查计数、`[v4 新增]` 连续成功达到阈值自动恢复、提供者无法强制恢复健康检查暂停的 Agent、手动暂停可被提供者正常恢复 ~30min
 
 ## 依赖关系
 

@@ -7,6 +7,7 @@
 | 2026-08-20 | v1   | 初始设计 |
 | 2026-08-20 | v2   | 明确验收 API 调用 `4.CalculatePlatformFee()` 而非自行实现费率逻辑 |
 | 2026-08-20 | v3   | 模块 2 超时检测范围扩大到「待匹配、待接单、执行中」三个状态，修正早期状态 deadline 过期无人检测的漏洞 |
+| 2026-08-23 | v4   | 增加需要补充信息与 ETA、独立验收预览及验收条件过期保护，避免前端自行计算或确认已变化的金额 |
 
 ## 项目架构
 
@@ -21,6 +22,7 @@
 
 - Agent 上报的每个状态变化都通过 [[10.notification-and-sync]] 的 `EmitTaskEvent()` 写入 `task_events`，携带 Agent 本地生成的 `reported_at` 与平台生成的 `status_version`。
 - 防倒退规则：只有当新事件代表的状态在任务状态机中「晚于或等于」当前记录的最新状态时才接受；判断逻辑集中在 `TransitionTaskStatus()`（[[4.task-creation-and-preview]] 定义），本模块不重新实现状态先后判断逻辑。
+- 执行回调支持 `running`、`needs_input` 和 `failed`。`needs_input` 必须携带给发布者看的补充信息请求，可同时携带 `estimatedCompletionAt`；这些字段进入状态补拉和事件流，不进入基础设施日志。
 
 ### 模块 2: 超时检测
 
@@ -42,7 +44,9 @@
 
 **涉及层及关键设计:**
 
-- 验收 API 计算结算金额与手续费（`[v2]` 调用 [[4.task-creation-and-preview]] 的 `CalculatePlatformFee()`，不重新实现一遍费率逻辑），展示后由发布者确认，确认后触发状态迁移到「待结算」，实际链上结算由 [[6.escrow-sync-and-wallet]] 承接（授权 `release` 调用，`feeAmount` 参数即此处计算结果）。
+- 独立只读验收预览 API 从冻结成交价、已确认托管记录与当前服务端费率规则生成成交金额、平台手续费、Agent 实收和状态版本。前端不自行计算手续费。
+- 发布者确认验收时必须原样回传预览的 `expectedStatusVersion` 和四项结算条件。服务端在任务行锁内重新读取并计算；版本、金额或费率规则任一变化都返回 `409 ACCEPTANCE_PREVIEW_STALE`，要求用户刷新后重新确认。
+- 确认成功后触发状态迁移到「待结算」，并创建幂等的托管释放执行任务；实际链上结算由 [[6.escrow-sync-and-wallet]] 承接。
 - 返工请求记录在 `rework_requests` 表，`attempt_no` 递增，超过 `rework_config.max_attempts` 时拒绝；返工触发任务从「待验收」回到「执行中」。
 
 ## 接口契约
@@ -50,7 +54,8 @@
 - `POST /agent-callback/tasks/:id/status`：Agent 上报执行状态（签名验证，复用协议 1）。
 - `POST /agent-callback/tasks/:id/results`：Agent 提交结果批次。
 - `GET /api/tasks/:id/results`：发布者查看候选结果列表（含历史版本标识）。
-- `POST /api/tasks/:id/accept`：发布者验收，请求体 `{ resultId }`，响应含结算金额与手续费明细。
+- `GET /api/tasks/:id/acceptance-preview?resultId=...`：发布者读取服务端权威验收条件与结算明细。
+- `POST /api/tasks/:id/accept`：发布者验收，请求体 `{ resultId, expectedStatusVersion, expectedSettlement }`；预览已变化时返回 `409 ACCEPTANCE_PREVIEW_STALE`。
 - `POST /api/tasks/:id/rework`：发布者要求返工，超限返回 `REWORK_LIMIT_EXCEEDED`。
 
 ## 数据模型

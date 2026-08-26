@@ -5,6 +5,7 @@
 | 日期       | 版本 | 说明     |
 | ---------- | ---- | -------- |
 | 2026-08-20 | v1   | 初始设计 |
+| 2026-08-23 | v2   | 落地持久化角色校验、可恢复资金执行、完整争议审计与 SSE 刷新恢复 |
 
 ## 项目架构
 
@@ -30,13 +31,26 @@
 **涉及层及关键设计:**
 
 - 仲裁决定 API 要求调用者具备仲裁员角色权限（复用 [[14.ops-backend-and-metrics]] 定义的角色权限体系，本 feature 只声明所需权限点）。
-- 决定记录 `decision_type`（`pay` / `partial_pay` / `refund`）与 `payout_breakdown`（发布者/Agent 提供者各自金额），决定生成后触发对 [[6.escrow-sync-and-wallet]] 的授权调用（`release`/`refund`），但界面状态展示分两阶段：`decided`（决定已记录，链上交易已提交）→ `executed`（链上交易已确认），只有 `executed` 才展示「已完成」，避免在链上未确认前误导用户资金已到账。
+- Feature 14 延后期间，`platform_actor_roles` 已由本 feature 建表并以
+  `role='arbitrator'` 作为服务端权威权限；Feature 14 后续只扩展角色种类与运营入口，
+  不替换这里的鉴权边界。
+- 决定记录 `decision`（`release` / `partial_release` / `refund`）以及释放、退款、平台费、
+  Agent 实收金额，决定生成后触发 [[6.escrow-sync-and-wallet]] 的授权资金调用。界面状态
+  分为 `decided`（决定已记录）、`submitted`（交易已广播、等待确认）和 `executed`
+  （链上已确认）；只有 `executed` 才展示「已完成」。
+- 实际执行细分为 `decided → submitted → executed`：决定事务创建
+  `escrow_execution_jobs(source='arbitration')`；worker 先持久化签名交易再广播，失败按上限
+  重试或进入死信；链事件同步核对交易哈希、收款地址和金额后才解除冻结并推进任务终态。
 
 ### 模块 4: 审计
 
 **涉及层及关键设计:**
 
 - 仲裁决定、证据提交、状态迁移全部写入共享 `audit_logs` 表（[[2.agent-registration]] 定义），保证与平台其余高风险操作使用同一套审计基础设施，而不是为仲裁单独建一套日志体系。
+- 广播、执行失败和最终链确认均额外以 `target_type='dispute'` 写审计，因此按 disputeId
+  可查询从发起、证据、决定到资金结果的完整轨迹，而不必跨 task 审计猜测关联关系。
+- 任务详情首次建立 SSE 时从事件游标 0 回放历史事件；`task.dispute_opened` payload 中的
+  disputeId 可在页面刷新后恢复，随后再按权限读取争议卷宗。
 
 ## 接口契约
 

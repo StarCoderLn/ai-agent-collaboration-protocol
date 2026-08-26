@@ -17,8 +17,9 @@
 
 **涉及层及关键设计:**
 
-- `task_assignments` 表对 `(task_id)` 建唯一部分索引（`WHERE status = 'active'`），确认候选的写入使用 `INSERT ... ON CONFLICT DO NOTHING` 或等效的条件更新，数据库层面保证同一任务最多一条活跃分配记录，不依赖应用层加锁。
+- `task_assignments` 表对 `(task_id)` 建唯一部分索引（`WHERE status IN ('pending_ack','accepted')`），确认候选的写入依赖数据库唯一约束，数据库层面保证同一任务最多一条活跃分配记录，不依赖应用层加锁。
 - 确认请求与自动分配走同一内部函数 `LockAssignment(taskId, agentId, actor)`，两者唯一区别是 `actor` 是「发布者」还是「系统（自动分配）」，避免两条并行实现导致行为不一致。
+- 成交价只读取所选 `JobDistributionRecord.candidates[].quoteMinor` 冻结快照；匹配后 Agent 修改当前报价不会改变用户已经看到的成交条件。
 
 ### 模块 2: SQS 派发
 
@@ -32,7 +33,7 @@
 **涉及层及关键设计:**
 
 - Agent 的接单/拒单回调复用 [[1.agent-protocol-contract]] 的验签中间件，更新 `task_assignments.status`。
-- 定时任务扫描 `accept_deadline` 已过期且仍为 `pending_ack` 状态的分配，标记为 `accept_failed`，触发任务状态回到「待匹配」，并将候选集合标记为可重新选择（不强制重新执行匹配管道，除非发布者显式请求 `POST /api/tasks/:id/rematch`）。
+- 定时任务扫描 `accept_by` 已过期且仍为 `pending_ack` 状态的分配，标记为 `accept_failed`；同一事务写入 `task_transition_outbox`，由 Business API 幂等消费后通过权威任务状态机回到「待匹配」。原候选集合可重新选择，不强制重新执行匹配管道。
 
 ## 接口契约
 
@@ -42,8 +43,9 @@
 
 ## 数据模型
 
-- `task_assignments(id PK, task_id FK, agent_id FK, status, version, assigned_by, assigned_at, accept_deadline, responded_at)`，唯一部分索引 `(task_id) WHERE status = 'active'`。
-- `dispatch_attempts(id PK, task_id FK, assignment_id FK, attempt_no, error_message, dispatched_at)`。
+- `task_assignments(id PK, task_id FK, agent_id FK, distribution_record_id FK, agreed_amount_minor, status, version, assigned_by, assigned_at, accept_by, responded_at)`，唯一部分索引 `(task_id) WHERE status IN ('pending_ack','accepted')`。
+- `dispatch_attempts(id PK, assignment_id FK, idempotency_key UNIQUE, protocol_request_id UNIQUE, status, attempt_no, error_code, next_attempt_at)`。
+- `task_transition_outbox` / `task_transition_inbox`：跨 Go 与 Business API 的可重试、可恢复、幂等任务状态迁移。
 
 ## 安全考虑
 

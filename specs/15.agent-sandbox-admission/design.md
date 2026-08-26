@@ -5,6 +5,7 @@
 | 日期       | 版本 | 说明     |
 | ---------- | ---- | -------- |
 | 2026-08-20 | v1   | 初始设计 |
+| 2026-08-24 | v2   | T-001/T-002 落地：增加轮次幂等、三槽位租约恢复与独立沙箱执行模块 |
 
 ## 项目架构
 
@@ -24,8 +25,10 @@
 
 **涉及层及关键设计:**
 
-- Agent 通过 [[2.agent-registration]] 的基础注册审核后，Go 分发引擎自动触发 3 次调用，每次调用复用 [[1.agent-protocol-contract]] 的 `Sign(req, secret, "sandbox")`，请求体为模板中的固定测试输入。
+- Agent 通过 [[2.agent-registration]] 的基础注册审核后，Go 分发引擎以稳定 `round_id` 触发一轮 3 次调用，每次调用复用 [[1.agent-protocol-contract]] 的 `Sign(req, secret, "sandbox")`，请求体为模板中的固定测试输入。三次逻辑调用分别使用 `sandbox:{round_id}:1..3` 幂等键；进程恢复继续使用原键，提供者修复后的重测使用新 `round_id`。
 - 调用产出（Agent 返回的结果引用）与技术指标（协议合规、延迟、报错分类）自动写入 `sandbox_test_runs`，这部分完全不需要人工参与，复用协议层已有的错误分类能力，不重新发明一套判断逻辑。
+- 独立 `sandboxadmission` 模块只依赖沙箱仓储、凭证解密器和 Agent 调用器，不依赖任务、分配、评分或资金服务。每个 run 使用数据库租约防止并发重复执行；进程在响应落库前崩溃时允许租约到期恢复，但仍使用同一幂等键，因此语义是 3 个逻辑调用，而不是承诺跨网络的物理 exactly-once。
+- MVP 把最多 1 MiB 的不可信响应编码为只存储、不执行的 `data:` 引用；后续可在模块内部替换成对象存储实现，不改变服务接口和表结构。
 
 ### 模块 3: 清单式人工判定
 
@@ -53,16 +56,16 @@
 
 ## 接口契约
 
-- 内部：`RunSandboxTest(agentId) sandboxTestRun`（触发一次调用，`call_type=sandbox`）。
+- 内部：`RunSandboxTest(agentId, roundId) sandboxTestRound`（建立并执行一轮 3 次逻辑调用，均为 `call_type=sandbox`）。
 - `GET /api/admin/agents/:id/sandbox-runs`：查看沙箱调用产出与技术指标。
 - `POST /api/admin/agents/:id/sandbox-evaluation`：提交清单判定，请求体 `{ runIds: [...], checkedItems: {...} }`；全部通过时内部调用 `TransitionAgentStatus`。
 - `POST /api/agents/:id/sandbox-retry`：提供者请求重新发起一轮沙箱测试（仅 `pending_review` 状态可调用）。
 
 ## 数据模型
 
-- `sandbox_test_templates(id PK, category_id FK, test_input JSONB, checklist_items JSONB, version, created_at, deprecated_at)`
-- `sandbox_test_runs(id PK, agent_id FK, template_id FK, run_no, call_type, output_ref, technical_metrics JSONB, created_at)`
-- `sandbox_evaluations(id PK, agent_id FK, run_ids JSONB, reviewer_id, checked_items JSONB, decision, decided_at)`
+- `sandbox_test_templates(id PK, category_id FK nullable, test_input JSONB, checklist_items JSONB, version, created_at, deprecated_at)`；`category_id=NULL` 是通用兜底模板。
+- `sandbox_test_runs(id PK, agent_id FK, template_id FK, round_id, run_no, call_type, status, output_ref, technical_metrics JSONB, lock_token, locked_until, started_at, completed_at, created_at)`；唯一键为 `(agent_id, round_id, run_no)`。
+- `sandbox_evaluations(id PK, agent_id FK, round_id, run_ids JSONB, reviewer_id, checked_items JSONB, decision, decided_at)`
 - 状态迁移统一写入 [[2.agent-registration]] 定义的共享 `audit_logs` 表。
 
 ## 安全考虑

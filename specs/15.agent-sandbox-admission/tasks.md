@@ -5,6 +5,7 @@
 | 日期       | 版本 | 说明     |
 | ---------- | ---- | -------- |
 | 2026-08-20 | v1   | 初始任务 |
+| 2026-08-24 | v2   | Feature 重新开始；T-001/T-002 实现并验证，T-003 起等待 14.T-001 RBAC |
 
 ## 项目信息
 
@@ -16,11 +17,11 @@
 
 ### 功能 1: 数据模型与测试模板
 
-- [ ] T-001: 编写 `sandbox_test_templates`、`sandbox_test_runs`、`sandbox_evaluations` 表 migration，并录入 MVP 通用清单模板 ~30min
+- [x] T-001: 编写 `sandbox_test_templates`、`sandbox_test_runs`、`sandbox_evaluations` 表 migration，并录入 MVP 通用清单模板 ~30min
 
 ### 功能 2: 沙箱调用执行
 
-- [ ] T-002: 实现 `RunSandboxTest()`（触发 3 次调用，`call_type=sandbox`，写入产出与技术指标） ~30min
+- [x] T-002: 实现 `RunSandboxTest()`（触发 3 次调用，`call_type=sandbox`，写入产出与技术指标） ~30min
 
 ### 功能 3: 清单判定与准入
 
@@ -46,4 +47,9 @@
 ## 风险点
 
 - 分类专属测试任务模板未定（见 requirements.md 开放问题），MVP 用通用模板覆盖全部分类，可能对专业性强的分类（如合约审计类 Agent）判别力不足，后续需要产品/运营按分类补充专属模板，属于数据补充而非结构变更。
-- 若开发顺序未按 PLAN.md 推荐顺序先完成 feature 14 的 RBAC，T-003 需先用临时权限占位实现。
+- 若 feature 14 的 RBAC 尚未完成，T-003 必须等待 `RequirePermission()`，不得用可绕过权限的临时占位入口冒充完成。
+
+## 当前未完成原因（2026-08-24）
+
+- T-003 的明确跨 feature 依赖 `14.T-001 RequirePermission()` 仍未完成；为避免留下可绕过运营权限的临时判定入口，本轮不使用权限占位。
+- T-004、T-005 依赖 T-003，暂不提前实现；T-006 包含 T-003/T-004 的准入判定场景，因此仍保持未勾选。T-002 已覆盖三次调用、沙箱签名、同轮幂等、技术失败、租约恢复和正式业务表隔离测试。

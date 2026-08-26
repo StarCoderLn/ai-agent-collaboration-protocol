@@ -2,7 +2,15 @@
 
 ## 本次 PRD（2026-08-20）切分为 16 个 feature
 
-来源需求文档：`docs/prd.md`（AI Agent 协作协议平台 MVP）。范围：完整 MVP（对应 PRD 第 11 节 P1-P4），链选型：**Ethereum**（用户已确认，Solana 不在 MVP 范围）。`[2026-08-22 变更]` 14.ops-backend-and-metrics、15.agent-sandbox-admission、16.agent-wallet-rebind 已被用户确认延后至 P5「后续能力」（见 docs/prd.md 2.2 节），当前 MVP 本轮开发范围为 **12 个 feature**（1-13，不含 14/15/16）；三个延后 feature 的 requirements/design/tasks 均已生成，予以保留供后续启用时直接使用，不删除也不重新编号。
+来源需求文档：`docs/prd.md`（AI Agent 协作协议平台 MVP）。范围：完整 MVP（对应 PRD 第 11 节 P1-P4），链选型：**Ethereum**（用户已确认，Solana 不在 MVP 范围）。`[2026-08-22 变更]` 14.ops-backend-and-metrics、15.agent-sandbox-admission、16.agent-wallet-rebind 已被用户确认延后至 P5「后续能力」（见 docs/prd.md 2.2 节），当前 MVP 本轮开发范围为 **13 个 feature**（1-13，不含 14/15/16）；三个延后 feature 的 requirements/design/tasks 均已生成，予以保留供后续启用时直接使用，不删除也不重新编号。
+
+> `[2026-08-24 P5 待办]` 工作台后续增加钱包资产概览：Gas ETH、USDC 可用余额、YD 可用/已质押余额及当前网络。实现前必须确认 USDC/YD 的分环境合约地址；旧 YD 是否复用先做链与权限审计，不在地址未知时重新发币。
+
+`[2026-08-22 交付顺序变更]` 在继续开发 feature 3～13 前，优先跑通 PRD、设计、Coding
+三步真实 Agent 比较体验，每步 3 个候选、用户手动选择一个。该纵向切片不新增编号
+feature，也不复制 feature 4 的正式任务状态；跨步骤制品与体验状态的唯一权威定义见
+[`docs/workflow-artifacts.md`](../docs/workflow-artifacts.md)。后续 feature 4、
+8～12 分别接管正式任务、候选、派发、交付和评分时，通过适配器替换体验实现。
 
 ## 项目级技术栈决策（已冻结）
 
@@ -19,20 +27,29 @@
 | --- | --- | --- | --- | --- |
 | 1 | agent-protocol-contract | Agent 接入协议基础设施：认证签名、幂等键、错误码、超时重试语义 | - | 已实现 |
 | 2 | agent-registration | Agent 注册、凭证加密存储、必填校验、审计日志 | 1 | 已完成（T-001～T-012；真实 PostgreSQL、AWS KMS 与 CDK 部署仍待环境级验证） |
-| 3 | agent-health-lifecycle | 健康检查、上下架状态机、试运行准入、运营审核 | 1, 2 | 待开发 |
-| 4 | task-creation-and-preview | 任务创建表单、字段校验、分类标签联动、发布前预览 | - | 待开发 |
-| 5 | escrow-contract-ethereum | Ethereum 智能合约：托管存款、退款、结算、暂停、事件 | - | 待开发 |
-| 6 | escrow-sync-and-wallet | 链上事件同步/确认/对账/恢复、钱包交互与托管状态前端 | 4, 5 | 待开发 |
-| 7 | task-visibility-and-mode | 可见性（私密/公开）、分配模式（手动/自动）、市场与工作台分离 | 4；T-004 另有对 3、12 的**表结构级**轻依赖（见下方说明） | 待开发 |
-| 8 | matching-and-candidates | V0 匹配（分类→资格→标签→排序）、JobDistributionRecord、候选列表/可视化 | 3, 6, 7 | 待开发 |
-| 9 | dispatch-and-acceptance | 原子占用分配、SQS 派发、Agent 接单/拒单确认、接单超时处理 | 1, 8 | 待开发 |
-| 10 | notification-and-sync | Webhook 签名异步通知、退避重试与死信队列、SSE 进度推送、状态补拉接口 | 1, 9 | 待开发 |
-| 11 | execution-tracking-and-delivery | Agent 进度上报、1~3 个候选结果提交与版本管理、验收/返工 | 1, 10 | 待开发 |
-| 12 | scoring-system | 五维评分计算（贝叶斯平滑/时间衰减）、规则版本化、评分页面 | 11 | 待开发 |
-| 13 | dispute-and-arbitration | 争议发起、证据提交、资金冻结、人工仲裁决定、结算/退款执行 | 6, 11 | 待开发 |
+| 3 | agent-health-lifecycle | 健康检查、上下架状态机、试运行准入、运营审核 | 1, 2 | 已完成（T-001～T-008） |
+| 4 | task-creation-and-preview | 任务创建表单、字段校验、分类标签联动、发布前预览 | - | 已完成（T-001～T-008） |
+| 5 | escrow-contract-ethereum | Ethereum 智能合约：托管存款、退款、结算、暂停、事件 | - | 已完成（T-001～T-008；Foundry 8/8） |
+| 6 | escrow-sync-and-wallet | 链上事件同步/确认/对账/恢复、钱包交互与托管状态前端 | 4, 5 | 已完成（T-001～T-008；AC-001～AC-006 全部通过；MetaMask + Anvil 31337 真实托管验收通过） |
+| 7 | task-visibility-and-mode | 可见性（私密/公开）、分配模式（手动/自动）、市场与工作台分离 | 4；T-004 另有对 3、12 的**表结构级**轻依赖（见下方说明） | 已完成（T-001～T-008） |
+| 8 | matching-and-candidates | V0 匹配（分类→资格→标签→排序）、JobDistributionRecord、候选列表/可视化 | 3, 6, 7 | 已完成（T-001～T-008） |
+| 9 | dispatch-and-acceptance | 原子占用分配、SQS 派发、Agent 接单/拒单确认、接单超时处理 | 1, 8 | 已完成（T-001～T-007） |
+| 10 | notification-and-sync | Webhook 签名异步通知、退避重试与死信队列、SSE 进度推送、状态补拉接口 | 1, 9 | 已完成（T-001～T-008；真实 PostgreSQL、SSE 续传与正式构建已验证） |
+| 11 | execution-tracking-and-delivery | Agent 进度上报、1~3 个候选结果提交与版本管理、验收/返工 | 1, 10 | 已完成（T-001～T-008；真实 PostgreSQL、权威验收预览、过期条件保护与正式构建已验证） |
+| 12 | scoring-system | 五维评分计算（贝叶斯平滑/时间衰减）、规则版本化、评分页面 | 11 | 已完成（T-001～T-008；证据快照、系统响应时间、生产定时任务、PostgreSQL 与正式构建已验证） |
+| 13 | dispute-and-arbitration | 争议发起、证据提交、资金冻结、人工仲裁决定、结算/退款执行 | 6, 11 | 已完成（T-001～T-008；权限、资金冻结、执行确认、完整审计、PostgreSQL 与正式构建已验证） |
 | 14 | ops-backend-and-metrics | 运营后台（审核/查询/超时处理/交易核对）、核心指标埋点看板 | 2, 3, 8, 9, 13 | **延后至 P5**（用户确认，2026-08-22；MVP 阶段运营操作走直接数据库操作/人工介入） |
 | 15 | agent-sandbox-admission | 新 Agent 沙箱调用（3 次标准化测试）+ 清单式人工判定，驱动试运行→可接单准入 | 1, 2, 3, 14 | **延后至 P5**（用户确认，2026-08-22；MVP 阶段内部测试 Agent 由人工直接标记为可接单，跳过正式沙箱流程；3 的 `AdminApprove` 事件改由人工/临时接口触发，不依赖 15） |
 | 16 | agent-wallet-rebind | 钱包换绑：新钱包签名验证所有权 + 站外通知 + 冷静期，冷静期内结算仍走旧地址 | 1, 2 | **延后至 P5**（用户确认，2026-08-22；不阻塞其他 feature，无 feature 反向依赖 16） |
+
+### 本地 MVP 真实闭环验收（2026-08-23）
+
+- 产品编排画布已使用 DeepSeek 直连候选真实执行 `PRD → UI 设计 → Coding`，三份制品均经用户步骤验收；该体验是同步沙箱，不写正式任务与资金状态。
+- 正常结算闭环已在本地 Anvil 31337 、PostgreSQL、Business API、Dispatch Engine 与测试 Agent 间真实通过：任务 `dcff92ef-1273-4b5f-b722-1a3360a1301e` 最终状态 `settled`，包含返工、验收预览、结算确认和评分。
+- 争议退款闭环真实通过：任务 `3c099bf3-4247-4283-8900-04f3d2ad8d5b` / 争议 `85cf1e0f-51b8-441a-b068-65cb636c096a` 最终状态 `refunded`，包含证据、仲裁决定、链上退款提交与确认。
+- Web 全量测试 29 个文件 / 93 项通过，产品工作流 Agent 6 个文件 / 29 项通过，Web 与 Business API 生产构建通过，Escrow Foundry 8/8 通过。
+- 390×844 下首页、任务市场、Agent 市场、发布任务、上架 Agent、Agent 编排和仲裁入口均无水平溢出，无原生 `select` 或 Better-T-Stack 调试 UI 残留。
+- 6.AC-006 已在用户安装 MetaMask 的真实浏览器中完成连接、SIWE 签名、人工取消、重试批准和 12 区块确认验收；对应任务、交易哈希与回执证据见 Feature 6 `tasks.md` T-007 验收记录。
 
 **推荐执行顺序**：1 → 2 → 3；与此并行可先做 4、5（任务创建表单与合约互不依赖）→ 6 → 7 → 8 → 9 → 10 → 11 →（12 与 13 可并行）。本轮开发到 12/13 完成即构成完整闭环（含评分与争议仲裁），14/15/16 已延后至 P5，暂不排入本轮开发顺序。
 
@@ -57,7 +74,8 @@
 > - 2026-08-20 `--change`：新增 15.agent-sandbox-admission，落实 PRD §14 P0-7「新 Agent 沙箱调用 3 次 + 清单式人工判定」的确认方案。同步更新了 1.agent-protocol-contract（新增 F-006 沙箱模式标记位，v1→v2）与 3.agent-health-lifecycle（F-007 触发条件明确为 15 的判定结果，v1→v2），两个 feature 均未变更任务数量，任务结构不受影响。
 > - 2026-08-20 `--change`：新增 16.agent-wallet-rebind，落实钱包换绑安全流程（新钱包签名验证 + 站外通知 + 冷静期，参考交易所提现地址变更惯例）。同步更新了 2.agent-registration（AC-004 从「MVP 不支持换绑」改为「换绑走 16 的独立流程」，v1→v2，任务结构不变）。
 > - 2026-08-22 `--change`：用户确认为缩短本轮开发周期，将 16.agent-wallet-rebind 延后至 P5「后续能力」（同步更新 docs/prd.md 2.2 节）。2.agent-registration 的 AC-004（拒绝直接修改钱包地址）不受影响：MVP 阶段钱包地址注册后本就保持不可编辑，延后 16 不需要任何代码回退或降级路径。requirements/design/tasks 予以保留，不删除、不重新编号，后续启用时可直接使用。
-> - 2026-08-22 `--change`：用户进一步确认将 14.ops-backend-and-metrics、15.agent-sandbox-admission 一并延后至 P5（同步更新 docs/prd.md 2.1/2.2 节），本轮 MVP 开发范围收敛为 1-13 共 12 个 feature，12（评分）与 13（争议仲裁）按用户要求保留在本轮范围内以保证闭环完整（PRD 4.2 单 Agent 任务闭环的第 9、11 步显式包含争议与评分）。影响评估：无其他 feature 依赖 14 或 15，延后不阻塞已排期的开发顺序；3.agent-health-lifecycle 的 `AdminApprove` 事件原本由 15 的沙箱判定结果驱动，15 缺席期间该事件需要人工/临时接口直接触发（不需要修改 3 的状态机本身，只是触发方从"15 的正式判定"改为"人工操作"）。requirements/design/tasks 均已生成，予以保留，不删除、不重新编号。
+> - 2026-08-22 `--change`：用户进一步确认将 14.ops-backend-and-metrics、15.agent-sandbox-admission 一并延后至 P5（同步更新 docs/prd.md 2.1/2.2 节），本轮 MVP 开发范围收敛为 1-13 共 13 个 feature，12（评分）与 13（争议仲裁）按用户要求保留在本轮范围内以保证闭环完整（PRD 4.2 单 Agent 任务闭环的第 9、11 步显式包含争议与评分）。影响评估：无其他 feature 依赖 14 或 15，延后不阻塞已排期的开发顺序；3.agent-health-lifecycle 的 `AdminApprove` 事件原本由 15 的沙箱判定结果驱动，15 缺席期间该事件需要人工/临时接口直接触发（不需要修改 3 的状态机本身，只是触发方从"15 的正式判定"改为"人工操作"）。requirements/design/tasks 均已生成，予以保留，不删除、不重新编号。
+> - 2026-08-24：用户重新启动 15.agent-sandbox-admission。T-001/T-002 已实现并验证；T-003 起依赖仍未完成的 14.T-001 RBAC，因此在权限边界完成前不提供临时判定入口。Feature 15 仍属于 P5 后续能力，不改变 1-13 已定义的 MVP 范围。
 
 ## 前置决策记录（来自用户确认，2026-08-20）
 
@@ -75,7 +93,7 @@
 
 以下决策仍未拍板，已在对应 feature 的 requirements.md「开放问题」中标注，design.md 按当前 PRD 推荐方向设计但预留调整点。产品/合约/法务确认后，用 `/yd:prd --change {N} 说明变更` 更新：
 
-- **链上交易确认条件（PRD §14 P0-2）**`[2026-08-20 补记，此前遗漏]`：切分时这条已在 [[6.escrow-sync-and-wallet]] 落地为可配置默认值（12 个区块确认，Ethereum 主网惯例），但从未被列入本清单，属于文档记录遗漏，不影响开发进度，仅为补全追溯记录。
+- ~~**链上交易确认条件（PRD §14 P0-2）**~~ `[2026-08-24 已确认]`：确认数是后端可配置安全参数，不在首页展示；本地/测试链默认 2 次，Ethereum 主网开发默认 6 次，生产部署必须显式配置并在高金额场景提高阈值，见 [[6.escrow-sync-and-wallet]] v5。
 - ~~平台手续费费率与承担方（PRD §14 P0-3）~~ `[2026-08-20 已确认]`：费率 0.4%，由 Agent 提供者结算金额中扣除（发布者不额外加价），见 [[4.task-creation-and-preview]] `CalculatePlatformFee()` 与 [[5.escrow-contract-ethereum]] `release()` 的转账拆分；不设最低任务预算，手续费下限改为 gas 成本兜底（非拍脑袋数字）。
 - 接单后取消/退款/返工/超时赔付细则（PRD §14 P0-4）
 - 仲裁执行方、是否支持部分支付/申诉（PRD §14 P0-5）

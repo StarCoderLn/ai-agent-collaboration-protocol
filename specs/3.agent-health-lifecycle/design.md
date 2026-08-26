@@ -9,6 +9,7 @@
 | 2026-08-20 | v3   | 模块 2 补充连续失败计数的精确规则（计入的错误类型、重置条件、统计对象） |
 | 2026-08-20 | v4   | 新增自动恢复逻辑（模块 2）与提供者手动恢复接口（模块 3）；确定阈值/间隔默认值 |
 | 2026-08-20 | v5   | 新增模块 4「受控上线期风险上限」，替换此前语义矛盾的「试运行风险上限」提法；`agent_status_config` 字段调整 |
+| 2026-08-23 | v6   | 对齐 PLAN：Feature 15 延后期间使用有角色校验、理由必填和审计留痕的 MVP 人工审核入口，并补驳回终态 |
 
 ## 项目架构
 
@@ -59,14 +60,14 @@
 **涉及层及关键设计:**
 
 - 审核 API 部署在业务服务（Next.js + AWS Lambda），审核通过后通过内部调用（非公开 API）通知 Go 分发引擎更新状态缓存，状态权威数据仍在 Go 侧管理的表中，业务服务只是发起状态迁移请求。
-- `[v2]` 触发这个审核 API 的调用方是 [[15.agent-sandbox-admission]]（沙箱测试清单全部通过后自动调用），而不是运营凭自由判断随时调用；`reason` 字段固定引用沙箱测试的判定记录 ID，保证"为什么批准"可追溯到具体的清单判定，而不是一句自由文本。
+- `[v6]` `specs/PLAN.md` 已将 [[15.agent-sandbox-admission]] 延后至 P5。当前 MVP 审核入口仅对 `agent_reviewer` 角色开放，审核理由必填；通过执行 `AdminApprove`，驳回执行 `AdminReject` 并进入 `delisted` 终态，两者都在状态事务中记录审核员与理由。Feature 15 启用后只把通过事件的证据源替换为沙箱判定 ID，不让本 feature 反向依赖其内部表。
 - 提供者的暂停/下架操作同样走“发起迁移请求 → 状态机校验合法性 → 落库 → 审计”的统一路径，不区分“谁发起”对状态机内部逻辑的影响，只影响审计记录里的 `actor_type`。
 - `[v4 新增]` 提供者恢复接口同样走这条统一路径，但 `TransitionAgentStatus` 在处理 `ManualResume` 事件时会额外校验 `pause_reason`：`pause_reason = manual` 才允许迁移到 `active`；`pause_reason = health_check` 时返回 `RESUME_REQUIRES_HEALTH_RECOVERY` 错误码，而不是把这条校验散落到 API 层——校验逻辑集中在状态机内部，任何未来新增的恢复入口（例如运营后台的强制恢复）都会自动受到同一条规则约束。
 
 ## 接口契约
 
 - 内部接口（Go 分发引擎）：`TransitionAgentStatus(agentId, event, actor) (newStatus, error)`，非法迁移返回 `INVALID_STATE_TRANSITION` 错误码。
-- `POST /api/admin/agents/:id/approve`：运营审核通过，请求体含 `reason`。
+- `POST /api/admin/agents/:id/approve` / `reject`：MVP 运营审核通过或驳回，请求体含 `reviewReason`。
 - `POST /api/agents/:id/pause` / `POST /api/agents/:id/delist`：提供者操作。
 - `POST /api/agents/:id/resume` `[v4 新增]`：提供者恢复操作，仅 `pause_reason = manual` 时成功；`pause_reason = health_check` 时返回 `RESUME_REQUIRES_HEALTH_RECOVERY`（提示"等待自动恢复或联系运营"）。
 
