@@ -62,4 +62,9 @@ export class PgSessionStore implements SessionStore {
     }
     return { sessionId: row.session_id, walletAddress: row.wallet_address, expiresAt: row.expires_at };
   }
+
+  /** 吊销单个不透明会话；不存在时也视为成功，保证重复退出具备幂等性。 */
+  async revoke(sessionId: string): Promise<void> {
+    await this.db.query(`DELETE FROM auth_sessions WHERE session_id = $1`, [sessionId]);
+  }
 }

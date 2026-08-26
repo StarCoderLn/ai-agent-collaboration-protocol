@@ -6,6 +6,7 @@ function makeAgent(overrides?: Partial<Agent>): Agent {
   return {
     id: "11111111-1111-1111-1111-111111111111",
     providerWalletAddress: "0x1234567890123456789012345678901234567890",
+    payoutWalletAddress: "0x1234567890123456789012345678901234567890",
     name: "Original Name",
     categoryId: "11111111-1111-1111-1111-111111111111",
     capabilityDesc: "does things",
@@ -180,6 +181,21 @@ describe("patchAgent", () => {
       }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     expect(applyPatch).not.toHaveBeenCalled();
+  });
+
+  it("normalizes and deduplicates platform and custom tags", async () => {
+    const agent = makeAgent();
+    const { deps, applyPatch } = makeDeps(agent);
+
+    await patchAgent(deps, {
+      agentId: agent.id,
+      actorId: agent.providerWalletAddress,
+      rawBody: { tags: [" Next.js ", " RAG   Workflow ", "rag workflow"] },
+    });
+
+    expect(applyPatch).toHaveBeenCalledWith(agent.id, {
+      tags: ["next.js", "rag workflow"],
+    });
   });
 
   it("allows editing when actorId differs from the stored address only by EIP-55 checksum casing", async () => {

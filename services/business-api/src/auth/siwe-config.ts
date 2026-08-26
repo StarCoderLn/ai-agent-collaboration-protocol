@@ -14,6 +14,9 @@
 
 import { getRequiredEnv } from "../config/env";
 
+/** EIP-4361 statement 只能使用 RFC 3986 ASCII 字符；中文会被 siwe v3 解析器拒绝。 */
+export const AICP_SIWE_STATEMENT = "Sign in to AICP. This signature does not create a transaction or cost gas.";
+
 export interface SiweConfig {
   /** SIWE 消息 `domain` 字段的期望值（不含协议前缀），如 "app.example.com"。 */
   expectedDomain: string;

@@ -8,9 +8,9 @@
  *
  * 处理顺序（design.md「模块 3」+「接口契约」+ 跨 feature 依赖 1.T-006）：
  * 1. 服务端字段校验（不信任前端）——校验失败直接返回字段级错误，不触碰幂等存储。
- * 2. 校验 `walletAddress` 与已认证操作者身份（`actorId`）一致——不得代表他人钱包地址
+ * 2. 校验所有者 `walletAddress` 与已认证操作者身份（`actorId`）一致——不得代表他人钱包地址
  *    创建 Agent 档案（security.md 认证与授权第 1 条：不得仅凭请求体中的 ID 字段判定
- *    身份），与 `patch-agent.ts`/`credentials.ts` 的归属校验保持同一模式。
+ *    身份）。`payoutWalletAddress` 是独立结算地址，允许不同，但绝不参与权限判断。
  * 3. 幂等键：命中已提交的历史响应直接重放；命中 pending（并发重复请求）返回
  *    "处理中"错误；否则占用该 key 后继续执行。
  * 4. 加密凭证（复用 T-002 EnvelopeEncryptor，不在此重新实现任何加密逻辑）。

@@ -14,8 +14,9 @@ import { asQueryExecutor, getSharedPgPool } from "../db/pool";
 import { PgNonceStore } from "../auth/nonce-store";
 import { PgSessionStore, type SessionStore } from "../auth/session-store";
 import { createResolveActorId } from "../auth/resolve-actor-id";
-import { corsOriginFromSiweConfig, loadSiweConfigFromEnv } from "../auth/siwe-config";
+import { AICP_SIWE_STATEMENT, corsOriginFromSiweConfig, loadSiweConfigFromEnv } from "../auth/siwe-config";
 import type { AuthNonceHttpDeps } from "./auth-nonce-handler";
+import type { AuthLogoutHttpDeps } from "./auth-session-handler";
 import type { AuthVerifyHttpDeps } from "./auth-verify-handler";
 
 export function createProductionAuthNonceDeps(): AuthNonceHttpDeps {
@@ -24,6 +25,12 @@ export function createProductionAuthNonceDeps(): AuthNonceHttpDeps {
   return {
     nonceStore: new PgNonceStore(queryExecutor),
     allowedOrigin: corsOriginFromSiweConfig(config),
+    siwe: {
+      domain: config.expectedDomain,
+      uri: config.expectedUri,
+      chainId: config.expectedChainId,
+      statement: AICP_SIWE_STATEMENT,
+    },
   };
 }
 
@@ -47,4 +54,14 @@ export function createProductionResolveActorId(): ReturnType<typeof createResolv
   const queryExecutor = asQueryExecutor(getSharedPgPool());
   const sessionStore: SessionStore = new PgSessionStore(queryExecutor);
   return createResolveActorId(sessionStore);
+}
+
+export function createProductionAuthLogoutDeps(): AuthLogoutHttpDeps {
+  const queryExecutor = asQueryExecutor(getSharedPgPool());
+  const config = loadSiweConfigFromEnv();
+  const sessionStore = new PgSessionStore(queryExecutor);
+  return {
+    allowedOrigin: corsOriginFromSiweConfig(config),
+    revokeSession: sessionStore.revoke.bind(sessionStore),
+  };
 }

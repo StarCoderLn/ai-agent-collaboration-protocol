@@ -26,6 +26,7 @@ import type { Agent, AgentPatch, AgentRepository, AuditLogEntry, AuditLogWriter 
  */
 
 const WALLET_ADDRESS = "0x1234567890123456789012345678901234567890";
+const PAYOUT_WALLET_ADDRESS = "0x000000000000000000000000000000000000dEaD";
 
 function makeFakeKms(): KmsLike {
   const send = vi.fn(async (_command: GenerateDataKeyCommand): Promise<GenerateDataKeyCommandOutput> => ({
@@ -74,6 +75,7 @@ interface StoredAgentRow {
   agentId: string;
   status: string;
   encryptedSecret: string;
+  payoutWalletAddress: string;
 }
 
 /** 忠实复刻 `PgAgentRepository`：把 agents + agent_credentials 的写入当作一次不可分割的操作。 */
@@ -86,7 +88,12 @@ class InMemoryCreateAgentRepository implements CreateAgentRepository {
     encryptedSecret: string,
   ): Promise<CreatedAgent> {
     const agentId = `agent-${this.nextId++}`;
-    this.rows.push({ agentId, status: "pending_review", encryptedSecret });
+    this.rows.push({
+      agentId,
+      status: "pending_review",
+      encryptedSecret,
+      payoutWalletAddress: input.payoutWalletAddress,
+    });
     return { agentId, status: "pending_review" };
   }
 }
@@ -119,6 +126,7 @@ function validCreateBody(overrides?: Partial<Record<string, unknown>>): Record<s
     pricingType: "fixed",
     price: { amount: "1000", currency: "USDC" },
     walletAddress: WALLET_ADDRESS,
+    payoutWalletAddress: PAYOUT_WALLET_ADDRESS,
     serviceEndpoint: "https://agent.example.com",
     credentialSecret: "top-secret-api-key",
     email: "provider@example.com",
@@ -138,6 +146,7 @@ describe("Agent 注册集成流程：必填校验（含邮箱）", () => {
       overrides: { price: { amount: "9223372036854775808", currency: "USDC" } },
     },
     { field: "walletAddress", overrides: { walletAddress: "not-an-address" } },
+    { field: "payoutWalletAddress", overrides: { payoutWalletAddress: "not-an-address" } },
     { field: "serviceEndpoint", overrides: { serviceEndpoint: "not-a-url" } },
     { field: "credentialSecret", overrides: { credentialSecret: "" } },
     { field: "email", overrides: { email: "" } },
@@ -194,6 +203,20 @@ describe("Agent 注册集成流程：必填校验（含邮箱）", () => {
 
     expect(result.statusCode).toBe(201);
     expect((deps.repository as InMemoryCreateAgentRepository).rows).toHaveLength(1);
+    expect((deps.repository as InMemoryCreateAgentRepository).rows[0]?.payoutWalletAddress).toBe(PAYOUT_WALLET_ADDRESS);
+  });
+
+  it("allows a payout wallet that differs from the authenticated owner without changing ownership", async () => {
+    const deps = makeCreateDeps();
+
+    await createAgent(
+      validCreateBody({ walletAddress: WALLET_ADDRESS, payoutWalletAddress: PAYOUT_WALLET_ADDRESS }),
+      "idem-key-independent-payout",
+      WALLET_ADDRESS,
+      deps,
+    );
+
+    expect((deps.repository as InMemoryCreateAgentRepository).rows[0]?.payoutWalletAddress).toBe(PAYOUT_WALLET_ADDRESS);
   });
 });
 
@@ -269,6 +292,7 @@ function makeAgentRecord(overrides?: Partial<Agent>): Agent {
   return {
     id: "22222222-2222-2222-2222-222222222222",
     providerWalletAddress: WALLET_ADDRESS,
+    payoutWalletAddress: PAYOUT_WALLET_ADDRESS,
     name: "Some Agent",
     categoryId: "11111111-1111-1111-1111-111111111111",
     capabilityDesc: "does things",

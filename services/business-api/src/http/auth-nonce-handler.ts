@@ -13,13 +13,22 @@ export interface AuthNonceHttpDeps {
   nonceStore: NonceStore;
   /** CORS `Access-Control-Allow-Origin` 允许的前端来源，见 `auth/siwe-config.ts`。 */
   allowedOrigin: string;
+  /** 浏览器按服务端权威配置组装 SIWE 消息，避免前后端分别猜 chain/domain。 */
+  siwe: Readonly<{ domain: string; uri: string; chainId: number; statement: string }>;
 }
 
 export function createAuthNonceHttpHandler(deps: AuthNonceHttpDeps) {
   return async function handleGetAuthNonce(): Promise<Response> {
     const record = await deps.nonceStore.issue();
     return withCredentialedCors(
-      jsonResponse(200, { nonce: record.nonce, expiresAt: record.expiresAt.toISOString() }),
+      jsonResponse(200, {
+        nonce: record.nonce,
+        expiresAt: record.expiresAt.toISOString(),
+        domain: deps.siwe.domain,
+        uri: deps.siwe.uri,
+        chainId: deps.siwe.chainId,
+        statement: deps.siwe.statement,
+      }),
       deps.allowedOrigin,
     );
   };

@@ -22,6 +22,8 @@ export interface Agent {
   id: string;
   /** Ethereum 地址（0x + 40 位十六进制）。一经创建不可通过 PATCH 修改，见 AC-004。 */
   providerWalletAddress: string;
+  /** 结算收款地址；可与所有者钱包不同，但不赋予任何 Agent 管理权限。 */
+  payoutWalletAddress: string;
   name: string;
   categoryId: string;
   capabilityDesc: string;
@@ -77,7 +79,8 @@ export interface AgentRepository {
   applyPatch(agentId: string, patch: AgentPatch): Promise<Agent>;
 }
 
-export type AuditActorType = "provider" | "admin" | "system";
+// audit_logs 是跨 feature 的平台共享表；发布任务、验收和争议同样需要 publisher 类型。
+export type AuditActorType = "provider" | "publisher" | "admin" | "system";
 
 export interface AuditLogEntry {
   actorId: string;

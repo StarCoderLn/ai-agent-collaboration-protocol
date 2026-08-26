@@ -5,6 +5,11 @@ AWS Lambda + Function URL。方案选型见 `specs/2.agent-registration/tasks.md
 的决策记录：AWS Lambda Web Adapter（LWA）+ zip 打包（不用容器镜像）+ AWS CDK
 （不用 SAM——本项目已知会有多个 Lambda，CDK 更适合共享配置）。
 
+同一个栈还创建 Feature 12 的 EventBridge 定时评分快照：每小时通过 API Destination
+调用 `/api/internal/workers/score-snapshots`，Bearer token 存在 EventBridge Connection
+管理的 secret 中，不进入定时事件正文。仓储优先选择从未计算或最久未更新的 Agent，
+因此超过单批 100 个时会分轮覆盖，而不是永远只刷新 ID 最小的一批。
+
 ## 前置条件
 
 - Node.js 22+、pnpm（与项目其余部分一致）。
@@ -14,7 +19,7 @@ AWS Lambda + Function URL。方案选型见 `specs/2.agent-registration/tasks.md
 
 ## 必需的运行时配置（环境变量）
 
-以下 5 个值部署前必须在 shell 里提供，缺失会在 `cdk synth`/`cdk deploy` 阶段直接
+以下 7 个值部署前必须在 shell 里提供，缺失会在 `cdk synth`/`cdk deploy` 阶段直接
 报错（不会部署出一个环境变量为空、运行时才报错的 Lambda，见
 `lib/business-api-stack.ts` 的 `requireEnv`）：
 
@@ -25,6 +30,12 @@ AWS Lambda + Function URL。方案选型见 `specs/2.agent-registration/tasks.md
 | `SIWE_EXPECTED_DOMAIN` | SIWE 消息校验的域名 |
 | `SIWE_EXPECTED_URI` | SIWE 消息校验的 URI，也是 CORS `Access-Control-Allow-Origin` 的来源 |
 | `SIWE_EXPECTED_CHAIN_ID` | SIWE 消息校验的链 ID |
+| `DISPATCH_ENGINE_URL` | Go 分发引擎的内部服务地址，只供 Lambda 服务端调用 |
+| `DISPATCH_INTERNAL_TOKEN_SECRET_ARN` | 保存内部高熵 token 原文的 AWS Secrets Manager secret ARN；CDK 通过动态引用把它注入 Lambda 和 EventBridge Connection，真实 token 不进入 synth 模板 |
+
+该 secret 的 **SecretString 必须就是 token 原文**（不是 JSON，也不要包含 `Bearer ` 前缀），
+并与分发引擎配置使用同一个值。`DISPATCH_INTERNAL_TOKEN` 仍是本地运行 Business API 时的
+环境变量名；只有 CDK synth/deploy 输入改为 secret ARN，以免凭据落入 `cdk.out`。
 
 用环境变量而不是 CDK `--context`：`infra:deploy`/`infra:synth` 是
 `pnpm infra:build-lambda && cd infra && npx cdk ...` 这样的复合 npm script，
@@ -43,15 +54,18 @@ pnpm infra:build-lambda
 # 生成 CloudFormation 模板并预览，不接触 AWS（除非本地已配置的 AWS 凭据被 CDK 用来
 # 读取账号/区域信息——不会创建任何资源）
 DATABASE_URL=... AGENT_CREDENTIALS_KMS_KEY_ID=... SIWE_EXPECTED_DOMAIN=... \
-  SIWE_EXPECTED_URI=... SIWE_EXPECTED_CHAIN_ID=... pnpm infra:synth
+  SIWE_EXPECTED_URI=... SIWE_EXPECTED_CHAIN_ID=... DISPATCH_ENGINE_URL=... \
+  DISPATCH_INTERNAL_TOKEN_SECRET_ARN=... pnpm infra:synth
 
 # 对比当前部署状态与本地代码的差异，不接触 AWS 之外只读取现有 stack 状态
 DATABASE_URL=... AGENT_CREDENTIALS_KMS_KEY_ID=... SIWE_EXPECTED_DOMAIN=... \
-  SIWE_EXPECTED_URI=... SIWE_EXPECTED_CHAIN_ID=... pnpm infra:diff
+  SIWE_EXPECTED_URI=... SIWE_EXPECTED_CHAIN_ID=... DISPATCH_ENGINE_URL=... \
+  DISPATCH_INTERNAL_TOKEN_SECRET_ARN=... pnpm infra:diff
 
 # 真正创建/更新 AWS 资源——执行前必须先取得用户明确同意，见 AGENTS.md 第 10 节
 DATABASE_URL=... AGENT_CREDENTIALS_KMS_KEY_ID=... SIWE_EXPECTED_DOMAIN=... \
-  SIWE_EXPECTED_URI=... SIWE_EXPECTED_CHAIN_ID=... pnpm infra:deploy
+  SIWE_EXPECTED_URI=... SIWE_EXPECTED_CHAIN_ID=... DISPATCH_ENGINE_URL=... \
+  DISPATCH_INTERNAL_TOKEN_SECRET_ARN=... pnpm infra:deploy
 ```
 
 ## 打包方案说明

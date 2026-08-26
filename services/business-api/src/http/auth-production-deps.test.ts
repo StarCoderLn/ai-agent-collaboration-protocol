@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	createProductionAuthLogoutDeps,
   createProductionAuthNonceDeps,
   createProductionAuthVerifyDeps,
   createProductionResolveActorId,
@@ -52,6 +53,7 @@ describe("auth production deps", () => {
 
     const nonceDeps = createProductionAuthNonceDeps();
     const verifyDeps = createProductionAuthVerifyDeps();
+    const logoutDeps = createProductionAuthLogoutDeps();
     const resolveActorId = createProductionResolveActorId();
 
     expect(nonceDeps.nonceStore).toBeInstanceOf(PgNonceStore);
@@ -63,6 +65,8 @@ describe("auth production deps", () => {
       expectedUri: "https://app.example.com/login",
       expectedChainId: 1,
     });
+    expect(logoutDeps.allowedOrigin).toBe("https://app.example.com");
+    expect(typeof logoutDeps.revokeSession).toBe("function");
     expect(typeof resolveActorId).toBe("function");
   });
 });

@@ -33,6 +33,12 @@ import {
 import { AgentApiError } from "./errors";
 import { walletAddressesMatch } from "./ethereum-address";
 import { isValidPriceAmount, PRICE_AMOUNT_INVALID_MESSAGE } from "./price-amount";
+import {
+  isMatchingTagSyntaxValid,
+  MAX_MATCHING_TAG_COUNT,
+  MAX_MATCHING_TAG_LENGTH,
+  normalizeMatchingTags,
+} from "../platform/matching-tags";
 
 /** 与 T-001 migration 的 `service_endpoint` CHECK 约束保持一致（`^https?://`）。 */
 /** 与 T-001 migration 的 `email` CHECK 约束保持一致（基础结构校验，不做真实性校验）。 */
@@ -50,7 +56,13 @@ const patchAgentBodySchema = z
     name: z.string().trim().min(1, "名称不能为空").optional(),
     categoryId: z.string().regex(UUID_PATTERN, "分类 ID 格式非法").optional(),
     capabilityDesc: z.string().trim().min(1, "能力描述不能为空").optional(),
-    tags: z.array(z.string().trim().min(1)).min(1, "tags 至少包含一个标签").optional(),
+    tags: z.array(
+      z.string().trim().min(1).max(MAX_MATCHING_TAG_LENGTH)
+        .refine(isMatchingTagSyntaxValid, "标签包含不支持的字符"),
+    ).min(1, "tags 至少包含一个标签")
+      .max(MAX_MATCHING_TAG_COUNT, `tags 最多包含 ${MAX_MATCHING_TAG_COUNT} 个标签`)
+      .transform((tags) => normalizeMatchingTags(tags))
+      .optional(),
     pricingType: z.string().trim().min(1, "计价方式不能为空").optional(),
     priceAmount: z
       .string()

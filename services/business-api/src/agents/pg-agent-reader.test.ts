@@ -15,6 +15,7 @@ describe("PgAgentReader", () => {
     const row = {
       id: AGENT_ID,
       provider_wallet_address: "0x1234567890123456789012345678901234567890",
+      payout_wallet_address: "0x000000000000000000000000000000000000dEaD",
       name: "Name",
       category_id: "22222222-2222-2222-2222-222222222222",
       capability_desc: "does things",
@@ -44,6 +45,7 @@ describe("PgAgentReader", () => {
     expect(agent).toEqual({
       id: AGENT_ID,
       providerWalletAddress: row.provider_wallet_address,
+      payoutWalletAddress: row.payout_wallet_address,
       name: row.name,
       categoryId: row.category_id,
       capabilityDesc: row.capability_desc,

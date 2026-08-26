@@ -35,6 +35,7 @@ interface AgentInsertRow {
 interface AgentRow {
   id: string;
   provider_wallet_address: string;
+  payout_wallet_address: string;
   name: string;
   category_id: string;
   capability_desc: string;
@@ -80,12 +81,13 @@ export class PgAgentRepository implements AgentRepository, AgentProfileRepositor
   ): Promise<CreatedAgent> {
     const agentResult = await this.db.query<AgentInsertRow>(
       `INSERT INTO agents (
-         provider_wallet_address, name, category_id, capability_desc, tags,
+         provider_wallet_address, payout_wallet_address, name, category_id, capability_desc, tags,
          pricing_type, price_amount, price_currency, service_endpoint, email
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id, status`,
       [
         input.walletAddress,
+        input.payoutWalletAddress,
         input.name,
         input.categoryId,
         input.capabilityDesc,
@@ -113,7 +115,7 @@ export class PgAgentRepository implements AgentRepository, AgentProfileRepositor
 
   async findById(agentId: string): Promise<Agent | null> {
     const result = await this.db.query<AgentRow>(
-      `SELECT id, provider_wallet_address, name, category_id, capability_desc, tags,
+      `SELECT id, provider_wallet_address, payout_wallet_address, name, category_id, capability_desc, tags,
               pricing_type, price_amount, price_currency, service_endpoint, email,
               status, pause_reason, created_at, updated_at
        FROM agents WHERE id = $1`,
@@ -143,7 +145,7 @@ export class PgAgentRepository implements AgentRepository, AgentProfileRepositor
 
     const result = await this.db.query<AgentRow>(
       `UPDATE agents SET ${assignments.join(", ")} WHERE id = $${values.length} RETURNING
-         id, provider_wallet_address, name, category_id, capability_desc, tags,
+         id, provider_wallet_address, payout_wallet_address, name, category_id, capability_desc, tags,
          pricing_type, price_amount, price_currency, service_endpoint, email,
          status, pause_reason, created_at, updated_at`,
       values,
@@ -160,6 +162,7 @@ function toAgent(row: AgentRow): Agent {
   return {
     id: row.id,
     providerWalletAddress: row.provider_wallet_address,
+    payoutWalletAddress: row.payout_wallet_address,
     name: row.name,
     categoryId: row.category_id,
     capabilityDesc: row.capability_desc,

@@ -38,3 +38,24 @@ migrate -path services/business-service/migrations \
 - `0002_auth_nonces_and_sessions`：创建 `auth_nonces`、`auth_sessions`（均为平台级共享表）两张表，
   承载提供者钱包认证（SIWE / EIP-4361）（feature 2 T-010，权威设计见
   `specs/2.agent-registration/design.md` 「模块 5：提供者钱包认证」）。
+- `0003_agent_health_lifecycle`：健康探测记录、阈值与连续计数。
+- `0004_task_creation_preview`：任务主表、分类、标签、附件、手续费和时限配置。
+- `0005_escrow_sync_wallet`：链上事件镜像、游标、对账告警与退款尝试。
+- `0006_task_visibility_mode`：分配与验收模式配置。
+- `0007_matching_candidates`：可复现的匹配记录和排名规则版本。
+- `0008_dispatch_acceptance`：任务原子占用与派发尝试。
+- `0009_notification_sync`：单调任务事件和 Webhook 投递。
+- `0010_execution_delivery`：版本化交付结果和返工请求。
+- `0011_scoring_system`：五维评分、规则版本和 Agent 得分快照。
+- `0012_dispute_arbitration`：争议证据、仲裁决定与链上执行状态。
+- `0013_agent_health_probe_schedule`：健康检查的持久化调度时间与 worker 租约。
+- `0014_agent_reviewer_role`：在统一平台角色表中增加 Agent 审核员角色。
+- `0015_product_workflow_categories`：PRD、产品界面设计、软件开发三类稳定工作流分类。
+- `0016_native_eth_money_contract`：统一新任务、平台费率和内置工作流 Agent 的原生 ETH/wei 契约。
+- `0017_execution_failure_state`：记录 Agent 脱敏失败回调，并把任务转入可争议、资金仍托管的失败状态。
+- `0018_execution_attention_state`：记录执行中的补充信息请求与预计完成时间。
+- `0019_scoring_snapshot_evidence`：固化每个评分快照实际使用的评分、任务、分配与仲裁事实 ID。
+- `0020_subjective_rating_boundary`：停止接收发布者“响应速度”等系统字段，保留旧数据并允许旧列为空。
+- `0021_agent_sandbox_admission`：版本化沙箱模板、三次调用轮次、技术指标与清单判定留痕。
+- `0022_agent_payout_wallet`：将 Agent 所有者钱包与结算收款钱包拆分；旧数据保持原收款地址。
+- `0023_expand_platform_tags`：增加开发、内容、设计与 Web3 常用推荐标签；自定义标签无需入表即可精确匹配。

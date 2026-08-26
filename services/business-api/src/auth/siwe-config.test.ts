@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { corsOriginFromSiweConfig, loadSiweConfigFromEnv } from "./siwe-config.js";
+import { SiweMessage } from "siwe";
+import { AICP_SIWE_STATEMENT, corsOriginFromSiweConfig, loadSiweConfigFromEnv } from "./siwe-config.js";
 
 describe("loadSiweConfigFromEnv", () => {
   const original = {
@@ -54,5 +55,22 @@ describe("corsOriginFromSiweConfig", () => {
     });
 
     expect(origin).toBe("https://app.example.com");
+  });
+});
+
+describe("AICP_SIWE_STATEMENT", () => {
+  it("can be embedded in a standards-compliant EIP-4361 message", () => {
+    const message = new SiweMessage({
+      domain: "app.example.com",
+      address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      statement: AICP_SIWE_STATEMENT,
+      uri: "https://app.example.com",
+      version: "1",
+      chainId: 1,
+      nonce: "abc123XYZ",
+      issuedAt: "2026-08-23T00:00:00.000Z",
+    });
+
+    expect(message.prepareMessage()).toContain(AICP_SIWE_STATEMENT);
   });
 });

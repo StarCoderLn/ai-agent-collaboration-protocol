@@ -1,0 +1,54 @@
+import { describe, expect, it } from "vitest";
+
+import { acceptResultInputSchema, executionStatusInputSchema } from "./execution-input";
+
+const AGENT_ID = "11111111-1111-4111-8111-111111111111";
+const ASSIGNMENT_ID = "22222222-2222-4222-8222-222222222222";
+
+describe("execution input contracts", () => {
+  it("accepts a bounded needs-input request with a non-regressing ETA", () => {
+    expect(executionStatusInputSchema.safeParse({
+      agentId: AGENT_ID,
+      assignmentId: ASSIGNMENT_ID,
+      state: "needs_input",
+      progress: 45,
+      reportedAt: "2026-08-23T01:00:00.000Z",
+      estimatedCompletionAt: "2026-08-23T02:00:00.000Z",
+      message: "请确认是否需要额外导出 JSON Schema。",
+    }).success).toBe(true);
+  });
+
+  it("rejects an ETA before the report and unbounded attention text", () => {
+    expect(executionStatusInputSchema.safeParse({
+      agentId: AGENT_ID,
+      assignmentId: ASSIGNMENT_ID,
+      state: "needs_input",
+      progress: 45,
+      reportedAt: "2026-08-23T02:00:00.000Z",
+      estimatedCompletionAt: "2026-08-23T01:00:00.000Z",
+      message: "问题",
+    }).success).toBe(false);
+    expect(executionStatusInputSchema.safeParse({
+      agentId: AGENT_ID,
+      assignmentId: ASSIGNMENT_ID,
+      state: "needs_input",
+      progress: 45,
+      reportedAt: "2026-08-23T01:00:00.000Z",
+      message: "问".repeat(2_001),
+    }).success).toBe(false);
+  });
+
+  it("requires the exact preview terms when accepting a result", () => {
+    expect(acceptResultInputSchema.safeParse({ resultId: AGENT_ID }).success).toBe(false);
+    expect(acceptResultInputSchema.safeParse({
+      resultId: AGENT_ID,
+      expectedStatusVersion: "9",
+      expectedSettlement: {
+        grossAmountMinor: "2400000000000000",
+        platformFeeMinor: "50000000000000",
+        agentAmountMinor: "2350000000000000",
+        feeRuleVersion: "fee-v2-native-eth",
+      },
+    }).success).toBe(true);
+  });
+});

@@ -11,8 +11,10 @@
  * CDK 用真正的编程语言表达共享配置，比 SAM 的 YAML 模板更适合这个规模；本决定与
  * "zip 打包 + LWA Layer"这条部署方案本身无关，切换 IaC 工具不影响打包方式。
  */
-import { Stack, type StackProps, Duration, CfnOutput } from "aws-cdk-lib";
+import { Stack, type StackProps, Duration, CfnOutput, SecretValue } from "aws-cdk-lib";
 import type { Construct } from "constructs";
+import * as events from "aws-cdk-lib/aws-events";
+import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +49,8 @@ const REQUIRED_ENV_KEYS = [
 	"SIWE_EXPECTED_DOMAIN",
 	"SIWE_EXPECTED_URI",
 	"SIWE_EXPECTED_CHAIN_ID",
+	"DISPATCH_ENGINE_URL",
+	"DISPATCH_INTERNAL_TOKEN_SECRET_ARN",
 ] as const;
 
 function requireEnv(key: string): string {
@@ -62,6 +66,7 @@ function requireEnv(key: string): string {
 export class BusinessApiStack extends Stack {
 	constructor(scope: Construct, id: string, props?: StackProps) {
 		super(scope, id, props);
+		const internalTokenSecret = SecretValue.secretsManager(requireEnv("DISPATCH_INTERNAL_TOKEN_SECRET_ARN"));
 
 		const runtimeEnv: Record<string, string> = {
 			AWS_LAMBDA_EXEC_WRAPPER: "/opt/bootstrap",
@@ -72,6 +77,10 @@ export class BusinessApiStack extends Stack {
 			SIWE_EXPECTED_DOMAIN: requireEnv("SIWE_EXPECTED_DOMAIN"),
 			SIWE_EXPECTED_URI: requireEnv("SIWE_EXPECTED_URI"),
 			SIWE_EXPECTED_CHAIN_ID: requireEnv("SIWE_EXPECTED_CHAIN_ID"),
+			DISPATCH_ENGINE_URL: requireEnv("DISPATCH_ENGINE_URL"),
+			// CloudFormation 在部署时解析 Secrets Manager 动态引用；真实 token 不进入
+			// synth 模板或 cdk.out。应用运行时仍读取同一个 DISPATCH_INTERNAL_TOKEN 名称。
+			DISPATCH_INTERNAL_TOKEN: internalTokenSecret.unsafeUnwrap(),
 		};
 
 		const adapterLayer = lambda.LayerVersion.fromLayerVersionArn(
@@ -101,6 +110,57 @@ export class BusinessApiStack extends Stack {
 		const fnUrl = fn.addFunctionUrl({
 			authType: lambda.FunctionUrlAuthType.NONE,
 		});
+
+		/**
+		 * Feature 12 的评分读路径只查快照，重计算必须由生产调度主动触发。这里使用
+		 * EventBridge API Destination 调用既有内部 HTTP 契约，而不是再创建一个只会
+		 * 转发到同一服务的 Lambda。Authorization 值存入 EventBridge Connection 管理的
+		 * secret，不放进 Rule Input 或日志事件；内部 Route Handler 仍会做常量时间校验。
+		 *
+		 * 每小时选择 100 个“从未计算或最久未更新”的 Agent。仓储层按快照时间轮转，
+		 * 因此 Agent 数超过单批上限时不会永久饿死；单轮失败由 EventBridge 重试，下一
+		 * 个小时也会优先补算仍然最旧的批次。
+		 */
+		const scoringConnection = new events.Connection(this, "ScoreSnapshotConnection", {
+			description: "调用 Business API 内部评分快照 worker 的 Bearer 凭据",
+			authorization: events.Authorization.apiKey(
+				"Authorization",
+				// unsafePlainText 包裹的是动态引用而非凭据原文，用于在 Bearer 前缀后嵌入
+				// 同一个 secret；CloudFormation 部署时才解析真正的 token。
+				SecretValue.unsafePlainText(`Bearer ${internalTokenSecret.unsafeUnwrap()}`),
+			),
+		});
+		const scoringDestination = new events.ApiDestination(this, "ScoreSnapshotDestination", {
+			connection: scoringConnection,
+			endpoint: `${fnUrl.url}api/internal/workers/score-snapshots`,
+			httpMethod: events.HttpMethod.POST,
+			rateLimitPerSecond: 1,
+		});
+		const scoringRule = new events.Rule(this, "ScoreSnapshotSchedule", {
+			description: "每小时刷新最旧的一批 Agent 评分",
+			schedule: events.Schedule.rate(Duration.hours(1)),
+		});
+		// aws-cdk-lib 2.266 在 exactOptionalPropertyTypes 下把新建资源的 policy ARN 声明
+		// 为可选，但 targets.ApiDestination 的接口又要求必填。先做运行时不变量检查，再
+		// 通过官方 import API 收窄类型；不要用 as 断言跳过这个真实的 IAM 前置条件。
+		const scoringDestinationPolicyArn = scoringDestination.apiDestinationArnForPolicy;
+		if (scoringDestinationPolicyArn === undefined) {
+			throw new Error("新建的评分快照 API Destination 缺少 IAM policy ARN");
+		}
+		const scoringTargetDestination = events.ApiDestination.fromApiDestinationAttributes(
+			this,
+			"ScoreSnapshotDestinationTarget",
+			{
+				apiDestinationArn: scoringDestination.apiDestinationArn,
+				apiDestinationArnForPolicy: scoringDestinationPolicyArn,
+				connection: scoringConnection,
+			},
+		);
+		scoringRule.addTarget(new targets.ApiDestination(scoringTargetDestination, {
+			event: events.RuleTargetInput.fromObject({ limit: 100 }),
+			maxEventAge: Duration.hours(2),
+			retryAttempts: 3,
+		}));
 
 		new CfnOutput(this, "BusinessApiFunctionUrl", {
 			value: fnUrl.url,

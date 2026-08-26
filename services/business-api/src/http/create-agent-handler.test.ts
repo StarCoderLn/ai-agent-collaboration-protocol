@@ -6,7 +6,7 @@ import type { CreateAgentInput } from "../agents/create-agent-input.js";
 import { SessionInvalidError } from "../auth/resolve-actor-id.js";
 
 const WALLET_ADDRESS = "0x1234567890123456789012345678901234567890";
-const OTHER_WALLET_ADDRESS = "0x0000000000000000000000000000000000dEaD";
+const OTHER_WALLET_ADDRESS = "0x000000000000000000000000000000000000dEaD";
 
 function validBody(overrides?: Partial<Record<string, unknown>>): Record<string, unknown> {
   return {
@@ -17,6 +17,7 @@ function validBody(overrides?: Partial<Record<string, unknown>>): Record<string,
     pricingType: "fixed",
     price: { amount: "1000", currency: "USDC" },
     walletAddress: WALLET_ADDRESS,
+    payoutWalletAddress: OTHER_WALLET_ADDRESS,
     serviceEndpoint: "https://agent.example.com",
     credentialSecret: "top-secret-key",
     email: "provider@example.com",
@@ -75,6 +76,10 @@ describe("createAgentHttpHandler", () => {
     expect(response.status).toBe(201);
     expect(body).toEqual({ agentId: "agent-1", status: "pending_review" });
     expect(deps.createAgentWithCredential).toHaveBeenCalledTimes(1);
+    expect(deps.createAgentWithCredential).toHaveBeenCalledWith(
+      expect.objectContaining({ walletAddress: WALLET_ADDRESS, payoutWalletAddress: OTHER_WALLET_ADDRESS }),
+      expect.any(String),
+    );
   });
 
   it("returns 403 WALLET_OWNERSHIP_MISMATCH when walletAddress does not match the authenticated actor", async () => {

@@ -11,6 +11,7 @@ function makeAgent(overrides?: Partial<Agent>): Agent {
   return {
     id: "11111111-1111-1111-1111-111111111111",
     providerWalletAddress: "0x1234567890123456789012345678901234567890",
+    payoutWalletAddress: "0x1234567890123456789012345678901234567890",
     name: "Some Agent",
     categoryId: "11111111-1111-1111-1111-111111111111",
     capabilityDesc: "does things",

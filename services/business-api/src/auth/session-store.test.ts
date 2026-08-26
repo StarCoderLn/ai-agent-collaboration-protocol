@@ -59,4 +59,15 @@ describe("PgSessionStore", () => {
 
     expect(session).toBeNull();
   });
+
+  it("revoke() deletes only the requested opaque session id", async () => {
+    const query = vi.fn(async () => ({ rows: [], rowCount: 1 }));
+    const db: QueryExecutor = { query };
+
+    await new PgSessionStore(db).revoke("session-to-revoke");
+
+    const [sql, params] = query.mock.calls[0] as unknown as [string, unknown[]];
+    expect(sql).toContain("DELETE FROM auth_sessions");
+    expect(params).toEqual(["session-to-revoke"]);
+  });
 });

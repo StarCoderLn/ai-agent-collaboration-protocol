@@ -50,3 +50,19 @@ export function serializeSessionCookie(sessionId: string, expiresAt: Date): stri
     "SameSite=Lax",
   ].join("; ");
 }
+
+/**
+ * 退出登录必须由服务端覆盖 httpOnly Cookie；浏览器脚本无法也不应直接读取或删除它。
+ * Max-Age=0 负责立即失效，过去的 Expires 兼容不完整支持 Max-Age 的客户端。
+ */
+export function serializeClearedSessionCookie(): string {
+  return [
+    `${SESSION_COOKIE_NAME}=`,
+    "Max-Age=0",
+    "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "Path=/",
+    "HttpOnly",
+    "Secure",
+    "SameSite=Lax",
+  ].join("; ");
+}

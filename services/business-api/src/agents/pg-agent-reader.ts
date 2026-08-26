@@ -18,6 +18,7 @@ import type { AgentReader } from "./get-agent";
 interface AgentRow {
   id: string;
   provider_wallet_address: string;
+  payout_wallet_address: string;
   name: string;
   category_id: string;
   capability_desc: string;
@@ -38,7 +39,7 @@ export class PgAgentReader implements AgentReader {
 
   async findById(agentId: string): Promise<Agent | null> {
     const result = await this.db.query<AgentRow>(
-      `SELECT id, provider_wallet_address, name, category_id, capability_desc, tags,
+      `SELECT id, provider_wallet_address, payout_wallet_address, name, category_id, capability_desc, tags,
               pricing_type, price_amount, price_currency, service_endpoint, email,
               status, pause_reason, created_at, updated_at
          FROM agents
@@ -54,6 +55,7 @@ function toAgent(row: AgentRow): Agent {
   return {
     id: row.id,
     providerWalletAddress: row.provider_wallet_address,
+    payoutWalletAddress: row.payout_wallet_address,
     name: row.name,
     categoryId: row.category_id,
     capabilityDesc: row.capability_desc,

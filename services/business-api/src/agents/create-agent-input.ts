@@ -13,17 +13,23 @@
 import { z } from "zod";
 import { isValidEthereumAddress } from "./ethereum-address";
 import { isValidPriceAmount, PRICE_AMOUNT_INVALID_MESSAGE } from "./price-amount";
+import {
+  isMatchingTagSyntaxValid,
+  MAX_MATCHING_TAG_COUNT,
+  MAX_MATCHING_TAG_LENGTH,
+  normalizeMatchingTags,
+} from "../platform/matching-tags";
 
 // category_id 的存在性校验依赖 [[4.task-creation-and-preview]] 的 categories 表，
 // 该 feature 尚未建表（见 specs/PLAN.md 排期），本 task 范围内只能做 UUID 结构校验；
 // 存在性校验待 4.T-001 交付后由后续 task 补上（不属于本 task 的回归缺口）。
 const categoryIdSchema = z.string().uuid({ message: "categoryId 必须是合法的 UUID" });
 
-const walletAddressSchema = z
-  .string()
-  .refine(isValidEthereumAddress, {
-    message: "walletAddress 必须是合法的以太坊地址（0x + 40 位十六进制，且大小写需符合 EIP-55 校验和）",
+function ethereumWalletSchema(field: "walletAddress" | "payoutWalletAddress") {
+  return z.string().refine(isValidEthereumAddress, {
+    message: `${field} 必须是合法的以太坊地址（0x + 40 位十六进制，且大小写需符合 EIP-55 校验和）`,
   });
+}
 
 const serviceEndpointSchema = z
   .string()
@@ -42,10 +48,20 @@ export const createAgentInputSchema = z.object({
   name: z.string().trim().min(1, { message: "name 不能为空" }),
   categoryId: categoryIdSchema,
   capabilityDesc: z.string().trim().min(1, { message: "capabilityDesc 不能为空" }),
-  tags: z.array(z.string().trim().min(1)).min(1, { message: "tags 至少包含一个标签" }),
+  // Agent 和任务使用同一组数量、长度与字符边界。平台内置同义词由选择器直接提交
+  // canonical 值；自定义标签在这里再次规范化，防止绕过前端写入大小写不同的重复值。
+  tags: z.array(
+    z.string().trim().min(1).max(MAX_MATCHING_TAG_LENGTH)
+      .refine(isMatchingTagSyntaxValid, { message: "标签包含不支持的字符" }),
+  ).min(1, { message: "tags 至少包含一个标签" })
+    .max(MAX_MATCHING_TAG_COUNT, { message: `tags 最多包含 ${MAX_MATCHING_TAG_COUNT} 个标签` })
+    .transform((tags) => normalizeMatchingTags(tags)),
   pricingType: z.string().trim().min(1, { message: "pricingType 不能为空" }),
   price: priceSchema,
-  walletAddress: walletAddressSchema,
+  // walletAddress 来自登录会话，只用于证明 Agent 所有权；payoutWalletAddress 由提供者
+  // 自行填写，只用于结算。服务端必须分别校验，不能让收款地址绕过所有者身份检查。
+  walletAddress: ethereumWalletSchema("walletAddress"),
+  payoutWalletAddress: ethereumWalletSchema("payoutWalletAddress"),
   serviceEndpoint: serviceEndpointSchema,
   credentialSecret: z.string().min(1, { message: "credentialSecret 不能为空" }),
   // email 是站外通知渠道而非登录凭证，只做格式校验，不做真实性验证

@@ -1,0 +1,82 @@
+import { SessionInvalidError } from "../auth/resolve-actor-id";
+import type { PgAgentDirectory } from "../agents/agent-directory";
+import { withCredentialedCors } from "./cors";
+
+export type AgentDirectoryRouteContext = Readonly<{ params: Promise<{ id: string }> }>;
+export interface AgentDirectoryHttpDeps {
+  resolveActorId(request: Request): Promise<string>;
+  isAgentReviewer(actorId: string): Promise<boolean>;
+  directory: PgAgentDirectory;
+  allowedOrigin: string;
+}
+
+export function createAgentDirectoryHandlers(deps: AgentDirectoryHttpDeps) {
+  return {
+    publicList: (request: Request) => publicList(deps, request),
+    publicDetail: (context: AgentDirectoryRouteContext) => publicDetail(deps, context),
+    owned: (request: Request) => owned(deps, request),
+    reviewQueue: (request: Request) => reviewQueue(deps, request),
+  };
+}
+
+async function publicList(deps: AgentDirectoryHttpDeps, request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const limit = boundedInteger(url.searchParams.get("limit"), 20, 1, 50);
+  const offset = boundedInteger(url.searchParams.get("offset"), 0, 0, 10_000);
+  if (limit === null || offset === null) return response(deps, 422, errorBody("VALIDATION_FAILED", "分页参数无效", false));
+  try { return response(deps, 200, { agents: await deps.directory.publicAgents(limit, offset), limit, offset }); }
+  catch { return response(deps, 503, errorBody("AGENT_DIRECTORY_UNAVAILABLE", "Agent 市场暂不可用", true)); }
+}
+
+async function publicDetail(deps: AgentDirectoryHttpDeps, context: AgentDirectoryRouteContext): Promise<Response> {
+  const { id } = await context.params;
+  if (!isUuid(id)) return response(deps, 404, errorBody("AGENT_NOT_FOUND", "Agent 不存在", false));
+  try {
+    const agent = await deps.directory.publicAgent(id);
+    return agent === null
+      ? response(deps, 404, errorBody("AGENT_NOT_FOUND", "Agent 不存在", false))
+      : response(deps, 200, { agent });
+  } catch { return response(deps, 503, errorBody("AGENT_DIRECTORY_UNAVAILABLE", "Agent 市场暂不可用", true)); }
+}
+
+async function owned(deps: AgentDirectoryHttpDeps, request: Request): Promise<Response> {
+  const actor = await requiredActor(deps, request);
+  if (actor instanceof Response) return actor;
+  try { return response(deps, 200, { agents: await deps.directory.ownedAgents(actor) }); }
+  catch { return response(deps, 503, errorBody("AGENT_DIRECTORY_UNAVAILABLE", "Agent 管理列表暂不可用", true)); }
+}
+
+async function reviewQueue(deps: AgentDirectoryHttpDeps, request: Request): Promise<Response> {
+  const actor = await requiredActor(deps, request);
+  if (actor instanceof Response) return actor;
+  try {
+    if (!await deps.isAgentReviewer(actor)) return response(deps, 403, errorBody("AGENT_REVIEW_FORBIDDEN", "当前钱包没有 Agent 审核权限", false));
+    const rawStatus = new URL(request.url).searchParams.get("status") ?? "pending_review";
+    if (!isReviewStatus(rawStatus)) return response(deps, 422, errorBody("VALIDATION_FAILED", "审核状态筛选无效", false));
+    return response(deps, 200, { agents: await deps.directory.reviewQueue(rawStatus) });
+  } catch { return response(deps, 503, errorBody("AGENT_REVIEW_UNAVAILABLE", "Agent 审核列表暂不可用", true)); }
+}
+
+async function requiredActor(deps: AgentDirectoryHttpDeps, request: Request): Promise<string | Response> {
+  try { return await deps.resolveActorId(request); }
+  catch (error) {
+    return error instanceof SessionInvalidError
+      ? response(deps, 401, errorBody("UNAUTHENTICATED", "身份认证失败", false))
+      : response(deps, 503, errorBody("AUTH_SERVICE_UNAVAILABLE", "认证服务暂不可用", true));
+  }
+}
+
+function response(deps: AgentDirectoryHttpDeps, status: number, body: unknown): Response {
+  return withCredentialedCors(Response.json(body, { status }), deps.allowedOrigin);
+}
+function errorBody(error_code: string, message: string, retryable: boolean) { return { error_code, message, retryable }; }
+function boundedInteger(raw: string | null, fallback: number, minimum: number, maximum: number): number | null {
+  if (raw === null) return fallback;
+  if (!/^\d+$/.test(raw)) return null;
+  const value = Number.parseInt(raw, 10);
+  return value < minimum || value > maximum ? null : value;
+}
+function isUuid(value: string): boolean { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
+function isReviewStatus(value: string): value is "pending_review" | "active" | "paused" | "delisted" {
+  return value === "pending_review" || value === "active" || value === "paused" || value === "delisted";
+}

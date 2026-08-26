@@ -11,13 +11,21 @@ describe("createAuthNonceHttpHandler", () => {
     const handler = createAuthNonceHttpHandler({
       nonceStore,
       allowedOrigin: "https://app.example.com",
+      siwe: { domain: "app.example.com", uri: "https://app.example.com", chainId: 1, statement: "Sign in" },
     });
 
     const response = await handler();
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ nonce: "abc123XYZ", expiresAt: "2026-08-22T00:05:00.000Z" });
+    expect(body).toEqual({
+      nonce: "abc123XYZ",
+      expiresAt: "2026-08-22T00:05:00.000Z",
+      domain: "app.example.com",
+      uri: "https://app.example.com",
+      chainId: 1,
+      statement: "Sign in",
+    });
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://app.example.com");
     expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
   });
