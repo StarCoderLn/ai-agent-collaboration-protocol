@@ -1,5 +1,6 @@
 packages:
   - "evidence-research"
+  - "product-workflow"
 
 allowBuilds:
   esbuild: true

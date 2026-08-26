@@ -2,6 +2,58 @@
 
 本目录承载平台自建、可真实执行任务的 Agent。它们用于协议联调、质量评估和演示，不改变第三方 Agent 通过框架无关协议接入平台的边界。
 
+## PRD → 设计 → Coding 九个候选 Agent
+
+`product-workflow/` 提供三类能力，每类恰好三个真实执行策略：
+
+| 步骤 | DeepSeek 直连 | Mastra 编排 | 自研状态机 |
+| --- | --- | --- | --- |
+| PRD | `prd-direct` | `prd-mastra` | `prd-state-machine` |
+| 设计 | `design-direct` | `design-mastra` | `design-state-machine` |
+| Coding | `code-direct` | `code-mastra` | `code-state-machine` |
+
+直连策略调用一次模型，作为速度与费用基线；Mastra 策略先生成覆盖计划，再生成结构化
+制品；自研状态机显式执行分析、生成、评审和最多一次修复。三种策略使用相同 DeepSeek
+模型，避免把模型差异错误归因给 Agent 架构。页面默认只执行用户选中的一个候选，不会
+为了凑齐三个结果自动产生三倍费用。
+
+三个步骤依次交付 `RequirementsArtifact`、`DesignArtifact` 和 `CodeArtifact`。设计预览
+的 SVG 由可信代码模板根据已验证 token 生成，模型不能直接提交可执行 SVG/HTML；Coding
+制品只展示文件和运行说明，不直接写入仓库或执行模型命令。完整契约见
+[`docs/workflow-artifacts.md`](../docs/workflow-artifacts.md)。
+
+### 核心代码阅读顺序
+
+1. `product-workflow/src/catalog.ts`：9 个 Agent ID、展示名称和真实策略映射。
+2. `product-workflow/src/domain.ts`：三类输入输出 schema、可信字段补齐和安全 SVG 渲染。
+3. `product-workflow/src/agents/prd/`：三个 PRD Agent 的独立核心实现。
+4. `product-workflow/src/agents/design/`：三个设计 Agent 的独立核心实现。
+5. `product-workflow/src/agents/coding/`：三个 Coding Agent 的独立核心实现。
+6. `product-workflow/src/executors.ts`：只按九个稳定 Agent ID 路由，不包含模型策略分支。
+7. `product-workflow/src/model-client.ts`：DeepSeek JSON/TSX 客户端与代码安全校验。
+8. `product-workflow/src/api.ts`：协议验签、幂等、输入校验、超时和执行路由。
+9. `product-workflow/src/index.ts`：配置、执行器、API 与 HTTP 服务的组合根。
+
+每个 Agent 的展示名、实现方式和核心文件完整对应表见
+[`product-workflow/README.md`](product-workflow/README.md)。
+
+### 本地启动
+
+可以复用已经配置好的论文 Agent DeepSeek Key 和 HMAC secret，无需读取或复制密钥：
+
+```bash
+cd agents
+set -a
+source evidence-research/.env
+set +a
+pnpm --filter @aicp/product-workflow-agents dev
+```
+
+服务默认监听 `127.0.0.1:9202`。再启动 Web 后访问
+`http://127.0.0.1:3001/tasks/experience`。如果希望使用独立凭据，按
+`product-workflow/.env.example` 配置 `WORKFLOW_AGENT_SECRET`，并在 Web 服务端使用相同
+值。所有密钥都只能位于服务端环境变量，变量名不得添加 `NEXT_PUBLIC_`。
+
 ## 论文调研报告 Agent 能力说明
 
 ### 它能帮你做什么
