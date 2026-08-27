@@ -81,7 +81,7 @@ async function fillValidForm() {
 	fireEvent.change(screen.getByLabelText("Agent 执行地址"), {
 		target: { value: "https://agent.example.com/run" },
 	});
-	fireEvent.change(screen.getByLabelText("共享签名密钥"), {
+	fireEvent.change(screen.getByLabelText("访问密钥"), {
 		target: { value: "secret" },
 	});
 	fireEvent.change(screen.getByLabelText("联系邮箱"), {
@@ -123,9 +123,14 @@ describe("AgentRegistrationForm", () => {
 		render(<AgentRegistrationForm />);
 		const submit = screen.getByRole("button", { name: "提交审核" });
 		await waitFor(() => expect(submit).toBeEnabled());
+		expect(submit).toHaveAttribute("form", "agent-registration-form");
+		expect(screen.getAllByRole("button", { name: "提交审核" })).toHaveLength(1);
 		fireEvent.click(submit);
 
 		expect(await screen.findAllByRole("alert")).not.toHaveLength(0);
+		const nameInput = screen.getByLabelText("Agent 名称");
+		expect(nameInput).toHaveAttribute("aria-invalid", "true");
+		await waitFor(() => expect(nameInput).toHaveFocus());
 		expect(fetch).toHaveBeenCalledTimes(2);
 	});
 
@@ -148,6 +153,10 @@ describe("AgentRegistrationForm", () => {
 			"输入自定义标签，按回车添加",
 		);
 		expect(screen.getByLabelText("收款钱包")).toHaveValue(CONNECTED_WALLET);
+		expect(screen.queryByText("AICP v1")).not.toBeInTheDocument();
+		expect(
+			screen.getByText("提交后，平台将自动检查服务连通性和接入要求。"),
+		).toBeInTheDocument();
 		fireEvent.change(screen.getByLabelText("收款钱包"), {
 			target: { value: PAYOUT_WALLET },
 		});
@@ -235,7 +244,7 @@ describe("AgentRegistrationForm", () => {
 			"href",
 			"/agents/agent-123/edit",
 		);
-		expect(screen.getByLabelText("共享签名密钥")).toHaveValue("");
+		expect(screen.getByLabelText("访问密钥")).toHaveValue("");
 	});
 
 	it("将服务端嵌套报价错误映射到报价输入项", async () => {

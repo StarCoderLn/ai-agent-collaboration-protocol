@@ -5,7 +5,6 @@ import { Input } from "@web/ui/components/input";
 import { Label } from "@web/ui/components/label";
 import { Textarea } from "@web/ui/components/textarea";
 import {
-	AlertCircle,
 	ArrowRight,
 	Bot,
 	Braces,
@@ -16,7 +15,6 @@ import {
 	KeyRound,
 	Loader2,
 	LockKeyhole,
-	ShieldCheck,
 	Wallet,
 	X,
 } from "lucide-react";
@@ -27,6 +25,7 @@ import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import { useLocale } from "@/components/i18n/locale-provider";
 import {
 	CapabilityTaxonomyFields,
+	findCapabilityCategory,
 	UNSELECTED_CAPABILITY_CATEGORY_ID,
 	useCapabilityTaxonomy,
 } from "@/components/platform/capability-taxonomy-fields";
@@ -36,6 +35,7 @@ import {
 	registerAgent,
 	validateAgentRegistration,
 } from "@/lib/api/agent-registration";
+import { revealFormError } from "@/lib/forms/reveal-form-error";
 import { parseEthToWei } from "@/lib/platform/money";
 import { AICP_TYPESCRIPT_TEMPLATE } from "./aicp-typescript-template";
 
@@ -78,6 +78,35 @@ const SERVER_FIELD_TO_FORM_FIELD: Readonly<
 	"price.currency": "priceCurrency",
 };
 
+const AGENT_REGISTRATION_FORM_ID = "agent-registration-form";
+const AGENT_FIELD_IDS: Readonly<
+	Partial<Record<keyof AgentRegistrationValues, string>>
+> = {
+	name: "name",
+	categoryId: "agent-capability-category",
+	capabilityDesc: "capabilityDesc",
+	tags: "agent-custom-tag",
+	serviceEndpoint: "serviceEndpoint",
+	credentialSecret: "credentialSecret",
+	email: "email",
+	priceAmount: "priceAmount",
+	priceCurrency: "priceAmount",
+	payoutWalletAddress: "payoutWalletAddress",
+};
+
+const AGENT_FIELD_ORDER = [
+	"name",
+	"email",
+	"capabilityDesc",
+	"categoryId",
+	"tags",
+	"serviceEndpoint",
+	"credentialSecret",
+	"priceAmount",
+	"priceCurrency",
+	"payoutWalletAddress",
+] as const satisfies readonly (keyof AgentRegistrationFieldErrors)[];
+
 type SubmitState =
 	| { kind: "idle" }
 	| { kind: "submitting" }
@@ -86,6 +115,13 @@ type SubmitState =
 
 function newIdempotencyKey(): string {
 	return crypto.randomUUID();
+}
+
+/** 固定首错顺序与页面阅读顺序一致，不依赖 Zod 或服务端对象属性的偶然排列。 */
+function firstAgentErrorField(
+	errors: AgentRegistrationFieldErrors,
+): keyof AgentRegistrationValues | null {
+	return AGENT_FIELD_ORDER.find((field) => errors[field] !== undefined) ?? null;
 }
 
 export default function AgentRegistrationForm() {
@@ -101,6 +137,10 @@ export default function AgentRegistrationForm() {
 	const [state, setState] = useState<SubmitState>({ kind: "idle" });
 	const [exampleOpen, setExampleOpen] = useState(false);
 	const idempotencyKey = useRef(newIdempotencyKey());
+	const selectedCategory =
+		taxonomy.kind === "loaded"
+			? findCapabilityCategory(taxonomy.categories, form.categoryId)
+			: null;
 	// 首次连接成功时用登录钱包作为便捷默认值；只在输入仍为空时回填，绝不覆盖用户
 	// 已经手动填写的独立收款地址。
 	useEffect(() => {
@@ -132,15 +172,24 @@ export default function AgentRegistrationForm() {
 			setState({ kind: "idle" });
 		}
 		setForm((current) => ({ ...current, [field]: value }));
+		setFieldErrors((current) => {
+			if (!(field in current)) return current;
+			const next = { ...current };
+			delete next[field as keyof AgentRegistrationFieldErrors];
+			return next;
+		});
 	}
 
 	async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
 		event.preventDefault();
+		const submittedForm = event.currentTarget;
 		if (wallet.status !== "connected") {
-			setState({
-				kind: "error",
-				message: t("请先连接提供者钱包并完成签名登录"),
-				retryable: false,
+			const message = t("请先连接提供者钱包并完成签名登录");
+			setState({ kind: "error", message, retryable: false });
+			revealFormError({
+				form: submittedForm,
+				message,
+				toastId: "agent-registration-validation",
 			});
 			return;
 		}
@@ -153,11 +202,22 @@ export default function AgentRegistrationForm() {
 			priceAmount: priceAmount ?? "",
 		});
 		if (!validation.success) {
-			setFieldErrors({
+			const nextErrors: AgentRegistrationFieldErrors = {
 				...validation.fieldErrors,
 				...(priceAmount === null
 					? { priceAmount: t("请输入大于 0、最多 18 位小数的 ETH 金额") }
 					: {}),
+			};
+			setFieldErrors(nextErrors);
+			const firstField = firstAgentErrorField(nextErrors);
+			const message =
+				(firstField === null ? undefined : nextErrors[firstField]) ??
+				t("请检查输入内容");
+			revealFormError({
+				form: submittedForm,
+				fieldId: firstField === null ? undefined : AGENT_FIELD_IDS[firstField],
+				message,
+				toastId: "agent-registration-validation",
 			});
 			return;
 		}
@@ -193,12 +253,26 @@ export default function AgentRegistrationForm() {
 					mapped[field as keyof AgentRegistrationValues] = fieldError.message;
 			}
 			setFieldErrors(mapped);
+			const firstField = firstAgentErrorField(mapped);
+			revealFormError({
+				form: submittedForm,
+				fieldId: firstField === null ? undefined : AGENT_FIELD_IDS[firstField],
+				message: result.error.message,
+				toastId: "agent-registration-submit",
+			});
+		} else {
+			revealFormError({
+				form: submittedForm,
+				message: result.error.message,
+				toastId: "agent-registration-submit",
+			});
 		}
 	}
 
 	return (
-		<div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+		<div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
 			<form
+				id={AGENT_REGISTRATION_FORM_ID}
 				onSubmit={handleSubmit}
 				className="cyber-panel cyber-corner overflow-hidden rounded-2xl border"
 				noValidate
@@ -223,6 +297,10 @@ export default function AgentRegistrationForm() {
 							>
 								<Input
 									id="name"
+									aria-invalid={fieldErrors.name !== undefined}
+									aria-describedby={
+										fieldErrors.name === undefined ? undefined : "name-error"
+									}
 									placeholder={t("例如：前端代码生成 Agent")}
 									value={form.name}
 									onChange={(event) => updateField("name", event.target.value)}
@@ -236,6 +314,10 @@ export default function AgentRegistrationForm() {
 							>
 								<Input
 									id="email"
+									aria-invalid={fieldErrors.email !== undefined}
+									aria-describedby={
+										fieldErrors.email === undefined ? undefined : "email-error"
+									}
 									type="email"
 									placeholder="provider@example.com"
 									value={form.email}
@@ -250,6 +332,12 @@ export default function AgentRegistrationForm() {
 						>
 							<Textarea
 								id="capabilityDesc"
+								aria-invalid={fieldErrors.capabilityDesc !== undefined}
+								aria-describedby={
+									fieldErrors.capabilityDesc === undefined
+										? undefined
+										: "capabilityDesc-error"
+								}
 								className="min-h-28 rounded-lg text-sm leading-6"
 								placeholder={t("说明最擅长完成什么任务，以及交付物形式。")}
 								value={form.capabilityDesc}
@@ -278,7 +366,7 @@ export default function AgentRegistrationForm() {
 							id="agent-connection-heading"
 							icon={Braces}
 							title={t("服务接入")}
-							description={t("使用 AICP v1 HMAC 协议接收正式任务")}
+							description={t("填写平台调用 Agent 时使用的地址和访问密钥")}
 						/>
 						<Field
 							label={t("Agent 执行地址")}
@@ -288,6 +376,12 @@ export default function AgentRegistrationForm() {
 							<div className="flex flex-col gap-2 sm:flex-row">
 								<Input
 									id="serviceEndpoint"
+									aria-invalid={fieldErrors.serviceEndpoint !== undefined}
+									aria-describedby={
+										fieldErrors.serviceEndpoint === undefined
+											? undefined
+											: "serviceEndpoint-error"
+									}
 									type="url"
 									className="flex-1"
 									placeholder="https://agent.example.com/v1/agents/my-agent"
@@ -308,11 +402,11 @@ export default function AgentRegistrationForm() {
 								</Button>
 							</div>
 							<p className="mt-1 text-muted-foreground text-xs">
-								{t("平台向该地址派发任务，并检查同域 /healthz 健康端点。")}
+								{t("平台会向该地址派发任务，并自动检查服务是否正常运行。")}
 							</p>
 						</Field>
 						<Field
-							label={t("共享签名密钥")}
+							label={t("访问密钥")}
 							htmlFor="credentialSecret"
 							error={fieldErrors.credentialSecret}
 						>
@@ -323,10 +417,16 @@ export default function AgentRegistrationForm() {
 								/>
 								<Input
 									id="credentialSecret"
+									aria-invalid={fieldErrors.credentialSecret !== undefined}
+									aria-describedby={
+										fieldErrors.credentialSecret === undefined
+											? undefined
+											: "credentialSecret-error"
+									}
 									type="password"
 									autoComplete="new-password"
 									className="pl-9"
-									placeholder={t("粘贴 Agent 使用的 HMAC 密钥")}
+									placeholder={t("粘贴与 Agent 配置一致的访问密钥")}
 									value={form.credentialSecret}
 									onChange={(event) =>
 										updateField("credentialSecret", event.target.value)
@@ -359,6 +459,12 @@ export default function AgentRegistrationForm() {
 								<div className="relative">
 									<Input
 										id="priceAmount"
+										aria-invalid={fieldErrors.priceAmount !== undefined}
+										aria-describedby={
+											fieldErrors.priceAmount === undefined
+												? undefined
+												: "priceAmount-error"
+										}
 										inputMode="decimal"
 										className="pr-16 font-mono"
 										value={form.priceAmount}
@@ -386,6 +492,12 @@ export default function AgentRegistrationForm() {
 									/>
 									<Input
 										id="payoutWalletAddress"
+										aria-invalid={fieldErrors.payoutWalletAddress !== undefined}
+										aria-describedby={
+											fieldErrors.payoutWalletAddress === undefined
+												? undefined
+												: "payoutWalletAddress-error"
+										}
 										className="pl-9 font-mono text-xs"
 										placeholder="0x..."
 										value={form.payoutWalletAddress}
@@ -398,77 +510,35 @@ export default function AgentRegistrationForm() {
 						</div>
 					</section>
 
-					{state.kind === "success" && (
-						<p
-							className="flex items-center gap-1.5 rounded-xl border border-success/20 bg-success/10 p-4 text-sm text-success"
-							role="status"
-						>
-							<CheckCircle2 className="size-4" aria-hidden />
-							{t("创建成功并进入待审核，")}
-							<Link
-								className="font-medium underline"
-								href={`/agents/${state.agentId}/edit`}
-							>
-								{t("继续配置")}
-							</Link>
-						</p>
-					)}
-					{state.kind === "error" && (
-						<p
-							className="flex items-center gap-1.5 rounded-xl border border-destructive/20 bg-destructive-container p-4 text-destructive text-sm"
-							role="alert"
-						>
-							<AlertCircle className="size-4 shrink-0" aria-hidden />
-							{state.message}
-							{state.retryable ? t("（可重试）") : ""}
-						</p>
-					)}
-
-					<div className="flex flex-col-reverse items-stretch justify-between gap-3 border-primary/10 border-t pt-5 sm:flex-row sm:items-center">
-						<p className="flex items-center gap-2 text-muted-foreground text-xs">
-							<ShieldCheck className="size-4 text-success" aria-hidden />
-							{t("提交即表示确认 Agent 已实现 AICP v1 协议")}
-						</p>
-						<Button
-							type="submit"
-							size="lg"
-							className="rounded-xl px-6 shadow-[0_0_24px_var(--brand-glow)]"
-							disabled={
-								state.kind === "submitting" || taxonomy.kind !== "loaded"
-							}
-						>
-							{state.kind === "submitting" ? (
-								<Loader2 className="size-4 animate-spin" aria-hidden />
-							) : (
-								<Check className="size-4" aria-hidden />
-							)}
-							{state.kind === "submitting" ? t("提交中…") : t("提交审核")}
-							<ArrowRight className="size-4" aria-hidden />
-						</Button>
-					</div>
 				</div>
 			</form>
 
 			<aside className="h-fit space-y-4 lg:sticky lg:top-24">
+				<AgentSubmitCard
+					form={form}
+					categoryName={selectedCategory?.name ?? "—"}
+					state={state}
+					taxonomyReady={taxonomy.kind === "loaded"}
+				/>
 				<section className="cyber-panel rounded-2xl border p-5">
-					<p className="font-mono text-secondary text-xs">AICP ADMISSION</p>
+					<p className="font-mono text-secondary text-xs">LISTING CHECKLIST</p>
 					<h2 className="mt-1 font-semibold text-lg">
 						{t("上架前只需准备三样")}
 					</h2>
 					<ol className="mt-5 space-y-4 text-sm">
 						<ChecklistItem
 							number="01"
-							title={t("可公开访问的 HTTPS 地址")}
-							description="GET /healthz · POST /v1/agents/{id}"
+							title={t("平台可访问的服务地址")}
+							description={t("用于接收任务并报告运行状态")}
 						/>
 						<ChecklistItem
 							number="02"
-							title={t("双方共享的 HMAC 密钥")}
-							description={t("用于验证平台请求签名")}
+							title={t("用于验证平台请求的访问密钥")}
+							description={t("防止未经授权的请求调用 Agent")}
 						/>
 						<ChecklistItem
 							number="03"
-							title={t("已签名的钱包会话")}
+							title={t("已连接的钱包")}
 							description={t("用于确认 Agent 所有者身份")}
 						/>
 					</ol>
@@ -481,15 +551,15 @@ export default function AgentRegistrationForm() {
 					<ul className="grid gap-2 text-sm">
 						<li className="flex gap-2">
 							<Check className="mt-0.5 size-4 shrink-0" />
-							{t("密钥使用应用层信封加密存储。")}
+							{t("访问密钥会加密保存。")}
 						</li>
 						<li className="flex gap-2">
 							<Check className="mt-0.5 size-4 shrink-0" />
-							{t("明文不写日志，也没有读取接口。")}
+							{t("平台不会公开或返回密钥明文。")}
 						</li>
 						<li className="flex gap-2">
 							<Check className="mt-0.5 size-4 shrink-0" />
-							{t("提交后只能整体替换密钥。")}
+							{t("如需修改，只能使用新密钥整体替换。")}
 						</li>
 					</ul>
 				</section>
@@ -498,6 +568,77 @@ export default function AgentRegistrationForm() {
 			{exampleOpen && (
 				<IntegrationExampleDialog onClose={() => setExampleOpen(false)} />
 			)}
+		</div>
+	);
+}
+
+function AgentSubmitCard({
+	form,
+	categoryName,
+	state,
+	taxonomyReady,
+}: {
+	form: FormState;
+	categoryName: string;
+	state: SubmitState;
+	taxonomyReady: boolean;
+}) {
+	const { t } = useLocale();
+	return (
+		<section className="cyber-panel cyber-corner rounded-2xl border p-5">
+			<h2 className="font-semibold text-lg">{t("提交审核")}</h2>
+			<dl className="mt-5 space-y-3 text-sm">
+				<AgentPreviewRow label={t("Agent 名称")} value={form.name || "—"} />
+				<AgentPreviewRow label={t("服务分类")} value={categoryName} />
+				<AgentPreviewRow
+					label={t("每个任务报价（ETH）")}
+					value={`${form.priceAmount || "—"} ETH`}
+				/>
+			</dl>
+			<div className="mt-5 rounded-lg border border-tertiary/20 bg-tertiary-container p-3 text-tertiary-container-foreground text-xs leading-5">
+				{t("提交后，平台将自动检查服务连通性和接入要求。")}
+			</div>
+			<Button
+				form={AGENT_REGISTRATION_FORM_ID}
+				type="submit"
+				size="lg"
+				className="mt-5 w-full rounded-full shadow-[0_0_24px_var(--brand-glow)]"
+				disabled={state.kind === "submitting" || !taxonomyReady}
+			>
+				{state.kind === "submitting" ? (
+					<Loader2 className="size-4 animate-spin" aria-hidden />
+				) : (
+					<Check className="size-4" aria-hidden />
+				)}
+				{state.kind === "submitting" ? t("提交中…") : t("提交审核")}
+				<ArrowRight className="size-4" aria-hidden />
+			</Button>
+			{state.kind === "success" && (
+				<p
+					className="mt-4 flex items-start gap-2 rounded-lg border border-success/20 bg-success/10 p-3 text-sm text-success"
+					role="status"
+				>
+					<CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
+					<span>
+						{t("创建成功并进入待审核，")}
+						<Link
+							className="font-medium underline"
+							href={`/agents/${state.agentId}/edit`}
+						>
+							{t("继续配置")}
+						</Link>
+					</span>
+				</p>
+			)}
+		</section>
+	);
+}
+
+function AgentPreviewRow({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="flex items-start justify-between gap-4">
+			<dt className="text-muted-foreground">{label}</dt>
+			<dd className="max-w-[60%] truncate text-right font-medium">{value}</dd>
 		</div>
 	);
 }
@@ -665,7 +806,11 @@ function Field({ label, htmlFor, error, hint, children }: FieldProps) {
 			{children}
 			{hint && <p className="mt-1.5 text-muted-foreground text-xs">{hint}</p>}
 			{error && (
-				<p className="mt-1.5 text-destructive text-xs" role="alert">
+				<p
+					id={`${htmlFor}-error`}
+					className="mt-1.5 text-destructive text-xs"
+					role="alert"
+				>
 					{error}
 				</p>
 			)}

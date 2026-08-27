@@ -206,6 +206,12 @@ export function CapabilityTaxonomyFields({
 					<SelectField
 						id={categoryFieldId}
 						aria-label={t("服务分类")}
+						aria-invalid={categoryError !== undefined}
+						aria-describedby={
+							categoryError === undefined
+								? undefined
+								: `${categoryFieldId}-error`
+						}
 						value={categoryId}
 						onValueChange={onCategoryChange}
 						options={[
@@ -258,6 +264,10 @@ export function CapabilityTaxonomyFields({
 					<div className="flex gap-2">
 						<input
 							id={tagsInputId}
+							aria-invalid={tagsError !== undefined}
+							aria-describedby={
+								tagsError === undefined ? undefined : `${tagsInputId}-error`
+							}
 							value={customTagInput}
 							onChange={(event) => {
 								setCustomTagInput(event.target.value);
@@ -366,7 +376,11 @@ function TaxonomyField({
 			</Label>
 			{children}
 			{error ? (
-				<p className="mt-1.5 text-destructive text-xs" role="alert">
+				<p
+					id={`${htmlFor}-error`}
+					className="mt-1.5 text-destructive text-xs"
+					role="alert"
+				>
 					{error}
 				</p>
 			) : (

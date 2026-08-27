@@ -158,7 +158,7 @@ export default function ArbitrationConsole({
 				description={
 					wallet.status === "error"
 						? wallet.error
-						: t("仲裁决定是高风险操作，必须先完成 SIWE 身份验证。")
+						: t("仲裁决定会影响资金去向，请先连接钱包并完成签名验证。")
 				}
 				action={
 					<Button

@@ -15,6 +15,7 @@ import {
 } from "@/lib/api/agent-validation";
 import type { Agent, AgentPatchInput } from "@/lib/api/agents";
 import { AgentApiRequestError, patchAgent } from "@/lib/api/agents";
+import { revealFormError } from "@/lib/forms/reveal-form-error";
 
 interface AgentEditFormProps {
 	agent: Agent;
@@ -51,6 +52,41 @@ function toPatchInput(
 }
 
 type SubmitStatus = "idle" | "submitting" | "success" | "error";
+
+const EDIT_FIELD_ORDER = [
+	"name",
+	"categoryId",
+	"email",
+	"serviceEndpoint",
+	"pricingType",
+	"priceAmount",
+	"priceCurrency",
+	"capabilityDesc",
+	"tags",
+] as const satisfies readonly (keyof AgentEditFormValues)[];
+
+/**
+ * 编辑页的字段 ID 与领域字段名目前完全一致。仍在这里集中声明映射，是为了让
+ * “错误属于哪个字段”和 DOM 实现解耦；以后调整控件 ID 时无需改动提交逻辑。
+ */
+const EDIT_FIELD_IDS: Readonly<Record<keyof AgentEditFormValues, string>> = {
+	name: "name",
+	categoryId: "categoryId",
+	capabilityDesc: "capabilityDesc",
+	tags: "tags",
+	pricingType: "pricingType",
+	priceAmount: "priceAmount",
+	priceCurrency: "priceCurrency",
+	serviceEndpoint: "serviceEndpoint",
+	email: "email",
+};
+
+/** 按页面阅读顺序选择首个错误，避免依赖对象属性的偶然顺序。 */
+function firstEditErrorField(
+	errors: AgentEditFormErrors,
+): keyof AgentEditFormValues | null {
+	return EDIT_FIELD_ORDER.find((field) => errors[field] !== undefined) ?? null;
+}
 
 /**
  * Agent 配置编辑表单（T-007）。钱包地址字段只读展示，不出现在提交的补丁里——
@@ -96,10 +132,20 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 
 	async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
 		event.preventDefault();
+		const submittedForm = event.currentTarget;
 
 		const nextErrors = validateAgentEditForm(values);
 		setErrors(nextErrors);
 		if (hasFormErrors(nextErrors)) {
+			const firstField = firstEditErrorField(nextErrors);
+			revealFormError({
+				form: submittedForm,
+				fieldId: firstField === null ? undefined : EDIT_FIELD_IDS[firstField],
+				message:
+					(firstField === null ? undefined : nextErrors[firstField]) ??
+					t("请检查输入内容"),
+				toastId: "agent-edit-validation",
+			});
 			return;
 		}
 
@@ -119,10 +165,21 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 			if (err instanceof AgentApiRequestError) {
 				setSubmitError(err.body.message);
 				if (err.body.fields) {
-					setErrors((prev) => ({ ...prev, ...err.body.fields }));
+					const serverErrors: AgentEditFormErrors = err.body.fields;
+					setErrors((prev) => ({ ...prev, ...serverErrors }));
+					const firstField = firstEditErrorField(serverErrors);
+					if (firstField !== null) {
+						revealFormError({
+							form: submittedForm,
+							fieldId: EDIT_FIELD_IDS[firstField],
+							message: err.body.message,
+							toastId: "agent-edit-submit",
+						});
+					}
 				}
 			} else {
-				setSubmitError(t("保存失败，请稍后重试"));
+				const message = t("保存失败，请稍后重试");
+				setSubmitError(message);
 			}
 		}
 	}
@@ -130,9 +187,13 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 	return (
 		<form onSubmit={handleSubmit} className="flex flex-col gap-6" noValidate>
 			<section className="rounded-lg border border-border bg-card p-6">
-				<h2 className="mb-1 font-semibold text-foreground text-lg">{t("基本信息")}</h2>
+				<h2 className="mb-1 font-semibold text-foreground text-lg">
+					{t("基本信息")}
+				</h2>
 				<p className="mb-4 text-muted-foreground text-sm">
-					{t("钱包地址一经创建不可通过本页面修改，如需更换请前往钱包换绑流程。")}
+					{t(
+						"钱包地址一经创建不可通过本页面修改，如需更换请前往钱包换绑流程。",
+					)}
 				</p>
 
 				<div className="grid gap-4 md:grid-cols-2">
@@ -152,10 +213,15 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 							value={values.name}
 							onChange={(event) => updateField("name", event.target.value)}
 							aria-invalid={Boolean(errors.name)}
+							aria-describedby={errors.name ? "name-error" : undefined}
 						/>
 					</Field>
 
-					<Field label={t("分类 ID")} htmlFor="categoryId" error={errors.categoryId}>
+					<Field
+						label={t("分类 ID")}
+						htmlFor="categoryId"
+						error={errors.categoryId}
+					>
 						<Input
 							id="categoryId"
 							value={values.categoryId}
@@ -163,6 +229,9 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 								updateField("categoryId", event.target.value)
 							}
 							aria-invalid={Boolean(errors.categoryId)}
+							aria-describedby={
+								errors.categoryId ? "categoryId-error" : undefined
+							}
 						/>
 					</Field>
 
@@ -173,6 +242,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 							value={values.email}
 							onChange={(event) => updateField("email", event.target.value)}
 							aria-invalid={Boolean(errors.email)}
+							aria-describedby={errors.email ? "email-error" : undefined}
 						/>
 					</Field>
 
@@ -188,6 +258,9 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 								updateField("serviceEndpoint", event.target.value)
 							}
 							aria-invalid={Boolean(errors.serviceEndpoint)}
+							aria-describedby={
+								errors.serviceEndpoint ? "serviceEndpoint-error" : undefined
+							}
 							placeholder="https://"
 						/>
 					</Field>
@@ -204,6 +277,9 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 								updateField("pricingType", event.target.value)
 							}
 							aria-invalid={Boolean(errors.pricingType)}
+							aria-describedby={
+								errors.pricingType ? "pricingType-error" : undefined
+							}
 						/>
 					</Field>
 
@@ -220,6 +296,9 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 								updateField("priceAmount", event.target.value)
 							}
 							aria-invalid={Boolean(errors.priceAmount)}
+							aria-describedby={
+								errors.priceAmount ? "priceAmount-error" : undefined
+							}
 							className="font-mono"
 						/>
 					</Field>
@@ -236,6 +315,9 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 								updateField("priceCurrency", event.target.value)
 							}
 							aria-invalid={Boolean(errors.priceCurrency)}
+							aria-describedby={
+								errors.priceCurrency ? "priceCurrency-error" : undefined
+							}
 						/>
 					</Field>
 				</div>
@@ -254,16 +336,25 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 								updateField("capabilityDesc", event.target.value)
 							}
 							aria-invalid={Boolean(errors.capabilityDesc)}
+							aria-describedby={
+								errors.capabilityDesc ? "capabilityDesc-error" : undefined
+							}
 						/>
 					</Field>
 				</div>
 
 				<div className="mt-4">
-					<Field label={t("标签（逗号分隔）")} htmlFor="tags" error={errors.tags}>
+					<Field
+						label={t("标签（逗号分隔）")}
+						htmlFor="tags"
+						error={errors.tags}
+					>
 						<Input
 							id="tags"
 							value={tagsInput}
 							onChange={(event) => handleTagsChange(event.target.value)}
+							aria-invalid={Boolean(errors.tags)}
+							aria-describedby={errors.tags ? "tags-error" : undefined}
 						/>
 					</Field>
 				</div>
@@ -319,6 +410,7 @@ function Field({ label, htmlFor, error, children }: FieldProps) {
 			{children}
 			{error && (
 				<p
+					id={`${htmlFor}-error`}
 					className="flex items-center gap-1 text-destructive text-xs"
 					role="alert"
 				>

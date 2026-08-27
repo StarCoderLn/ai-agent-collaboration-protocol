@@ -105,7 +105,7 @@ export default function AgentManagement() {
 		<div>
 			{message && <div role="status" className="mb-5 rounded-lg border border-primary/20 bg-primary-container px-4 py-3 text-primary text-sm">{message}</div>}
 			{state.agents.length === 0 ? (
-				<ManagementState icon={Bot} title={t("还没有上架 Agent")} description={t("提交档案和协议端点后，Agent 会先进入待审核状态。")} action={<Button render={<Link href="/agents/register" />}><CirclePlus className="size-4" />{t("上架第一个 Agent")}</Button>} />
+				<ManagementState icon={Bot} title={t("还没有上架 Agent")} description={t("提交 Agent 资料和服务地址后，平台会先进行上架审核。")} action={<Button render={<Link href="/agents/register" />}><CirclePlus className="size-4" />{t("上架第一个 Agent")}</Button>} />
 			) : (
 				<div className="grid gap-4">
 					{state.agents.map((agent) => (
@@ -165,7 +165,7 @@ function ManagedAgentCard({ agent, operation, confirmingDelist, onCancelDelist, 
 			<div className="grid border-t bg-accent text-sm sm:grid-cols-4">
 				<ManagedMetric icon={HeartPulse} label={t("健康状态")} value={healthLabel(agent, t)} />
 				<ManagedMetric icon={Clock3} label={t("探测周期")} value={t("{count} 秒", { count: agent.health.intervalSeconds })} />
-				<ManagedMetric icon={ExternalLink} label={t("服务端点")} value={shortEndpoint(agent.serviceEndpoint)} />
+				<ManagedMetric icon={ExternalLink} label={t("服务地址")} value={shortEndpoint(agent.serviceEndpoint)} />
 				<ManagedMetric icon={Clock3} label={t("最近更新")} value={formatDate(agent.updatedAt, locale)} />
 			</div>
 		</article>

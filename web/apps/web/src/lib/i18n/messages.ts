@@ -24,8 +24,8 @@ export const EN_MESSAGES = {
 	正在退出: "Signing out",
 	"退出登录失败，请稍后重试": "Sign-out failed. Please try again.",
 	"打开钱包账户菜单 {address}": "Open wallet account menu {address}",
-	"用协议、托管和人工验收，为发布者与 Agent 提供者建立可验证的协作关系。":
-		"A verifiable collaboration network for clients and Agent providers, secured by protocol, escrow, and human approval.",
+	"用资金托管、过程追踪和人工验收，为发布者与 Agent 提供者建立可信协作关系。":
+		"Build trusted collaboration between clients and Agent providers through escrow, progress tracking, and human approval.",
 	发现: "Discover",
 	创建: "Create",
 	我的工作台: "My Workspace",
@@ -53,8 +53,8 @@ export const EN_MESSAGES = {
 	"核心页面已完成，正在运行测试": "Core screens complete; tests are running",
 	等待发布者验收: "Awaiting client approval",
 	"验收、返工或发起争议": "Approve, request revisions, or open a dispute",
-	协议签名已验证: "Protocol signature verified",
-	"状态版本 #08 · 未发现重放": "State version #08 · No replay detected",
+	"Agent 身份已验证": "Agent identity verified",
+	任务记录完整可追踪: "Complete, traceable task history",
 	链上确认: "Onchain confirmation",
 	完成后自动开始匹配: "Matching starts automatically",
 	"100%": "100%",
@@ -92,7 +92,7 @@ export const EN_MESSAGES = {
 	"112 次交付": "112 deliveries",
 	设计系统: "Design Systems",
 	响应式: "Responsive Design",
-	"协议原生 Coding Agent": "Protocol-native Coding Agent",
+	"高质量 Coding Agent": "High-quality Coding Agent",
 	代码开发: "Software Development",
 	"78 次交付": "78 deliveries",
 	自动化测试: "Automated Testing",
@@ -100,8 +100,8 @@ export const EN_MESSAGES = {
 	"可验证的 Agent 协作网络": "A verifiable Agent collaboration network",
 	"从发布任务开始，走完托管、匹配、执行与验收":
 		"From task posting to escrow, matching, execution, and approval",
-	"协议派发、资金托管、过程追踪与人工验收共同保障交付，每一步都有状态和证据可查。":
-		"Protocol dispatch, escrow, progress tracking, and human approval protect delivery, with inspectable state and evidence at every step.",
+	"安全派发、资金托管、过程追踪与人工验收共同保障交付，每一步都有状态和证据可查。":
+		"Secure dispatch, escrow, progress tracking, and human approval protect delivery, with inspectable state and evidence at every step.",
 	"任务、预算与状态清晰可见": "Clear tasks, budgets, and status",
 	发现等待执行的: "Discover execution-ready",
 	真实任务: "real tasks",
@@ -213,7 +213,7 @@ export const EN_MESSAGES = {
 	待结算: "Awaiting settlement",
 	已退款: "Refunded",
 	已超时: "Timed out",
-	协议保护: "Protocol protected",
+	平台保障: "Platform protected",
 	"开发一个可信的 AI Agent 任务协作工作台":
 		"Build a trusted AI Agent task collaboration workspace",
 	"面向需要委托复杂数字任务的用户，设计并实现任务发布、候选匹配、执行追踪、结果验收和争议处理的完整流程。要求状态清晰、移动端可查看，并提供关键路径测试。":
@@ -251,8 +251,13 @@ export const EN_MESSAGES = {
 	描述你的需求: "Describe your request",
 	"填写需求、预算和截止时间即可开始":
 		"Add your requirements, budget, and deadline to get started",
-	"填写需求、分类、标签、预算和截止时间即可开始":
-		"Add your request, category, tags, budget, and deadline to get started",
+	"填写标题、详细需求、分类、标签、预算和截止时间即可开始":
+		"Add a title, detailed request, category, tags, budget, and deadline to get started",
+	用一句话说明需要完成的任务: "Summarize the task in one sentence",
+	"例如：开发一个电商后台管理系统":
+		"Example: Build an e-commerce admin dashboard",
+	"请输入 6–72 个字符的任务标题":
+		"Enter a task title between 6 and 72 characters",
 	"描述目标、使用场景和必须满足的限制":
 		"Describe the goal, use case, and non-negotiable constraints",
 	"例如：为跨境电商团队开发一个可管理商品、订单和权限的后台系统……":
@@ -394,8 +399,7 @@ export const EN_MESSAGES = {
 	尚未发布: "Not posted",
 	未填写任务标题: "Task title not provided",
 	还没有填写需求标题: "Request title not provided",
-	填写详细需求后自动生成标题:
-		"A title will be created from your detailed request",
+	填写任务标题后显示预览: "Enter a task title to preview it here",
 	格式无效: "Invalid format",
 	平台手续费: "Platform fee",
 	提交时由服务端计算并冻结规则版本:
@@ -436,8 +440,8 @@ export const EN_MESSAGES = {
 	预算: "Budget",
 	返回工作台: "Back to Workspace",
 	"Agent 审核台": "Agent Review Desk",
-	"核对提供者、协议端点与独立准入决定。审核身份由服务端角色表验证，页面不能自行声明管理员权限。":
-		"Review providers, protocol endpoints, and independent admission decisions. Reviewer identity is verified by server-side roles and cannot be self-declared in the interface.",
+	"核对提供者资料、服务可用性和上架条件。审核权限由平台统一验证，普通用户无法进入审核流程。":
+		"Review provider information, service availability, and listing requirements. Review access is verified by the platform and is unavailable to regular users.",
 	争议仲裁台: "Dispute Arbitration Desk",
 	"独立核对双方证据、托管金额与资金去向。服务端会再次验证仲裁员角色，普通发布者无法在这里作出决定。":
 		"Independently review both parties' evidence, escrowed funds, and fund destination. Arbitrator roles are verified server-side; regular clients cannot issue decisions here.",
@@ -448,13 +452,13 @@ export const EN_MESSAGES = {
 	核对卷宗: "Review case",
 	"独立 Agent Lab": "Independent Agent Lab",
 	"论文调研 Agent": "Research Review Agent",
-	"通过平台 HMAC 协议真实调用 Mastra Agent，检索 OpenAlex 论文并生成带引用的报告。":
-		"Call a Mastra Agent through the platform HMAC protocol to retrieve OpenAlex papers and produce a cited report.",
+	"通过平台真实调用 Mastra Agent，检索 OpenAlex 论文并生成带引用的报告。":
+		"Call a Mastra Agent through the platform to retrieve OpenAlex papers and produce a cited report.",
 	"Agent 提供者中心": "Agent Provider Center",
 	一页上架你的: "List your",
 	快速上架你的: "Quickly list your",
-	"填写服务地址、访问凭证、能力与报价，提交后平台会完成协议检查和准入审核。":
-		"Add your endpoint, access credential, capabilities, and pricing. The platform then runs protocol and admission reviews.",
+	"填写服务地址、访问密钥、能力与报价，提交后平台会完成服务检查和上架审核。":
+		"Add your service URL, access key, capabilities, and pricing. The platform then checks the service and reviews the listing.",
 	"填写一次，即可提交审核": "One form, ready for review",
 	"连接信息、市场资料与报价集中在同一页，提交后进入协议准入审核。":
 		"Connection details, marketplace profile, and pricing stay on one page before protocol admission review.",
@@ -464,11 +468,11 @@ export const EN_MESSAGES = {
 	"仅用于审核与异常通知，不会在市场公开。":
 		"Used only for reviews and incident notifications; never shown publicly.",
 	服务接入: "Service integration",
-	"使用 AICP v1 HMAC 协议接收正式任务":
-		"Receive production tasks through the AICP v1 HMAC protocol",
+	"填写平台调用 Agent 时使用的地址和访问密钥":
+		"Enter the service URL and access key the platform will use to call your Agent",
 	查看接入示例: "View integration example",
-	"平台向该地址派发任务，并检查同域 /healthz 健康端点。":
-		"The platform dispatches tasks to this endpoint and checks /healthz on the same origin.",
+	"平台会向该地址派发任务，并自动检查服务是否正常运行。":
+		"The platform dispatches tasks to this URL and automatically checks that the service is available.",
 	报价与收款: "Pricing & payout",
 	"当前使用固定按任务计价，收款身份绑定登录钱包":
 		"Fixed per-task pricing with payouts bound to the signed-in wallet",
@@ -480,13 +484,14 @@ export const EN_MESSAGES = {
 		"Uses the currently signed-in wallet automatically and cannot be replaced in the form.",
 	"默认使用登录钱包，也可以填写其他支持当前网络资产的钱包地址。":
 		"Defaults to your signed-in wallet. You may enter another wallet that supports the current network asset.",
-	"提交即表示确认 Agent 已实现 AICP v1 协议":
-		"By submitting, you confirm the Agent implements AICP v1",
+	"提交后，平台将自动检查服务连通性和接入要求。":
+		"After submission, the platform automatically checks service availability and integration requirements.",
 	上架前只需准备三样: "Prepare just three things",
-	"可公开访问的 HTTPS 地址": "A publicly accessible HTTPS endpoint",
-	"双方共享的 HMAC 密钥": "A shared HMAC secret",
-	用于验证平台请求签名: "Verifies signatures on platform requests",
-	已签名的钱包会话: "A signed wallet session",
+	平台可访问的服务地址: "A service URL accessible to the platform",
+	用于接收任务并报告运行状态: "Receives tasks and reports service availability",
+	用于验证平台请求的访问密钥: "An access key that verifies platform requests",
+	"防止未经授权的请求调用 Agent": "Prevents unauthorized requests from calling the Agent",
+	已连接的钱包: "A connected wallet",
 	作为提供者身份与收款地址: "Acts as provider identity and payout address",
 	"用于确认 Agent 所有者身份": "Confirms the Agent owner's identity",
 	"AICP 接入示例": "AICP integration example",
@@ -530,8 +535,9 @@ export const EN_MESSAGES = {
 	"Agent 执行地址": "Agent execution endpoint",
 	"平台会向这里派发任务，并自动检查同域的 /healthz。":
 		"The platform dispatches tasks here and automatically checks /healthz on the same origin.",
-	共享签名密钥: "Shared signing secret",
-	"粘贴 Agent 使用的 HMAC 密钥": "Paste the HMAC secret used by the Agent",
+	访问密钥: "Access key",
+	"粘贴与 Agent 配置一致的访问密钥":
+		"Paste the access key configured in your Agent",
 	"提交后无法查看明文，只能整体替换。":
 		"The plaintext cannot be viewed after submission; the secret can only be replaced.",
 	"接入前确认：": "Before connecting: ",
@@ -570,12 +576,11 @@ export const EN_MESSAGES = {
 	提交市场档案: "Submit marketplace profile",
 	"能力、报价和收款钱包": "Capabilities, pricing, and payout wallet",
 	凭证安全: "Credential security",
-	"密钥使用应用层信封加密存储。":
-		"Secrets are stored using application-layer envelope encryption.",
-	"明文不写日志，也没有读取接口。":
-		"Plaintext is never logged and has no read endpoint.",
-	"提交后只能整体替换密钥。":
-		"Secrets can only be fully replaced after submission.",
+	"访问密钥会加密保存。": "Access keys are stored encrypted.",
+	"平台不会公开或返回密钥明文。":
+		"The platform never exposes or returns the plaintext key.",
+	"如需修改，只能使用新密钥整体替换。":
+		"To change it, replace the existing key with a new one.",
 	请检查输入内容: "Check the input and try again.",
 	"Agent Lab 返回了无法识别的数据": "Agent Lab returned unrecognized data.",
 	"Agent Lab 请求失败，请确认 Web 服务仍在运行":
@@ -653,10 +658,10 @@ export const EN_MESSAGES = {
 	服务健康: "Service health",
 	尚未完成首次探测: "First health check pending",
 	"探测于 {date}": "Checked {date}",
-	协议与准入证据: "Protocol & admission evidence",
-	市场准入已通过: "Marketplace admission approved",
-	"只有 active 状态的 Agent 才能出现在公共市场，服务端点和提供者敏感信息不会公开。":
-		"Only active Agents can appear in the public marketplace. Service endpoints and provider-sensitive details remain private.",
+	平台审核与服务保障: "Platform review & service assurance",
+	平台审核已通过: "Platform review approved",
+	"只有审核通过且可接单的 Agent 才会出现在市场，服务地址和提供者敏感信息不会公开。":
+		"Only reviewed Agents that can accept work appear in the marketplace. Service URLs and sensitive provider information remain private.",
 	评分样本可追溯: "Traceable rating evidence",
 	"当前没有正式评分快照，平台明确显示为空。":
 		"No production rating snapshot exists yet, so the platform explicitly shows no score.",
@@ -708,8 +713,8 @@ export const EN_MESSAGES = {
 		"Sign in with the provider wallet used to register the Agent. The platform returns only Agents owned by that wallet.",
 	管理列表暂时不可用: "Management list is temporarily unavailable",
 	"还没有上架 Agent": "No Agents listed yet",
-	"提交档案和协议端点后，Agent 会先进入待审核状态。":
-		"After submitting a profile and protocol endpoint, the Agent enters review.",
+	"提交 Agent 资料和服务地址后，平台会先进行上架审核。":
+		"After submitting Agent details and a service URL, the platform reviews the listing.",
 	"上架第一个 Agent": "List your first Agent",
 	"新入驻 · 受控上线": "New · controlled rollout",
 	编辑配置: "Edit configuration",
@@ -729,7 +734,6 @@ export const EN_MESSAGES = {
 	确认下架: "Confirm delisting",
 	健康状态: "Health status",
 	探测周期: "Check interval",
-	服务端点: "Service endpoint",
 	最近更新: "Last updated",
 	"{count} 秒": "{count}s",
 	可接单: "Available",
@@ -762,8 +766,8 @@ export const EN_MESSAGES = {
 	审核理由: "Review rationale",
 	"说明已经核对的资料，或写清需要提供者修正的问题；决定和审核员钱包都会进入审计记录。":
 		"Describe what was verified or what the provider must correct. The decision and reviewer wallet are recorded in the audit trail.",
-	"例如：服务端点可访问，能力与报价说明一致。":
-		"Example: The service endpoint is reachable and capabilities match the listed price.",
+	"例如：服务地址可访问，能力与报价说明一致。":
+		"Example: The service URL is reachable and capabilities match the listed price.",
 	审核通过: "Approve",
 	驳回并下架: "Reject and delist",
 	"驳回后为终态；提供者修正问题后需要重新注册 Agent。":
@@ -952,8 +956,8 @@ export const EN_MESSAGES = {
 	打开发布任务页: "Open task posting",
 	候选已锁定并派发: "Candidate locked and dispatched",
 	"等待 Agent 签名确认接单": "Awaiting signed Agent acceptance",
-	"接单状态只能由经过协议验签的 Agent 回调推进；页面不提供伪造接单按钮。":
-		"Only a protocol-verified Agent callback can advance acceptance; the interface cannot simulate it.",
+	"平台正在等待 Agent 安全确认接单，确认结果会自动同步到这里。":
+		"The platform is waiting for the Agent to securely accept the task. The result will appear here automatically.",
 	本次没有生成可验收的交付: "No approvable deliverable was produced",
 	"平台已收到经过签名的脱敏失败回调。任务费用仍在资金托管中，不会自动支付给 Agent；你可以发起争议，由仲裁流程决定退款或结算。":
 		"The platform received a signed, redacted failure callback. Funds remain in escrow and are not paid automatically; open a dispute for arbitration to decide refund or settlement.",
@@ -990,15 +994,15 @@ export const EN_MESSAGES = {
 	"上次交易未完成，可以安全重试":
 		"The previous transaction did not complete; retry is safe",
 	在钱包中确认托管交易: "Confirm the escrow transaction in your wallet",
-	"平台只准备 to、data、value；交易必须由当前 SIWE 钱包显式签名。":
-		"The platform prepares only to, data, and value. The current SIWE wallet must sign the transaction explicitly.",
+	"平台会准备好交易内容，只有你在钱包中确认后才会提交到链上。":
+		"The platform prepares the transaction, and it is submitted onchain only after you confirm it in your wallet.",
 	重新准备并发送交易: "Prepare and send again",
 	"托管 {amount}": "Escrow {amount}",
 	任务预算: "Task budget",
 	正在生成候选: "Generating candidates",
 	匹配记录尚未就绪: "Match record not ready",
-	"worker 会按能力、健康、准入、预算和标签生成可追溯快照。":
-		"The worker creates a traceable snapshot from capability, health, admission, budget, and tags.",
+	"平台正在根据能力、服务状态、预算和标签生成候选名单。":
+		"The platform is building a candidate list from capabilities, service status, budget, and tags.",
 	请求匹配: "Request matching",
 	"选择最合适的 Agent": "Select the best-fit Agent",
 	"规则 {rule} · 指纹 {fingerprint}": "Rule {rule} · fingerprint {fingerprint}",
@@ -1195,8 +1199,8 @@ export const EN_MESSAGES = {
 	"服务端同时读取双方证据、托管金额和角色授权。":
 		"The server is loading both parties' evidence, escrow amount, and role authorization.",
 	连接仲裁员钱包: "Connect arbitrator wallet",
-	"仲裁决定是高风险操作，必须先完成 SIWE 身份验证。":
-		"Arbitration is a high-risk operation and requires SIWE authentication.",
+	"仲裁决定会影响资金去向，请先连接钱包并完成签名验证。":
+		"Arbitration affects where funds go. Connect your wallet and complete signature verification first.",
 	无法读取争议卷宗: "Unable to load dispute case",
 	当前钱包没有仲裁权限: "This wallet lacks arbitration permission",
 	"发布者和 Agent 只能提交证据；仲裁员角色由服务端平台角色表验证。":

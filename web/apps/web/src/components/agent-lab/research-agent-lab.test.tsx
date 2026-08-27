@@ -51,9 +51,7 @@ describe("ResearchAgentLab", () => {
 		);
 
 		render(<ResearchAgentLab />);
-		fireEvent.click(
-			screen.getByRole("button", { name: "派发任务并开始执行" }),
-		);
+		fireEvent.click(screen.getByRole("button", { name: "派发任务并开始执行" }));
 
 		await waitFor(() =>
 			expect(screen.getByText("可靠 Agent 研究报告")).toBeInTheDocument(),
@@ -82,13 +80,16 @@ describe("ResearchAgentLab", () => {
 		fireEvent.change(screen.getByLabelText("结束年份"), {
 			target: { value: "2020" },
 		});
-		fireEvent.click(
-			screen.getByRole("button", { name: "派发任务并开始执行" }),
-		);
+		fireEvent.click(screen.getByRole("button", { name: "派发任务并开始执行" }));
 
-		expect(await screen.findByRole("alert")).toHaveTextContent(
-			"起始年份不能晚于结束年份",
+		await waitFor(() =>
+			expect(document.getElementById("yearFrom-error")).toHaveTextContent(
+				"起始年份不能晚于结束年份",
+			),
 		);
+		const startYear = screen.getByLabelText("起始年份");
+		expect(startYear).toHaveAttribute("aria-invalid", "true");
+		await waitFor(() => expect(startYear).toHaveFocus());
 		expect(fetch).not.toHaveBeenCalled();
 	});
 

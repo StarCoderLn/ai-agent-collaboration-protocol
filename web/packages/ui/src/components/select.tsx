@@ -18,6 +18,8 @@ type SelectFieldProps = Readonly<{
 	options: readonly SelectFieldOption[];
 	className?: string;
 	"aria-label"?: string;
+	"aria-invalid"?: boolean;
+	"aria-describedby"?: string;
 	disabled?: boolean;
 	name?: string;
 }>;
@@ -36,6 +38,8 @@ function SelectField({
 	options,
 	className,
 	"aria-label": ariaLabel,
+	"aria-invalid": ariaInvalid,
+	"aria-describedby": ariaDescribedBy,
 	disabled = false,
 	name,
 }: SelectFieldProps) {
@@ -52,8 +56,10 @@ function SelectField({
 			<Select.Trigger
 				id={id}
 				aria-label={ariaLabel}
+				aria-invalid={ariaInvalid}
+				aria-describedby={ariaDescribedBy}
 				className={cn(
-					"group flex h-11 w-full select-none items-center justify-between gap-3 rounded-sm border border-primary/25 bg-card/85 px-3 text-left text-foreground text-sm shadow-[inset_0_1px_0_rgb(255_255_255/0.05),0_8px_24px_rgb(0_0_0/0.12)] outline-none transition-[border-color,background-color,box-shadow] hover:not-data-disabled:border-primary/55 hover:not-data-disabled:bg-primary-container/25 focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20 data-disabled:cursor-not-allowed data-popup-open:border-primary data-popup-open:bg-primary-container/30 data-disabled:opacity-55 data-popup-open:shadow-[0_0_24px_var(--brand-glow)]",
+					"group flex h-11 w-full select-none items-center justify-between gap-3 rounded-sm border border-primary/25 bg-card/85 px-3 text-left text-foreground text-sm shadow-[inset_0_1px_0_rgb(255_255_255/0.05),0_8px_24px_rgb(0_0_0/0.12)] outline-none transition-[border-color,background-color,box-shadow] hover:not-data-disabled:border-primary/55 hover:not-data-disabled:bg-primary-container/25 focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20 aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/25 data-disabled:cursor-not-allowed data-popup-open:border-primary data-popup-open:bg-primary-container/30 data-disabled:opacity-55 data-popup-open:shadow-[0_0_24px_var(--brand-glow)]",
 					className,
 				)}
 			>

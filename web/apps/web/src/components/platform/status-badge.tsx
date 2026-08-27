@@ -39,5 +39,5 @@ export function StatusBadge({ status }: { status: TaskStatus }) {
 
 export function SandboxBadge() {
 	const { t } = useLocale();
-	return <span className="inline-flex items-center gap-1.5 rounded-full border border-tertiary/20 bg-tertiary-container px-2.5 py-1 font-medium text-tertiary-container-foreground text-xs"><ShieldCheck className="size-3.5" strokeWidth={1.5} aria-hidden />{t("协议保护")}</span>;
+	return <span className="inline-flex items-center gap-1.5 rounded-full border border-tertiary/20 bg-tertiary-container px-2.5 py-1 font-medium text-tertiary-container-foreground text-xs"><ShieldCheck className="size-3.5" strokeWidth={1.5} aria-hidden />{t("平台保障")}</span>;
 }

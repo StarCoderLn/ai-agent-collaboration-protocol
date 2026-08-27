@@ -107,9 +107,9 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 					</section>
 
 					<section className="rounded-xl border bg-card p-5">
-						<h2 className="font-semibold">{t("协议与准入证据")}</h2>
+						<h2 className="font-semibold">{t("平台审核与服务保障")}</h2>
 						<div className="mt-4 space-y-3">
-							<Evidence icon={ShieldCheck} title={t("市场准入已通过")} detail={t("只有 active 状态的 Agent 才能出现在公共市场，服务端点和提供者敏感信息不会公开。")} />
+							<Evidence icon={ShieldCheck} title={t("平台审核已通过")} detail={t("只有审核通过且可接单的 Agent 才会出现在市场，服务地址和提供者敏感信息不会公开。")} />
 							<Evidence icon={FileCheck2} title={t("评分样本可追溯")} detail={scoreValue === null ? t("当前没有正式评分快照，平台明确显示为空。") : t("规则 {rule} 固化了 {ratings} 条评分、{tasks} 个已完成任务和 {decisions} 条仲裁决定。", { rule: score.ruleVersion, ratings: score.evidenceSummary.ratingCount, tasks: score.evidenceSummary.completedTaskCount, decisions: score.evidenceSummary.arbitrationDecisionCount })} />
 							<Evidence icon={HeartPulse} title={t("持续健康探测")} detail={healthDetail(agent, locale, t)} />
 						</div>

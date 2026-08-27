@@ -149,7 +149,7 @@ export default function WorkflowCanvas({
 					<div className="workflow-canvas-aurora absolute inset-0" aria-hidden />
 					<div className="absolute left-6 top-6 flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
 						<span className="signal-dot size-1.5 rounded-full bg-secondary" />
-						AICP EXECUTION GRAPH / SCHEMA V0.1
+						WORKFLOW EXECUTION MAP
 					</div>
 
 					<svg className="pointer-events-none absolute inset-0 size-full" viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`} aria-hidden>

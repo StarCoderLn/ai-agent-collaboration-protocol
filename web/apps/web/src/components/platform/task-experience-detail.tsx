@@ -296,11 +296,6 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 							<div className="mt-4 flex flex-wrap items-center gap-2">
 								<StatusBadge status={task.status} />
 								<FormalStateBadge owner={data.owned !== null} />
-								{task.statusVersion !== null && (
-									<span className="rounded-full bg-muted px-2.5 py-1 font-mono text-muted-foreground text-xs">
-										{t("状态版本 {version}", { version: task.statusVersion })}
-									</span>
-								)}
 							</div>
 							<h1 className="mt-3 max-w-4xl font-bold text-2xl tracking-tight sm:text-3xl">
 								{task.title || t("未命名任务")}
@@ -457,7 +452,7 @@ function CurrentAction({
 				icon={Bot}
 				eyebrow={t("候选已锁定并派发")}
 				title={t("等待 Agent 签名确认接单")}
-				description={t("接单状态只能由经过协议验签的 Agent 回调推进；页面不提供伪造接单按钮。")}
+				description={t("平台正在等待 Agent 安全确认接单，确认结果会自动同步到这里。")}
 				tone="ai"
 			>
 				<RefreshButton
@@ -636,7 +631,7 @@ function EscrowAction({
 			icon={LockKeyhole}
 			eyebrow={t("下一步 · 钱包托管")}
 			title={failed ? t("上次交易未完成，可以安全重试") : t("在钱包中确认托管交易")}
-			description={t("平台只准备 to、data、value；交易必须由当前 SIWE 钱包显式签名。")}
+			description={t("平台会准备好交易内容，只有你在钱包中确认后才会提交到链上。")}
 			tone="escrow"
 		>
 			{wallet.status !== "connected" ? (
@@ -751,7 +746,7 @@ function CandidateSelection({
 				icon={Sparkles}
 				eyebrow={t("正在生成候选")}
 				title={t("匹配记录尚未就绪")}
-				description={t("worker 会按能力、健康、准入、预算和标签生成可追溯快照。")}
+				description={t("平台正在根据能力、服务状态、预算和标签生成候选名单。")}
 				tone="ai"
 			>
 				<Button

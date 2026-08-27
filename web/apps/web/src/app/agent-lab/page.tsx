@@ -12,7 +12,7 @@ export default function AgentLabPage() {
 					<p className="font-medium text-primary text-sm">{t("独立 Agent Lab")}</p>
 					<h1 className="mt-2 font-bold text-3xl tracking-tight sm:text-4xl">{t("论文调研 Agent")}</h1>
 					<p className="mt-3 text-muted-foreground leading-7">
-						{t("通过平台 HMAC 协议真实调用 Mastra Agent，检索 OpenAlex 论文并生成带引用的报告。")}
+						{t("通过平台真实调用 Mastra Agent，检索 OpenAlex 论文并生成带引用的报告。")}
 					</p>
 				</header>
 				<ResearchAgentLab />

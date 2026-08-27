@@ -335,7 +335,7 @@ export default function ProductWorkflowExperience({
 						<span className="brand-logo flex size-10 items-center justify-center rounded-xl text-white"><Sparkles className="size-5" aria-hidden /></span>
 						<div>
 							<div className="flex flex-wrap items-center gap-2">
-								<h2 className="font-semibold text-base">AICP Mission Studio</h2>
+								<h2 className="font-semibold text-base">Workflow Studio</h2>
 								<span className="rounded-full border border-secondary/25 bg-secondary-container/30 px-2 py-0.5 font-mono text-secondary text-[9px]">PLAN V0.1</span>
 							</div>
 							<p className="mt-0.5 max-w-[360px] truncate font-mono text-muted-foreground text-[10px]">TASK / {taskId}</p>

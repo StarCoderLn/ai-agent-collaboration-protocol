@@ -52,6 +52,10 @@ describe("AgentEditForm", () => {
 		fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 
 		expect(await screen.findByText("邮箱格式非法")).toBeInTheDocument();
+		const email = screen.getByLabelText("邮箱");
+		expect(email).toHaveAttribute("aria-invalid", "true");
+		expect(email).toHaveAttribute("aria-describedby", "email-error");
+		await waitFor(() => expect(email).toHaveFocus());
 		expect(fetch).not.toHaveBeenCalled();
 	});
 

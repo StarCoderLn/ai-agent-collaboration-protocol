@@ -3,11 +3,12 @@
 import { Button } from "@web/ui/components/button";
 import { Input } from "@web/ui/components/input";
 import { Label } from "@web/ui/components/label";
+import { SelectField } from "@web/ui/components/select";
 import { Textarea } from "@web/ui/components/textarea";
 import {
 	AlertCircle,
-	Bot,
 	BookOpen,
+	Bot,
 	CheckCircle2,
 	Circle,
 	Clock3,
@@ -18,7 +19,6 @@ import {
 	RotateCcw,
 } from "lucide-react";
 import { useState } from "react";
-import { SelectField } from "@web/ui/components/select";
 import { useLocale } from "@/components/i18n/locale-provider";
 import {
 	type AgentLabRequest,
@@ -26,6 +26,7 @@ import {
 	type AgentLabRouteResponse,
 	AgentLabRouteResponseSchema,
 } from "@/lib/agent-lab/contracts";
+import { revealFormError } from "@/lib/forms/reveal-form-error";
 
 type FormState = {
 	topic: string;
@@ -50,7 +51,8 @@ const INITIAL_FORM_ZH: FormState = {
 
 const INITIAL_FORM_EN: FormState = {
 	topic: "Reliability of AI Agent collaboration protocols",
-	researchQuestion: "Which authentication, idempotency, and failure-recovery mechanisms are suitable for independently deployed AI Agents?",
+	researchQuestion:
+		"Which authentication, idempotency, and failure-recovery mechanisms are suitable for independently deployed AI Agents?",
 	language: "en",
 	targetWords: "700",
 	sourceCount: "4",
@@ -68,6 +70,18 @@ type ViewState =
 	  }
 	| { kind: "error"; message: string; retryable: boolean };
 
+type LabValidationField = keyof FormState;
+
+const LAB_FIELD_IDS: Readonly<Record<LabValidationField, string>> = {
+	topic: "topic",
+	researchQuestion: "researchQuestion",
+	language: "language",
+	targetWords: "targetWords",
+	sourceCount: "sourceCount",
+	yearFrom: "yearFrom",
+	yearTo: "yearTo",
+};
+
 const FLOW_STEPS = [
 	"填写任务",
 	"选择 Agent",
@@ -78,14 +92,23 @@ const FLOW_STEPS = [
 
 export default function ResearchAgentLab() {
 	const { locale, t } = useLocale();
-	const [form, setForm] = useState<FormState>(() => locale === "en" ? INITIAL_FORM_EN : INITIAL_FORM_ZH);
+	const [form, setForm] = useState<FormState>(() =>
+		locale === "en" ? INITIAL_FORM_EN : INITIAL_FORM_ZH,
+	);
 	const [state, setState] = useState<ViewState>({ kind: "idle" });
+	const [validationError, setValidationError] = useState<Readonly<{
+		field: LabValidationField;
+		message: string;
+	}> | null>(null);
 
 	function updateField<K extends keyof FormState>(
 		field: K,
 		value: FormState[K],
 	) {
 		setForm((current) => ({ ...current, [field]: value }));
+		setValidationError((current) =>
+			current?.field === field ? null : current,
+		);
 		if (state.kind === "error") {
 			setState({ kind: "idle" });
 		}
@@ -93,6 +116,7 @@ export default function ResearchAgentLab() {
 
 	async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
 		event.preventDefault();
+		const submittedForm = event.currentTarget;
 		const candidate = {
 			topic: form.topic,
 			researchQuestion: form.researchQuestion,
@@ -104,14 +128,25 @@ export default function ResearchAgentLab() {
 		};
 		const parsed = AgentLabRequestSchema.safeParse(candidate);
 		if (!parsed.success) {
-			setState({
-				kind: "error",
-				message: parsed.error.issues[0]?.message ?? t("请检查输入内容"),
-				retryable: false,
+			const firstIssue = parsed.error.issues[0];
+			const issueField = firstIssue?.path[0];
+			const field =
+				typeof issueField === "string" && issueField in LAB_FIELD_IDS
+					? (issueField as LabValidationField)
+					: null;
+			const message = firstIssue?.message ?? t("请检查输入内容");
+			if (field !== null) setValidationError({ field, message });
+			setState({ kind: "idle" });
+			revealFormError({
+				form: submittedForm,
+				fieldId: field === null ? undefined : LAB_FIELD_IDS[field],
+				message,
+				toastId: "research-agent-lab-validation",
 			});
 			return;
 		}
 
+		setValidationError(null);
 		setState({ kind: "submitting" });
 		try {
 			const response = await fetch("/api/agent-lab/research", {
@@ -138,9 +173,10 @@ export default function ResearchAgentLab() {
 				accepted: false,
 			});
 		} catch {
+			const message = t("Agent Lab 请求失败，请确认 Web 服务仍在运行");
 			setState({
 				kind: "error",
-				message: t("Agent Lab 请求失败，请确认 Web 服务仍在运行"),
+				message,
 				retryable: true,
 			});
 		}
@@ -152,9 +188,7 @@ export default function ResearchAgentLab() {
 	 */
 	function handleAccept() {
 		setState((current) =>
-			current.kind === "success"
-				? { ...current, accepted: true }
-				: current,
+			current.kind === "success" ? { ...current, accepted: true } : current,
 		);
 	}
 
@@ -166,169 +200,244 @@ export default function ResearchAgentLab() {
 		<div className="space-y-6">
 			<FlowProgress state={state} />
 			<div className="grid gap-6 xl:grid-cols-[minmax(340px,430px)_minmax(0,1fr)]">
-			<form
-				className="h-fit space-y-5 rounded-xl border bg-card p-6"
-				onSubmit={handleSubmit}
-			>
-				<div className="flex items-start gap-3">
-					<div className="rounded-lg bg-primary/10 p-2 text-primary">
-						<FileCheck2 className="size-5" aria-hidden />
+				<form
+					className="h-fit space-y-5 rounded-xl border bg-card p-6"
+					onSubmit={handleSubmit}
+				>
+					<div className="flex items-start gap-3">
+						<div className="rounded-lg bg-primary/10 p-2 text-primary">
+							<FileCheck2 className="size-5" aria-hidden />
+						</div>
+						<div>
+							<h2 className="font-semibold text-lg">{t("1. 填写研究任务")}</h2>
+							<p className="text-muted-foreground text-sm">
+								{t("提交内容会真实发送给 Agent，不是预设结果")}
+							</p>
+						</div>
 					</div>
-					<div>
-						<h2 className="font-semibold text-lg">{t("1. 填写研究任务")}</h2>
-						<p className="text-muted-foreground text-sm">
-							{t("提交内容会真实发送给 Agent，不是预设结果")}
-						</p>
-					</div>
-				</div>
 
-				<Field label={t("研究主题")} htmlFor="topic">
-					<Input
-						id="topic"
-						value={form.topic}
-						onChange={(event) => updateField("topic", event.target.value)}
-					/>
-				</Field>
-				<Field label={t("研究问题")} htmlFor="researchQuestion">
-					<Textarea
-						id="researchQuestion"
-						className="min-h-28"
-						value={form.researchQuestion}
-						onChange={(event) =>
-							updateField("researchQuestion", event.target.value)
+					<Field
+						label={t("研究主题")}
+						htmlFor="topic"
+						error={
+							validationError?.field === "topic"
+								? validationError.message
+								: undefined
 						}
-					/>
-				</Field>
+					>
+						<Input
+							id="topic"
+							value={form.topic}
+							aria-invalid={validationError?.field === "topic"}
+							aria-describedby={
+								validationError?.field === "topic" ? "topic-error" : undefined
+							}
+							onChange={(event) => updateField("topic", event.target.value)}
+						/>
+					</Field>
+					<Field
+						label={t("研究问题")}
+						htmlFor="researchQuestion"
+						error={
+							validationError?.field === "researchQuestion"
+								? validationError.message
+								: undefined
+						}
+					>
+						<Textarea
+							id="researchQuestion"
+							className="min-h-28"
+							value={form.researchQuestion}
+							aria-invalid={validationError?.field === "researchQuestion"}
+							aria-describedby={
+								validationError?.field === "researchQuestion"
+									? "researchQuestion-error"
+									: undefined
+							}
+							onChange={(event) =>
+								updateField("researchQuestion", event.target.value)
+							}
+						/>
+					</Field>
 
-				<div className="grid grid-cols-2 gap-4">
-					<Field label={t("报告语言")} htmlFor="language">
-						<SelectField
-							id="language"
-							className="h-9 rounded-md"
-							value={form.language}
-							onValueChange={(value) =>
-								updateField("language", value === "en" ? "en" : "zh-CN")
+					<div className="grid grid-cols-2 gap-4">
+						<Field label={t("报告语言")} htmlFor="language">
+							<SelectField
+								id="language"
+								className="h-9 rounded-md"
+								value={form.language}
+								aria-invalid={validationError?.field === "language"}
+								onValueChange={(value) =>
+									updateField("language", value === "en" ? "en" : "zh-CN")
+								}
+								options={[
+									{ value: "zh-CN", label: t("简体中文") },
+									{ value: "en", label: "English" },
+								]}
+							/>
+						</Field>
+						<Field
+							label={t("目标字数")}
+							htmlFor="targetWords"
+							error={
+								validationError?.field === "targetWords"
+									? validationError.message
+									: undefined
 							}
-							options={[
-								{ value: "zh-CN", label: t("简体中文") },
-								{ value: "en", label: "English" },
-							]}
-						/>
-					</Field>
-					<Field label={t("目标字数")} htmlFor="targetWords">
-						<Input
-							id="targetWords"
-							type="number"
-							min={500}
-							max={2000}
-							step={100}
-							value={form.targetWords}
-							onChange={(event) =>
-								updateField("targetWords", event.target.value)
-							}
-						/>
-					</Field>
-					<Field label={t("来源数量")} htmlFor="sourceCount">
-						<Input
-							id="sourceCount"
-							type="number"
-							min={3}
-							max={8}
-							value={form.sourceCount}
-							onChange={(event) =>
-								updateField("sourceCount", event.target.value)
-							}
-						/>
-					</Field>
-					<Field label={t("年份范围")} htmlFor="yearFrom">
-						<div className="flex items-center gap-2">
+						>
 							<Input
-								id="yearFrom"
+								id="targetWords"
 								type="number"
-								aria-label={t("起始年份")}
-								value={form.yearFrom}
+								min={500}
+								max={2000}
+								step={100}
+								value={form.targetWords}
+								aria-invalid={validationError?.field === "targetWords"}
+								aria-describedby={
+									validationError?.field === "targetWords"
+										? "targetWords-error"
+										: undefined
+								}
 								onChange={(event) =>
-									updateField("yearFrom", event.target.value)
+									updateField("targetWords", event.target.value)
 								}
 							/>
-							<span className="text-muted-foreground">—</span>
+						</Field>
+						<Field
+							label={t("来源数量")}
+							htmlFor="sourceCount"
+							error={
+								validationError?.field === "sourceCount"
+									? validationError.message
+									: undefined
+							}
+						>
 							<Input
+								id="sourceCount"
 								type="number"
-								aria-label={t("结束年份")}
-								value={form.yearTo}
-								onChange={(event) => updateField("yearTo", event.target.value)}
+								min={3}
+								max={8}
+								value={form.sourceCount}
+								aria-invalid={validationError?.field === "sourceCount"}
+								aria-describedby={
+									validationError?.field === "sourceCount"
+										? "sourceCount-error"
+										: undefined
+								}
+								onChange={(event) =>
+									updateField("sourceCount", event.target.value)
+								}
 							/>
-						</div>
-					</Field>
-				</div>
+						</Field>
+						<Field
+							label={t("年份范围")}
+							htmlFor="yearFrom"
+							error={
+								validationError?.field === "yearFrom" ||
+								validationError?.field === "yearTo"
+									? validationError.message
+									: undefined
+							}
+						>
+							<div className="flex items-center gap-2">
+								<Input
+									id="yearFrom"
+									type="number"
+									aria-label={t("起始年份")}
+									value={form.yearFrom}
+									aria-invalid={validationError?.field === "yearFrom"}
+									aria-describedby={
+										validationError?.field === "yearFrom"
+											? "yearFrom-error"
+											: undefined
+									}
+									onChange={(event) =>
+										updateField("yearFrom", event.target.value)
+									}
+								/>
+								<span className="text-muted-foreground">—</span>
+								<Input
+									id="yearTo"
+									type="number"
+									aria-label={t("结束年份")}
+									value={form.yearTo}
+									aria-invalid={validationError?.field === "yearTo"}
+									aria-describedby={
+										validationError?.field === "yearTo"
+											? "yearFrom-error"
+											: undefined
+									}
+									onChange={(event) =>
+										updateField("yearTo", event.target.value)
+									}
+								/>
+							</div>
+						</Field>
+					</div>
 
-				<fieldset className="space-y-3 border-t pt-5">
-					<legend className="font-semibold text-base">{t("2. 选择执行 Agent")}</legend>
-					<label className="flex cursor-pointer items-start gap-3 rounded-lg border border-primary bg-primary/5 p-4">
-						<input
-							type="radio"
-							name="selectedAgent"
-							value="evidence-research-agent"
-							checked
-							readOnly
-							className="mt-1"
-						/>
-						<span className="min-w-0 flex-1">
-							<span className="flex flex-wrap items-center gap-2 font-medium">
-								{t("论文检索与综述 Agent")}
-								<span className="rounded-full bg-success/10 px-2 py-0.5 text-success text-xs">
-									{t("真实可调用")}
+					<fieldset className="space-y-3 border-t pt-5">
+						<legend className="font-semibold text-base">
+							{t("2. 选择执行 Agent")}
+						</legend>
+						<label className="flex cursor-pointer items-start gap-3 rounded-lg border border-primary bg-primary/5 p-4">
+							<input
+								type="radio"
+								name="selectedAgent"
+								value="evidence-research-agent"
+								checked
+								readOnly
+								className="mt-1"
+							/>
+							<span className="min-w-0 flex-1">
+								<span className="flex flex-wrap items-center gap-2 font-medium">
+									{t("论文检索与综述 Agent")}
+									<span className="rounded-full bg-success/10 px-2 py-0.5 text-success text-xs">
+										{t("真实可调用")}
+									</span>
+								</span>
+								<span className="mt-1 block text-muted-foreground text-sm">
+									{t("Mastra + DeepSeek · OpenAlex 真实论文检索 · 引用校验")}
 								</span>
 							</span>
-							<span className="mt-1 block text-muted-foreground text-sm">
-								{t("Mastra + DeepSeek · OpenAlex 真实论文检索 · 引用校验")}
-							</span>
-						</span>
-						<Bot className="size-5 shrink-0 text-primary" aria-hidden />
-					</label>
-					<p className="text-muted-foreground text-xs">
-						{t("当前只展示已真实接入并验收过的 Agent；后续 Agent 会在这里成为候选项。")}
-					</p>
-				</fieldset>
+							<Bot className="size-5 shrink-0 text-primary" aria-hidden />
+						</label>
+						<p className="text-muted-foreground text-xs">
+							{t(
+								"当前只展示已真实接入并验收过的 Agent；后续 Agent 会在这里成为候选项。",
+							)}
+						</p>
+					</fieldset>
 
-				<Button
-					type="submit"
-					className="w-full"
-					size="lg"
-					disabled={state.kind === "submitting"}
-				>
-					{state.kind === "submitting" ? (
-						<>
-							<Loader2 className="size-4 animate-spin" aria-hidden />
-							{t("模型正在检索和写作…")}
-						</>
-					) : (
-						<>
-							<PlayCircle className="size-4" aria-hidden />
-							{t("派发任务并开始执行")}
-						</>
-					)}
-				</Button>
-				<p className="text-muted-foreground text-xs">
-					{t("Ollama 通常需要数分钟；DeepSeek 通常更快。生成期间请保持 Agent 服务运行。")}
-				</p>
-				{state.kind === "error" && (
-					<p
-						className="flex items-start gap-2 text-destructive text-sm"
-						role="alert"
+					<Button
+						type="submit"
+						className="w-full"
+						size="lg"
+						disabled={state.kind === "submitting"}
 					>
-						<AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-						{state.message}
-						{state.retryable ? t("（可以重试）") : ""}
+						{state.kind === "submitting" ? (
+							<>
+								<Loader2 className="size-4 animate-spin" aria-hidden />
+								{t("模型正在检索和写作…")}
+							</>
+						) : (
+							<>
+								<PlayCircle className="size-4" aria-hidden />
+								{t("派发任务并开始执行")}
+							</>
+						)}
+					</Button>
+					<p className="text-muted-foreground text-xs">
+						{t(
+							"Ollama 通常需要数分钟；DeepSeek 通常更快。生成期间请保持 Agent 服务运行。",
+						)}
 					</p>
-				)}
 			</form>
 
-			<ResultPanel
-				state={state}
-				onAccept={handleAccept}
-				onRevise={handleRevise}
-			/>
+				<ResultPanel
+					state={state}
+					onAccept={handleAccept}
+					onRevise={handleRevise}
+				/>
 			</div>
 		</div>
 	);
@@ -364,7 +473,10 @@ function FlowProgress({ state }: { state: ViewState }) {
 						aria-current={active ? "step" : undefined}
 					>
 						{completed ? (
-							<CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden />
+							<CheckCircle2
+								className="size-4 shrink-0 text-success"
+								aria-hidden
+							/>
 						) : (
 							<Circle className="size-4 shrink-0" aria-hidden />
 						)}
@@ -396,7 +508,9 @@ function ResultPanel({
 					/>
 					<h2 className="font-semibold text-lg">{t("调研报告将在这里出现")}</h2>
 					<p className="mt-2 text-muted-foreground text-sm">
-						{t("Agent 会先从 OpenAlex 检索真实论文，再生成带来源编号和局限性说明的报告。")}
+						{t(
+							"Agent 会先从 OpenAlex 检索真实论文，再生成带来源编号和局限性说明的报告。",
+						)}
 					</p>
 				</div>
 			</section>
@@ -475,7 +589,8 @@ function ResultPanel({
 					</p>
 					{section.citationIds.length > 0 && (
 						<p className="mt-2 font-mono text-muted-foreground text-xs">
-							{t("引用：")}{section.citationIds.join(" · ")}
+							{t("引用：")}
+							{section.citationIds.join(" · ")}
 						</p>
 					)}
 				</section>
@@ -530,11 +645,18 @@ function ResultPanel({
 					aria-live="polite"
 				>
 					<div className="flex items-start gap-3">
-						<CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
+						<CheckCircle2
+							className="mt-0.5 size-5 shrink-0 text-success"
+							aria-hidden
+						/>
 						<div>
-							<h2 className="font-semibold">{t("验收完成，Agent 测试流程已跑通")}</h2>
+							<h2 className="font-semibold">
+								{t("验收完成，Agent 测试流程已跑通")}
+							</h2>
 							<p className="mt-1 text-muted-foreground text-sm">
-								{t("本次测试记录用于 Agent 能力评估；任务交付、验收与结算在任务工作台中完成。")}
+								{t(
+									"本次测试记录用于 Agent 能力评估；任务交付、验收与结算在任务工作台中完成。",
+								)}
 							</p>
 						</div>
 					</div>
@@ -564,22 +686,38 @@ function ResultPanel({
 function Field({
 	label,
 	htmlFor,
+	error,
 	children,
 }: {
 	label: string;
 	htmlFor: string;
+	error?: string;
 	children: React.ReactNode;
 }) {
 	return (
 		<div className="space-y-2">
 			<Label htmlFor={htmlFor}>{label}</Label>
 			{children}
+			{error && (
+				<p
+					id={`${htmlFor}-error`}
+					className="text-destructive text-xs"
+					role="alert"
+				>
+					{error}
+				</p>
+			)}
 		</div>
 	);
 }
 
 function formatElapsed(milliseconds: number, locale: "en" | "zh-CN"): string {
 	const seconds = Math.round(milliseconds / 1_000);
-	if (locale === "en") return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-	return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+	if (locale === "en")
+		return seconds < 60
+			? `${seconds}s`
+			: `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+	return seconds < 60
+		? `${seconds} 秒`
+		: `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
 }

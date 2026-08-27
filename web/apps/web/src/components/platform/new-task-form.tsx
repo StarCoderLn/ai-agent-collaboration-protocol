@@ -5,7 +5,6 @@ import { Input } from "@web/ui/components/input";
 import { Label } from "@web/ui/components/label";
 import { Textarea } from "@web/ui/components/textarea";
 import {
-	AlertCircle,
 	ArrowRight,
 	CalendarClock,
 	Check,
@@ -18,7 +17,6 @@ import {
 	type Tags,
 	Wallet,
 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useMemo, useRef, useState } from "react";
 import { useWalletSession } from "@/components/auth/wallet-session-provider";
@@ -37,6 +35,7 @@ import {
 	type TaskDraftInput,
 	updateTaskDraft,
 } from "@/lib/api/tasks";
+import { revealFormError } from "@/lib/forms/reveal-form-error";
 import type { MessageId } from "@/lib/i18n/messages";
 import { localDateToDeadlineIso } from "@/lib/platform/deadline";
 import {
@@ -54,6 +53,24 @@ type SubmitState =
 			issues: readonly string[];
 			draftId: string | null;
 	  }>;
+
+type TaskValidationField =
+	| "title"
+	| "description"
+	| "categoryId"
+	| "tags"
+	| "budget"
+	| "deadline";
+
+const TASK_FIELD_IDS: Readonly<Record<TaskValidationField, string>> = {
+	title: "task-title",
+	description: "task-description",
+	categoryId: "task-capability-category",
+	tags: "task-custom-tag",
+	budget: "task-budget",
+	deadline: "task-deadline",
+};
+
 export default function NewTaskForm() {
 	const { locale, t } = useLocale();
 	const router = useRouter();
@@ -63,6 +80,7 @@ export default function NewTaskForm() {
 		UNSELECTED_CAPABILITY_CATEGORY_ID,
 	);
 	const [selectedTags, setSelectedTags] = useState<readonly string[]>([]);
+	const [title, setTitle] = useState("");
 	const [description, setDescription] = useState("");
 	const [budget, setBudget] = useState("");
 	const [deadline, setDeadline] = useState("");
@@ -75,6 +93,10 @@ export default function NewTaskForm() {
 	);
 	const [advancedOpen, setAdvancedOpen] = useState(false);
 	const [state, setState] = useState<SubmitState>({ kind: "idle" });
+	const [validationError, setValidationError] = useState<Readonly<{
+		field: TaskValidationField;
+		message: string;
+	}> | null>(null);
 	const [draftId, setDraftId] = useState<string | null>(null);
 	const createKey = useRef(crypto.randomUUID());
 	const updateKey = useRef(crypto.randomUUID());
@@ -95,80 +117,87 @@ export default function NewTaskForm() {
 	function markDirty() {
 		updateKey.current = crypto.randomUUID();
 		setState({ kind: "idle" });
+		setValidationError(null);
+	}
+
+	function rejectSubmit(
+		formElement: HTMLFormElement,
+		field: TaskValidationField,
+		message: string,
+	) {
+		setValidationError({ field, message });
+		setState({ kind: "idle" });
+		revealFormError({
+			form: formElement,
+			fieldId: TASK_FIELD_IDS[field],
+			message,
+			toastId: "new-task-validation",
+		});
 	}
 
 	async function handleSubmit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
+		const submittedForm = event.currentTarget;
 		if (wallet.status !== "connected") {
-			setState({
-				kind: "error",
+			revealFormError({
+				form: submittedForm,
 				message: t("请先连接发布者钱包并完成签名登录"),
-				issues: [],
-				draftId,
+				toastId: "new-task-validation",
 			});
 			return;
 		}
-		if (taxonomy.kind !== "loaded") {
-			setState({
-				kind: "error",
-				message: t("任务分类尚未加载完成"),
-				issues: [],
-				draftId,
-			});
-			return;
-		}
-		if (categoryId === UNSELECTED_CAPABILITY_CATEGORY_ID) {
-			setState({
-				kind: "error",
-				message: t("请选择服务分类"),
-				issues: [],
-				draftId,
-			});
+		const normalizedTitle = title.trim();
+		if (
+			countCharacters(normalizedTitle) < 6 ||
+			countCharacters(normalizedTitle) > 72
+		) {
+			rejectSubmit(
+				submittedForm,
+				"title",
+				t("请输入 6–72 个字符的任务标题"),
+			);
 			return;
 		}
 		// 用户只负责描述真实需求，不能为了满足服务端最小长度而由前端虚构正文。
 		// 使用和领域校验一致的 Unicode 字符计数，让中文、英文和 emoji 的提示结果一致。
 		if (countCharacters(description.trim()) < 30) {
-			setState({
-				kind: "error",
-				message: t("请至少用 30 个字符描述目标、使用场景和必须满足的限制"),
-				issues: [],
-				draftId,
-			});
+			rejectSubmit(
+				submittedForm,
+				"description",
+				t("请至少用 30 个字符描述目标、使用场景和必须满足的限制"),
+			);
+			return;
+		}
+		if (taxonomy.kind !== "loaded") {
+			rejectSubmit(submittedForm, "categoryId", t("任务分类尚未加载完成"));
+			return;
+		}
+		if (categoryId === UNSELECTED_CAPABILITY_CATEGORY_ID) {
+			rejectSubmit(submittedForm, "categoryId", t("请选择服务分类"));
 			return;
 		}
 		if (selectedTags.length === 0) {
-			setState({
-				kind: "error",
-				message: t("请至少选择一个技能标签"),
-				issues: [],
-				draftId,
-			});
+			rejectSubmit(submittedForm, "tags", t("请至少选择一个技能标签"));
 			return;
 		}
 		if (budgetMinor === null) {
-			setState({
-				kind: "error",
-				message: t("预算必须是大于 0、最多 18 位小数的 ETH 金额"),
-				issues: [],
-				draftId,
-			});
+			rejectSubmit(
+				submittedForm,
+				"budget",
+				t("预算必须是大于 0、最多 18 位小数的 ETH 金额"),
+			);
 			return;
 		}
 		let deadlineIso: string;
 		try {
 			deadlineIso = localDateToDeadlineIso(deadline);
 		} catch {
-			setState({
-				kind: "error",
-				message: t("请选择有效截止时间"),
-				issues: [],
-				draftId,
-			});
+			rejectSubmit(submittedForm, "deadline", t("请选择有效截止时间"));
 			return;
 		}
+		setValidationError(null);
 		const input: TaskDraftInput = {
-			title: structuredFields.title,
+			title: normalizedTitle,
 			description,
 			acceptanceCriteria: structuredFields.acceptanceCriteria,
 			deliverableFormat: structuredFields.deliverableFormat,
@@ -214,14 +243,26 @@ export default function NewTaskForm() {
 			router.push(`/tasks/${currentDraftId}`);
 		} catch (error) {
 			const apiError = error instanceof TaskApiRequestError ? error : null;
+			const firstIssue = apiError?.body.issues?.[0];
+			const targetField = firstIssue ? taskIssueField(firstIssue.field) : null;
+			const message = apiError?.body.message ?? t("任务发布失败，请稍后重试");
 			setState({
 				kind: "error",
-				message: apiError?.body.message ?? t("任务发布失败，请稍后重试"),
+				message,
 				issues:
 					apiError?.body.issues?.map(
 						(issue) => `${fieldLabel(issue.field, t)}: ${issue.message}`,
 					) ?? [],
 				draftId: currentDraftId,
+			});
+			if (targetField !== null && firstIssue !== undefined) {
+				setValidationError({ field: targetField, message: firstIssue.message });
+			}
+			revealFormError({
+				form: submittedForm,
+				fieldId: targetField === null ? undefined : TASK_FIELD_IDS[targetField],
+				message,
+				toastId: "new-task-submit",
 			});
 		}
 	}
@@ -252,13 +293,45 @@ export default function NewTaskForm() {
 					<FormSection
 						number="01"
 						title={t("描述你的需求")}
-						description={t("填写需求、分类、标签、预算和截止时间即可开始")}
+						description={t("填写标题、详细需求、分类、标签、预算和截止时间即可开始")}
 						icon={Sparkles}
 					>
+						<Field
+							label={t("任务标题")}
+							htmlFor="task-title"
+							hint={t("用一句话说明需要完成的任务")}
+							error={
+								validationError?.field === "title"
+									? validationError.message
+									: undefined
+							}
+						>
+							<Input
+								id="task-title"
+								maxLength={72}
+								placeholder={t("例如：开发一个电商后台管理系统")}
+								value={title}
+								aria-invalid={validationError?.field === "title"}
+								aria-describedby={
+									validationError?.field === "title"
+										? "task-title-error"
+										: undefined
+								}
+								onChange={(event) => {
+									setTitle(event.target.value);
+									markDirty();
+								}}
+							/>
+						</Field>
 						<Field
 							label={t("详细需求")}
 							htmlFor="task-description"
 							hint={t("描述目标、使用场景和必须满足的限制")}
+							error={
+								validationError?.field === "description"
+									? validationError.message
+									: undefined
+							}
 						>
 							<Textarea
 								id="task-description"
@@ -267,6 +340,12 @@ export default function NewTaskForm() {
 									"例如：为跨境电商团队开发一个可管理商品、订单和权限的后台系统……",
 								)}
 								value={description}
+								aria-invalid={validationError?.field === "description"}
+								aria-describedby={
+									validationError?.field === "description"
+										? "task-description-error"
+										: undefined
+								}
 								onChange={(event) => {
 									setDescription(event.target.value);
 									markDirty();
@@ -286,12 +365,27 @@ export default function NewTaskForm() {
 								setSelectedTags(value);
 								markDirty();
 							}}
+							categoryError={
+								validationError?.field === "categoryId"
+									? validationError.message
+									: undefined
+							}
+							tagsError={
+								validationError?.field === "tags"
+									? validationError.message
+									: undefined
+							}
 						/>
 						<div className="grid gap-4 sm:grid-cols-2">
 							<Field
 								label={t("固定预算")}
 								htmlFor="task-budget"
 								hint={t("预算将通过托管保护，验收完成后才支付给 Agent。")}
+								error={
+									validationError?.field === "budget"
+										? validationError.message
+										: undefined
+								}
 							>
 								<div className="relative">
 									<Input
@@ -299,6 +393,12 @@ export default function NewTaskForm() {
 										inputMode="decimal"
 										placeholder="0.01"
 										value={budget}
+										aria-invalid={validationError?.field === "budget"}
+										aria-describedby={
+											validationError?.field === "budget"
+												? "task-budget-error"
+												: undefined
+										}
 										onChange={(event) => {
 											setBudget(event.target.value);
 											markDirty();
@@ -310,7 +410,15 @@ export default function NewTaskForm() {
 									</span>
 								</div>
 							</Field>
-							<Field label={t("截止时间")} htmlFor="task-deadline">
+							<Field
+								label={t("截止时间")}
+								htmlFor="task-deadline"
+								error={
+									validationError?.field === "deadline"
+										? validationError.message
+										: undefined
+								}
+							>
 								<DatePicker
 									id="task-deadline"
 									label={t("截止时间")}
@@ -319,6 +427,12 @@ export default function NewTaskForm() {
 										setDeadline(value);
 										markDirty();
 									}}
+									invalid={validationError?.field === "deadline"}
+									aria-describedby={
+										validationError?.field === "deadline"
+											? "task-deadline-error"
+											: undefined
+									}
 								/>
 							</Field>
 						</div>
@@ -353,7 +467,9 @@ export default function NewTaskForm() {
 								[
 									"automatic",
 									t("平台自动分配"),
-									t("平台会在预算内选择最合适的候选；没有合适结果时再由你选择。"),
+									t(
+										"平台会在预算内选择最合适的候选；没有合适结果时再由你选择。",
+									),
 								],
 							]}
 						/>
@@ -398,30 +514,6 @@ export default function NewTaskForm() {
 							]}
 						/>
 					</DisclosureSection>
-
-					{state.kind === "error" && (
-						<div
-							role="alert"
-							className="flex gap-3 rounded-lg border border-destructive/20 bg-destructive-container p-4 text-destructive"
-						>
-							<AlertCircle className="mt-0.5 size-4 shrink-0" />
-							<div>
-								<p className="font-semibold text-sm">{state.message}</p>
-								{state.issues.length > 0 && (
-									<ul className="mt-2 list-disc space-y-1 pl-4 text-xs">
-										{state.issues.map((issue) => (
-											<li key={issue}>{issue}</li>
-										))}
-									</ul>
-								)}
-								{state.draftId && (
-									<p className="mt-2 text-xs">
-										{t("你的填写内容已保留，可以直接重试。")}
-									</p>
-								)}
-							</div>
-						</div>
-					)}
 				</div>
 
 				<aside className="sticky top-28 space-y-4">
@@ -434,7 +526,7 @@ export default function NewTaskForm() {
 						</div>
 						<div className="mt-5 rounded-lg border border-primary/10 bg-accent/70 p-4">
 							<p className="font-semibold leading-6">
-								{structuredFields.title || t("填写详细需求后自动生成标题")}
+								{title.trim() || t("填写任务标题后显示预览")}
 							</p>
 							<p className="mt-2 line-clamp-3 text-muted-foreground text-sm leading-5">
 								{description}
@@ -659,11 +751,13 @@ function Field({
 	label,
 	htmlFor,
 	hint,
+	error,
 	children,
 }: {
 	label: string;
 	htmlFor: string;
 	hint?: string;
+	error?: string;
 	children: React.ReactNode;
 }) {
 	return (
@@ -672,10 +766,21 @@ function Field({
 				{label}
 			</Label>
 			{children}
-			{hint && <p className="mt-1.5 text-muted-foreground text-xs">{hint}</p>}
+			{error ? (
+				<p
+					id={`${htmlFor}-error`}
+					className="mt-1.5 text-destructive text-xs"
+					role="alert"
+				>
+					{error}
+				</p>
+			) : (
+				hint && <p className="mt-1.5 text-muted-foreground text-xs">{hint}</p>
+			)}
 		</div>
 	);
 }
+
 function Choice<T extends string>({
 	label,
 	value,
@@ -732,7 +837,6 @@ function PreviewRow({
 }
 
 type StructuredTaskFields = Readonly<{
-	title: string;
 	acceptanceCriteria: string;
 	deliverableFormat: string;
 	requiredCapability: string;
@@ -748,16 +852,10 @@ function buildStructuredTaskFields(
 	tags: readonly string[],
 	locale: string,
 ): StructuredTaskFields {
-	const normalized = description.replace(/\s+/g, " ").trim();
-	const firstStatement = normalized.split(/[。！？!?\n]/u)[0]?.trim() ?? "";
-	const titleSource =
-		countCharacters(firstStatement) >= 6 ? firstStatement : normalized;
-	const title = takeCharacters(titleSource.replace(/[，,；;：:]$/u, ""), 72);
 	const english = locale === "en";
 	const capabilitySource = tags.length > 0 ? tags.join(", ") : categoryName;
 
 	return {
-		title,
 		acceptanceCriteria: english
 			? "The final result must cover the goals, use cases, and explicit constraints in the detailed request, and remain reviewable by the client."
 			: "最终结果需覆盖详细需求中描述的目标、使用场景和明确限制，并可由发布者逐项检查确认。",
@@ -776,9 +874,6 @@ function countCharacters(value: string): number {
 	return [...value].length;
 }
 
-function takeCharacters(value: string, maximum: number): string {
-	return [...value].slice(0, maximum).join("");
-}
 function fieldLabel(
 	field: string,
 	t: ReturnType<typeof useLocale>["t"],
@@ -795,4 +890,20 @@ function fieldLabel(
 		requiredCapability: "所需能力",
 	};
 	return labels[field] === undefined ? field : t(labels[field]);
+}
+
+/** 服务端仍使用完整任务合同字段，这里把首个问题映射回快速发布页真实可编辑的控件。 */
+function taskIssueField(field: string): TaskValidationField | null {
+	const mapping: Readonly<Record<string, TaskValidationField>> = {
+		title: "title",
+		description: "description",
+		acceptanceCriteria: "description",
+		deliverableFormat: "description",
+		categoryId: "categoryId",
+		tags: "tags",
+		pricing: "budget",
+		deadline: "deadline",
+		requiredCapability: "tags",
+	};
+	return mapping[field] ?? null;
 }

@@ -104,16 +104,16 @@ describe("New task assignment mode", () => {
 		).toBeInTheDocument();
 		expect(screen.queryByText("可验证任务")).not.toBeInTheDocument();
 		expect(screen.queryByText(/正式草稿|服务端校验/)).not.toBeInTheDocument();
+		expect(screen.getByLabelText("任务标题")).toHaveValue("");
 		expect(screen.getByLabelText("详细需求")).toHaveValue("");
 		expect(screen.getByLabelText("固定预算")).toHaveValue("");
-		expect(
-			screen.getByRole("button", { name: "截止时间" }),
-		).toHaveTextContent("请选择截止日期");
+		expect(screen.getByRole("button", { name: "截止时间" })).toHaveTextContent(
+			"请选择截止日期",
+		);
 		expect(
 			await screen.findByRole("combobox", { name: "服务分类" }),
 		).toBeInTheDocument();
 		expect(screen.getByRole("group", { name: "技能标签" })).toBeInTheDocument();
-		expect(screen.queryByLabelText("任务标题")).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("radio", { name: /平台自动分配/ }),
 		).not.toBeInTheDocument();
@@ -129,7 +129,7 @@ describe("New task assignment mode", () => {
 		expect(
 			screen.queryByRole("button", { name: "展开结构化任务合同" }),
 		).not.toBeInTheDocument();
-		expect(screen.queryByLabelText("任务标题")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("任务标题")).toBeInTheDocument();
 		expect(
 			await screen.findByRole("combobox", { name: "服务分类" }),
 		).toBeInTheDocument();
@@ -149,10 +149,29 @@ describe("New task assignment mode", () => {
 		expect(screen.queryByLabelText("所需能力")).not.toBeInTheDocument();
 	});
 
-	it("publishes from the five essential inputs while preserving the API contract", async () => {
+	it("提交空表单时立即定位到第一个错误字段", async () => {
 		render(<NewTaskForm />);
+		const publish = screen.getByRole("button", { name: /发布需求/ });
+		await waitFor(() => expect(publish).toBeEnabled());
+		fireEvent.click(publish);
+
+		const title = screen.getByLabelText("任务标题");
+		expect(title).toHaveAttribute("aria-invalid", "true");
+		expect(document.getElementById("task-title-error")).toHaveTextContent(
+			"请输入 6–72 个字符的任务标题",
+		);
+		await waitFor(() => expect(title).toHaveFocus());
+		expect(mocks.createTaskDraft).not.toHaveBeenCalled();
+	});
+
+	it("publishes from the essential inputs while preserving the API contract", async () => {
+		render(<NewTaskForm />);
+		const title = "开发跨境电商后台管理系统";
 		const request =
 			"使用 Next.js 开发一个跨境电商后台，让运营人员管理商品、订单和团队权限，并提供必要测试。";
+		fireEvent.change(screen.getByLabelText("任务标题"), {
+			target: { value: title },
+		});
 		fireEvent.change(screen.getByLabelText("详细需求"), {
 			target: { value: request },
 		});
@@ -170,15 +189,14 @@ describe("New task assignment mode", () => {
 		await waitFor(() => expect(mocks.createTaskDraft).toHaveBeenCalledOnce());
 		const input = mocks.createTaskDraft.mock.calls[0]?.[0];
 		expect(input).toMatchObject({
+			title,
 			description: request,
 			categoryId: "40000000-0000-4000-8000-000000000023",
 			tags: ["next.js"],
 			pricing: { type: "fixed", amountMinor: "12800000000000000" },
 			currency: "ETH",
 		});
-		// 这些字段仍满足正式 API，并从正文、分类和标签可追溯地整理，不要求二次填写。
-		expect([...input.title].length).toBeGreaterThanOrEqual(6);
-		expect([...input.title].length).toBeLessThanOrEqual(72);
+		// 未直接展示的字段仍从正文、分类和标签可追溯地整理，不要求用户二次填写。
 		expect(input.acceptanceCriteria.length).toBeGreaterThanOrEqual(10);
 		expect(input.deliverableFormat).not.toBe("");
 		expect(input.requiredCapability).toBe("next.js");
@@ -193,6 +211,9 @@ describe("New task assignment mode", () => {
 
 	it("asks for a clearer request instead of fabricating content to satisfy validation", async () => {
 		render(<NewTaskForm />);
+		fireEvent.change(screen.getByLabelText("任务标题"), {
+			target: { value: "开发一个内容网站" },
+		});
 		fireEvent.change(screen.getByLabelText("详细需求"), {
 			target: { value: "帮我开发一个网站" },
 		});
@@ -217,6 +238,9 @@ describe("New task assignment mode", () => {
 	it("accepts a normalized custom tag even when no platform suggestion is available", async () => {
 		mocks.suggestTaskTags.mockResolvedValue([]);
 		render(<NewTaskForm />);
+		fireEvent.change(screen.getByLabelText("任务标题"), {
+			target: { value: "制作内容运营工作台" },
+		});
 		fireEvent.change(screen.getByLabelText("详细需求"), {
 			target: {
 				value:
@@ -270,12 +294,17 @@ describe("New task assignment mode", () => {
 		expect(screen.queryByText("价格上限")).not.toBeInTheDocument();
 		expect(screen.queryByText("失败回退")).not.toBeInTheDocument();
 		expect(
-			screen.getByText("平台会在预算内选择最合适的候选；没有合适结果时再由你选择。"),
+			screen.getByText(
+				"平台会在预算内选择最合适的候选；没有合适结果时再由你选择。",
+			),
 		).toBeInTheDocument();
 	});
 
 	it("preserves the automatic assignment contract without exposing it in the interface", async () => {
 		render(<NewTaskForm />);
+		fireEvent.change(screen.getByLabelText("任务标题"), {
+			target: { value: "开发团队项目管理后台" },
+		});
 		fireEvent.change(screen.getByLabelText("详细需求"), {
 			target: {
 				value:
