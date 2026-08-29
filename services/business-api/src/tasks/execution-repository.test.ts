@@ -8,7 +8,7 @@ const PAYOUT_WALLET = "0xabababababababababababababababababababab";
 describe("PgExecutionRepository settlement payee", () => {
   it("creates the release outbox for payout_wallet_address instead of the owner wallet", async () => {
     const query = vi.fn(async (sql: string, _params?: readonly unknown[]) => {
-      if (sql.includes("intent.amount_wei::text AS escrow_amount_wei")) {
+      if (sql.includes("intent.amount_minor::text AS escrow_amount_minor")) {
         return {
           rows: [{
             status: "awaiting_review",
@@ -18,7 +18,7 @@ describe("PgExecutionRepository settlement payee", () => {
             fee_version: "fee-v1",
             fee_basis_points: 500,
             gas_fallback_minor: "50",
-            escrow_amount_wei: "10000",
+            escrow_amount_minor: "10000",
             payout_wallet_address: PAYOUT_WALLET,
           }],
           rowCount: 1,

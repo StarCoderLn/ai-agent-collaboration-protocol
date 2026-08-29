@@ -44,10 +44,10 @@ describe("execution input contracts", () => {
       resultId: AGENT_ID,
       expectedStatusVersion: "9",
       expectedSettlement: {
-        grossAmountMinor: "2400000000000000",
-        platformFeeMinor: "50000000000000",
-        agentAmountMinor: "2350000000000000",
-        feeRuleVersion: "fee-v2-native-eth",
+        grossAmountMinor: "24000000",
+        platformFeeMinor: "50000",
+        agentAmountMinor: "23950000",
+        feeRuleVersion: "fee-v3-usdc",
       },
     }).success).toBe(true);
   });

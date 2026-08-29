@@ -54,8 +54,8 @@ integration("task PostgreSQL vertical slice", () => {
         deliverableFormat: "TypeScript 源码、SQL migration 与测试报告",
         categoryId: CATEGORY_ID,
         tags: ["NextJS", "Agent"],
-        pricing: { type: "fixed", amountMinor: "1000000000000000" },
-        currency: "ETH",
+        pricing: { type: "fixed", amountMinor: "10000000" },
+        currency: "USDC",
         deadline: "2026-08-23T02:00:00.000Z",
         requiredCapability: "Next.js、PostgreSQL 与严格 TypeScript",
         attachments: [],
@@ -68,8 +68,8 @@ integration("task PostgreSQL vertical slice", () => {
       const preview = await previewOwnedTask(taskId, "publisher-integration", deps);
       expect(preview.body).toMatchObject({
         valid: true,
-        platformFeeMinor: "50000000000000",
-        agentReceivesMinor: "950000000000000",
+        platformFeeMinor: "50000",
+        agentReceivesMinor: "9950000",
       });
 
       const submitted = await submitTaskDraft(taskId, "publisher-integration", "pg-submit-1", deps);
@@ -146,8 +146,8 @@ integration("task PostgreSQL vertical slice", () => {
         deliverableFormat: "集成测试证据",
         categoryId: CATEGORY_ID,
         tags: ["nextjs", "agent"],
-        pricing: { type: "fixed", amountMinor: "1500000000000000" },
-        currency: "ETH",
+        pricing: { type: "fixed", amountMinor: "15000000" },
+        currency: "USDC",
         deadline: "2026-08-23T03:00:00.000Z",
         requiredCapability: "Next.js 与 SQL",
         attachments: [],
@@ -157,7 +157,7 @@ integration("task PostgreSQL vertical slice", () => {
       await updateOwnedTaskModeSettings(taskId, {
         assignmentMode: {
           mode: "automatic",
-          priceCapMinor: "1400000000000000",
+          priceCapMinor: "14000000",
           rankingBasis: "ranking-v1",
           fallbackOnFail: "manual",
         },
@@ -220,7 +220,7 @@ integration("task PostgreSQL vertical slice", () => {
            assignment_mode_config,acceptance_mode,acceptor_config
          ) VALUES ($1,'publisher-criteria','匹配条件调整集成任务','验证托管后只能调整不会改变资金和交付契约的匹配条件。',
            '更新、事件、审计和幂等快照必须原子提交。','测试证据',$2,1,ARRAY['agent'],
-           'fixed',1000000000000000,1000000000000000,'ETH',$3,'TypeScript 与 PostgreSQL',
+           'fixed',10000000,10000000,'USDC',$3,'TypeScript 与 PostgreSQL',
            '[]'::jsonb,'private','matching',7,'{"mode":"manual"}'::jsonb,'manual','{}'::jsonb)`,
         [taskId, CATEGORY_ID, new Date("2026-08-23T03:00:00.000Z")],
       );
@@ -283,7 +283,7 @@ integration("task PostgreSQL vertical slice", () => {
            id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,pricing_type,
            price_amount,price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
          ) VALUES ($1,'0xcccccccccccccccccccccccccccccccccccccccc','0xcccccccccccccccccccccccccccccccccccccccc','迁移测试 Agent',$2,
-           'PostgreSQL',ARRAY['agent'],'fixed',7000,'USDC','http://127.0.0.1:3999/agent',
+           'PostgreSQL',ARRAY['agent'],'fixed',7000000,'USDC','http://127.0.0.1:3999/agent',
            'transition@example.com','active',1800,1)`,
         [agentId, CATEGORY_ID],
       );
@@ -296,7 +296,7 @@ integration("task PostgreSQL vertical slice", () => {
       await client.query(
         `INSERT INTO task_assignments (
            id,task_id,agent_id,distribution_record_id,agreed_amount_minor,status,assigned_by,accept_by
-         ) VALUES ($1,$2,$3,$4,7000,'pending_ack','publisher-transition',now()+interval '5 minutes')`,
+         ) VALUES ($1,$2,$3,$4,7000000,'pending_ack','publisher-transition',now()+interval '5 minutes')`,
         [assignmentId, taskId, agentId, distributionId],
       );
 
@@ -367,7 +367,7 @@ integration("task PostgreSQL vertical slice", () => {
            assignment_mode_config,acceptance_mode,acceptor_config
          ) VALUES ($1,'publisher-rejected','拒单恢复集成任务','验证拒单或接单超时后由权威任务状态机回到匹配。',
            '旧候选快照保持可选，不要求重新生成匹配记录。','测试证据',$2,1,ARRAY['agent'],
-           'fixed',1000000000000000,1000000000000000,'ETH',$3,'PostgreSQL',
+           'fixed',10000000,10000000,'USDC',$3,'PostgreSQL',
            '[]'::jsonb,'private','awaiting_agent_acceptance',3,'{"mode":"manual"}'::jsonb,'manual','{}'::jsonb)`,
         [taskId, CATEGORY_ID, new Date("2026-08-23T03:00:00.000Z")],
       );
@@ -376,7 +376,7 @@ integration("task PostgreSQL vertical slice", () => {
            id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,pricing_type,
            price_amount,price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
          ) VALUES ($1,'0xdddddddddddddddddddddddddddddddddddddddd','0xdddddddddddddddddddddddddddddddddddddddd','拒单测试 Agent',$2,
-           'PostgreSQL',ARRAY['agent'],'fixed',900000000000000,'ETH','http://127.0.0.1:3999/agent',
+           'PostgreSQL',ARRAY['agent'],'fixed',9000000,'USDC','http://127.0.0.1:3999/agent',
            'rejected@example.com','active',1800,1)`,
         [agentId, CATEGORY_ID],
       );
@@ -384,12 +384,12 @@ integration("task PostgreSQL vertical slice", () => {
         `INSERT INTO job_distribution_records (
            id,task_id,rule_version,input_fingerprint,input_snapshot,candidates,filter_reasons
          ) VALUES ($1,$2,'ranking-v1','rejected-fixture','{}'::jsonb,$3::jsonb,'{}'::jsonb)`,
-        [distributionId, taskId, JSON.stringify([{ agentId, quoteMinor: "900000000000000" }])],
+        [distributionId, taskId, JSON.stringify([{ agentId, quoteMinor: "9000000" }])],
       );
       await client.query(
         `INSERT INTO task_assignments (
            id,task_id,agent_id,distribution_record_id,agreed_amount_minor,status,assigned_by,accept_by,responded_at
-         ) VALUES ($1,$2,$3,$4,900000000000000,'accept_failed','publisher-rejected',now(),now())`,
+         ) VALUES ($1,$2,$3,$4,9000000,'accept_failed','publisher-rejected',now(),now())`,
         [assignmentId, taskId, agentId, distributionId],
       );
 
@@ -428,8 +428,8 @@ integration("task PostgreSQL vertical slice", () => {
            currency,deadline,required_capability,attachments,visibility,status,
            assignment_mode_config,acceptance_mode,acceptor_config
          ) VALUES ($1,'publisher-execution','执行交付集成任务','验证进度、结果版本、返工和验收金额快照。',
-           '所有写入与事件位于同一事务。','Markdown',$2,1,ARRAY['agent'],'fixed',2400000000000000,2400000000000000,
-           'ETH',$3,'TypeScript','[]'::jsonb,'private','matching','{"mode":"manual"}'::jsonb,'manual','{}'::jsonb)`,
+           '所有写入与事件位于同一事务。','Markdown',$2,1,ARRAY['agent'],'fixed',24000000,24000000,
+           'USDC',$3,'TypeScript','[]'::jsonb,'private','matching','{"mode":"manual"}'::jsonb,'manual','{}'::jsonb)`,
         [taskId, CATEGORY_ID, new Date("2026-08-24T00:00:00.000Z")],
       );
       await client.query(
@@ -437,7 +437,7 @@ integration("task PostgreSQL vertical slice", () => {
            id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,pricing_type,
            price_amount,price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
          ) VALUES ($1,'0xdddddddddddddddddddddddddddddddddddddddd','0xabababababababababababababababababababab','交付测试 Agent',$2,'TypeScript',
-           ARRAY['agent'],'fixed',2400000000000000,'ETH','http://127.0.0.1:3999/agent','execution@example.com','active',1800,1)`,
+           ARRAY['agent'],'fixed',24000000,'USDC','http://127.0.0.1:3999/agent','execution@example.com','active',1800,1)`,
         [agentId, CATEGORY_ID],
       );
       await client.query(
@@ -448,14 +448,14 @@ integration("task PostgreSQL vertical slice", () => {
       await client.query(
         `INSERT INTO task_assignments(
            id,task_id,agent_id,distribution_record_id,agreed_amount_minor,status,assigned_by,accept_by,responded_at
-         ) VALUES ($1,$2,$3,$4,2400000000000000,'accepted','publisher-execution',now()+interval '5 minutes',now())`,
+         ) VALUES ($1,$2,$3,$4,24000000,'accepted','publisher-execution',now()+interval '5 minutes',now())`,
         [assignmentId, taskId, agentId, distributionId],
       );
       // 验收会创建真实链上 release outbox；已确认托管是进入结算的硬前置。
       await client.query(
         `INSERT INTO escrow_intents(
-           task_id,chain_id,contract_address,task_key,payer_wallet,amount_wei,status
-         ) VALUES ($1,31337,$2,$3,$4,2400000000000000,'confirmed')`,
+           task_id,chain_id,contract_address,task_key,payer_wallet,amount_minor,status
+         ) VALUES ($1,31337,$2,$3,$4,24000000,'confirmed')`,
         [taskId, `0x${"aa".repeat(20)}`, `0x${"bb".repeat(32)}`, `0x${"ee".repeat(20)}`],
       );
 
@@ -512,10 +512,10 @@ integration("task PostgreSQL vertical slice", () => {
       expect(acceptancePreview.body).toMatchObject({
         taskId, resultId: acceptedResultId, status: "awaiting_review", statusVersion: "5",
         settlement: {
-          grossAmountMinor: "2400000000000000",
-          platformFeeMinor: "50000000000000",
-          agentAmountMinor: "2350000000000000",
-          feeRuleVersion: "fee-v2-native-eth",
+          grossAmountMinor: "24000000",
+          platformFeeMinor: "96000",
+          agentAmountMinor: "23904000",
+          feeRuleVersion: "fee-v3-usdc",
         },
       });
       const expectedSettlement = acceptancePreview.body.settlement as {
@@ -534,10 +534,10 @@ integration("task PostgreSQL vertical slice", () => {
         status: "pending_settlement",
         statusVersion: "6",
         settlement: {
-          grossAmountMinor: "2400000000000000",
-          platformFeeMinor: "50000000000000",
-          agentAmountMinor: "2350000000000000",
-          feeRuleVersion: "fee-v2-native-eth",
+          grossAmountMinor: "24000000",
+          platformFeeMinor: "96000",
+          agentAmountMinor: "23904000",
+          feeRuleVersion: "fee-v3-usdc",
         },
       });
       await expect(publisher.accept(taskId, acceptanceInput, "publisher-execution", "accept-task-request-001"))
@@ -631,8 +631,8 @@ integration("task PostgreSQL vertical slice", () => {
            currency,deadline,required_capability,attachments,visibility,status,
            assignment_mode_config,acceptance_mode,acceptor_config
          ) VALUES ($1,'publisher-failure','失败回调集成任务','验证 Agent 执行失败后任务、审计与资金保持一致。',
-           '失败信息脱敏且托管资金不自动释放。','JSON',$2,1,ARRAY['agent'],'fixed',1000000000000000,1000000000000000,
-           'ETH',$3,'TypeScript','[]'::jsonb,'public','executing','{"mode":"manual"}'::jsonb,'manual','{}'::jsonb)`,
+           '失败信息脱敏且托管资金不自动释放。','JSON',$2,1,ARRAY['agent'],'fixed',10000000,10000000,
+           'USDC',$3,'TypeScript','[]'::jsonb,'public','executing','{"mode":"manual"}'::jsonb,'manual','{}'::jsonb)`,
         [taskId, CATEGORY_ID, new Date("2026-08-24T00:00:00.000Z")],
       );
       await client.query(
@@ -640,7 +640,7 @@ integration("task PostgreSQL vertical slice", () => {
            id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,pricing_type,
            price_amount,price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
          ) VALUES ($1,'0xfafafafafafafafafafafafafafafafafafafafa','0xfafafafafafafafafafafafafafafafafafafafa','失败测试 Agent',$2,'TypeScript',
-           ARRAY['agent'],'fixed',1000000000000000,'ETH','http://127.0.0.1:3999/agent','failure@example.com','active',1800,1)`,
+           ARRAY['agent'],'fixed',10000000,'USDC','http://127.0.0.1:3999/agent','failure@example.com','active',1800,1)`,
         [agentId, CATEGORY_ID],
       );
       await client.query(
@@ -651,7 +651,7 @@ integration("task PostgreSQL vertical slice", () => {
       await client.query(
         `INSERT INTO task_assignments(
            id,task_id,agent_id,distribution_record_id,agreed_amount_minor,status,assigned_by,accept_by,responded_at
-         ) VALUES ($1,$2,$3,$4,1000000000000000,'accepted','publisher-failure',now()+interval '5 minutes',now())`,
+         ) VALUES ($1,$2,$3,$4,10000000,'accepted','publisher-failure',now()+interval '5 minutes',now())`,
         [assignmentId, taskId, agentId, distributionId],
       );
 	  const statsRepository = new PgTaskRepository(client);
@@ -757,8 +757,8 @@ integration("task PostgreSQL vertical slice", () => {
         deliverableFormat: "集成测试报告",
         categoryId: CATEGORY_ID,
         tags: ["agent"],
-        pricing: { type: "fixed", amountMinor: "1000000000000000" },
-        currency: "ETH",
+        pricing: { type: "fixed", amountMinor: "10000000" },
+        currency: "USDC",
         deadline: "2026-08-24T00:00:00.000Z",
         requiredCapability: "Webhook",
         attachments: [],
@@ -779,7 +779,7 @@ integration("task PostgreSQL vertical slice", () => {
            id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,pricing_type,
            price_amount,price_currency,service_endpoint,email,status
          ) VALUES ($1,'0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','死信查询 Agent',$2,
-           'Webhook',ARRAY['agent'],'fixed',7000,'ETH','https://agent.example/private/tenant?token=hidden',
+           'Webhook',ARRAY['agent'],'fixed',7000000,'USDC','https://agent.example/private/tenant?token=hidden',
            'dead-letter@example.com','active')`,
         [agentId, CATEGORY_ID],
       );

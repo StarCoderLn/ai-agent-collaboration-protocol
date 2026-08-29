@@ -15,9 +15,9 @@ const BASE_CONTEXT: TaskCreationContext = {
   minExecutionPeriodMs: 30 * 60_000,
   forbiddenTags: new Set(["forbidden"]),
   canonicalByAlias: new Map([["nextjs", "next.js"], ["next.js", "next.js"], ["agent", "agent"]]),
-  minBudgetMinor: 100n,
-  maxBudgetMinor: 1_000_000n,
-  feeConfig: { version: "fee-v1", feeBasisPoints: 40n, gasFallbackMinor: 50n },
+  minBudgetMinor: 1_000_000n,
+  maxBudgetMinor: 100_000_000_000n,
+  feeConfig: { version: "fee-v3-usdc", feeBasisPoints: 40n, gasFallbackMinor: 50_000n },
 };
 
 function validInput() {
@@ -28,8 +28,8 @@ function validInput() {
     deliverableFormat: "Next.js 源码、测试与交付说明",
     categoryId: CATEGORY_ID,
     tags: ["NextJS", "Agent"],
-    pricing: { type: "fixed", amountMinor: "10000" },
-    currency: "ETH",
+    pricing: { type: "fixed", amountMinor: "10000000" },
+    currency: "USDC",
     deadline: "2026-08-23T02:00:00.000Z",
     requiredCapability: "Next.js 与 Agent 协议集成",
     attachments: [{ name: "brief.pdf", mimeType: "application/pdf", sizeBytes: "1024", storageRef: "s3://task/brief.pdf" }],
@@ -193,6 +193,11 @@ describe("task command service", () => {
 
     expect(submitted.body.status).toBe("awaiting_escrow");
     expect((submitted.body.preview as Record<string, unknown>).platformFeeMinor).toBe(preview.body.platformFeeMinor);
+    expect((submitted.body.preview as Record<string, unknown>)).toMatchObject({
+      feeBasisPoints: "40",
+      minimumPlatformFeeMinor: "50000",
+      agentReceivesMinor: "9950000",
+    });
     expect(eventWriter.events).toHaveLength(1);
     expect(eventWriter.events[0]).toMatchObject({ statusVersion: 1n, eventType: "task.submitted" });
     expect(auditLogWriter.entries.map((entry) => entry.action)).toEqual(["task.create", "task.submit"]);

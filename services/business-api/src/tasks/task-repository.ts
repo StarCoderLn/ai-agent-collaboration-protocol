@@ -1,5 +1,5 @@
 import type { QueryExecutor } from "../db/pool";
-import { MAX_TASK_BUDGET_WEI, MIN_TASK_BUDGET_WEI } from "../platform/mvp-money";
+import { MAX_TASK_BUDGET_MINOR, MIN_TASK_BUDGET_MINOR } from "../platform/mvp-money";
 import type { AcceptanceModeConfig, AssignmentModeConfig } from "../platform/visibility";
 import type { EditableTaskDraft, TaskPricing } from "../platform/task-validation";
 import type { TaskStatus } from "../platform/task-state";
@@ -172,8 +172,8 @@ export class PgTaskRepository implements TaskRepository, TaskTaxonomyRepository,
       minExecutionPeriodMs: row.min_execution_period_seconds * 1_000,
       forbiddenTags,
       canonicalByAlias,
-      minBudgetMinor: MIN_TASK_BUDGET_WEI,
-      maxBudgetMinor: MAX_TASK_BUDGET_WEI,
+      minBudgetMinor: MIN_TASK_BUDGET_MINOR,
+      maxBudgetMinor: MAX_TASK_BUDGET_MINOR,
       feeConfig: { version: row.fee_version, feeBasisPoints: BigInt(row.fee_basis_points), gasFallbackMinor: BigInt(row.gas_fallback_minor) },
     };
   }

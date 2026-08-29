@@ -27,12 +27,31 @@ describe("task state and fee authority", () => {
       .toBe("execution_failed");
     expect(transitionTaskStatus("execution_failed", { type: "dispute_opened", disputeId: "dispute-1" }))
       .toBe("disputed");
+    expect(transitionTaskStatus("execution_failed", {
+      type: "execution_retry_requested",
+      assignmentId: "assignment-1",
+    })).toBe("matching");
+    expect(() => transitionTaskStatus("executing", {
+      type: "execution_retry_requested",
+      assignmentId: "assignment-1",
+    })).toThrow("executing cannot apply execution_retry_requested");
+  });
+
+  it("只允许正式工作流在最终链上结算后进入 settled，争议状态不能绕过仲裁", () => {
+    expect(transitionTaskStatus("matching", {
+      type: "workflow_settlement_confirmed",
+      txHash: CHAIN_EVENT.txHash,
+    })).toBe("settled");
+    expect(() => transitionTaskStatus("disputed", {
+      type: "workflow_settlement_confirmed",
+      txHash: CHAIN_EVENT.txHash,
+    })).toThrow("disputed cannot apply workflow_settlement_confirmed");
   });
 
   it("uses the same fee rule for gas fallback and proportional settlement", () => {
-    const config = { feeBasisPoints: 40n, gasFallbackMinor: 50n };
-    expect(calculatePlatformFee(100n, config)).toBe(50n);
-    expect(calculatePlatformFee(100_000n, config)).toBe(400n);
+    const config = { feeBasisPoints: 40n, gasFallbackMinor: 50_000n };
+    expect(calculatePlatformFee(1_000_000n, config)).toBe(50_000n);
+    expect(calculatePlatformFee(100_000_000n, config)).toBe(400_000n);
   });
 
   it("times out exactly matching, acceptance and execution—not escrow or rework", () => {

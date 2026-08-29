@@ -52,7 +52,7 @@ type AcceptanceTermsRow = {
   fee_version: string;
   fee_basis_points: number;
   gas_fallback_minor: string;
-  escrow_amount_wei: string;
+  escrow_amount_minor: string;
   payout_wallet_address: string;
 };
 
@@ -270,7 +270,7 @@ export class PgExecutionRepository implements ExecutionRepository {
     const acceptanceId = required(acceptance.rows[0], "ACCEPTANCE_NOT_INSERTED").id;
     await this.db.query(
       `INSERT INTO escrow_execution_jobs(
-         task_id,source,source_ref,action,payee,agent_gross_amount_wei,fee_amount_wei,status,next_attempt_at
+         task_id,source,source_ref,action,payee,agent_gross_amount_minor,fee_amount_minor,status,next_attempt_at
        ) VALUES ($1,'acceptance',$2,'release',$3,$4,$5,'pending',now())`,
       [taskId, acceptanceId, terms.payout_wallet_address.toLowerCase(), gross.toString(), fee.toString()],
     );
@@ -296,7 +296,7 @@ export class PgExecutionRepository implements ExecutionRepository {
       `SELECT task.status,task.status_version::text,result.assignment_id::text,
               assignment.agreed_amount_minor::text,fee.version AS fee_version,
               fee.fee_basis_points,fee.gas_fallback_minor::text,
-              intent.amount_wei::text AS escrow_amount_wei,agent.payout_wallet_address
+              intent.amount_minor::text AS escrow_amount_minor,agent.payout_wallet_address
          FROM tasks task
          JOIN task_results result ON result.task_id=task.id
          JOIN task_assignments assignment ON assignment.id=result.assignment_id AND assignment.status='accepted'
@@ -476,7 +476,7 @@ function assertAwaitingReview(status: TaskStatus): void {
 
 function settlementOf(terms: AcceptanceTermsRow): SettlementTerms {
   const gross = BigInt(terms.agreed_amount_minor);
-  if (gross > BigInt(terms.escrow_amount_wei)) {
+  if (gross > BigInt(terms.escrow_amount_minor)) {
     throw new ExecutionServiceError(409, "SETTLEMENT_EXCEEDS_ESCROW", "成交金额超过已确认托管金额");
   }
   const fee = calculatePlatformFee(gross, {
