@@ -203,6 +203,7 @@ export class WorkflowApi {
           retryable: true,
           // 只返回固定校验码，不返回模型原文、任务内容或字段值。
           issue_codes: [...new Set(error.issues.map((issue) => issue.code))],
+					issues: error.issues.slice(0, 8),
         });
       }
       return jsonResponse(502, {

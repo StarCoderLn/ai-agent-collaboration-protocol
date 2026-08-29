@@ -45,6 +45,11 @@ const RpcResponseSchema = z.object({
   id: z.union([z.string(), z.number()]),
   result: z.unknown(),
 }).passthrough();
+const EscrowExecutionResultSchema = z.object({
+  claimed: z.boolean(),
+  status: z.enum(["idle", "submitted", "retry_pending", "dead_letter"]),
+}).passthrough();
+const WorkerResultSchema = z.record(z.string(), z.unknown());
 
 if (process.env.AICP_LOCAL_MVP_TEST_MODE !== "true") {
   await main().catch((error) => {
@@ -73,7 +78,7 @@ async function main() {
   }
   const chainId = await rpc("eth_chainId", []);
   if (chainId !== "0x7a69") throw new Error(`${URLS.anvil} is not Anvil chain 31337`);
-  const escrowAddress = await deployEscrow();
+  const { escrowAddress, paymentTokenAddress } = await deployLocalMoneyContracts();
 
   await runOnce("本地链同步游标", NODE, [path.join(ROOT, "scripts/local-chain-bootstrap.mjs")], {
     cwd: ROOT,
@@ -120,6 +125,7 @@ async function main() {
       ETHEREUM_RPC_URL: URLS.anvil,
       ESCROW_CHAIN_ID: "31337",
       ESCROW_CONTRACT_ADDRESS: escrowAddress,
+      ESCROW_PAYMENT_TOKEN_ADDRESS: paymentTokenAddress,
       ESCROW_START_BLOCK: "0",
       // Anvil 的区块只由本地操作推进，不存在自然出块带来的等待价值。保留 2 次确认
       // 可验证 pending -> confirmed 边界，又不会让产品体验被底层演示参数拖慢。
@@ -144,6 +150,13 @@ async function main() {
   });
   await waitForService(dispatch, "Dispatch Engine", () => probeJson(`${URLS.dispatch}/health`, ServiceStatusSchema));
 
+  // 公链会自然出块，生产环境也会由定时 worker 处理资金 outbox；Anvil 两者都没有。
+  // 本地启动器因此只在真实领取到结算任务时挖确认块并同步事件，让中间阶段自动验收后
+  // 能完整进入已确认结算，不再依赖用户点击隐藏的“推进本地链”操作。
+  void runLocalSettlementAdvancer().catch(() => {
+    if (!shuttingDown) console.error("本地结算自动推进器异常退出");
+  });
+
   const web = start("Web", NODE, [NEXT_WEB, "dev", "--hostname", "127.0.0.1", "--port", String(PORTS.web)], {
     cwd: path.join(ROOT, "web/apps/web"),
     env: {
@@ -167,6 +180,7 @@ async function main() {
   startupComplete = true;
   console.log(`\nAICP 本地完整闭环已启动：${URLS.web}`);
   console.log(`Escrow 合约：${escrowAddress}`);
+  console.log(`测试 USDC：${paymentTokenAddress}（默认 Anvil 账户已获得 100,000 USDC）`);
   console.log(`MetaMask 网络：Anvil 31337 / ${URLS.anvil} / 默认账户 ${ANVIL_ACCOUNT}`);
   console.log("按 Ctrl+C 会关闭本启动器创建的全部进程。\n");
   process.on("SIGINT", () => shutdown(0));
@@ -181,15 +195,38 @@ function assertSupportedNodeVersion() {
   }
 }
 
-async function deployEscrow() {
-  const output = await capture("forge", [
-    "create", "src/Escrow.sol:Escrow", "--broadcast", "--json",
+/**
+ * 本地链每次启动都部署一对全新的测试 USDC 与 Escrow，并只给 Anvil 默认账户铸币。
+ * 测试 Token 的 mint 权限绝不能出现在公共测试网/生产部署路径；正式环境必须通过
+ * ESCROW_PAYMENT_TOKEN_ADDRESS 注入官方 USDC，且不会调用本函数。
+ */
+async function deployLocalMoneyContracts() {
+  const paymentTokenAddress = await deployContract("test/TestUSDC.sol:TestUSDC", []);
+  const escrowAddress = await deployContract("src/Escrow.sol:Escrow", [
+    ANVIL_ACCOUNT,
+    ANVIL_ACCOUNT,
+    ANVIL_ACCOUNT,
+    ANVIL_ACCOUNT,
+    ANVIL_ACCOUNT,
+    paymentTokenAddress,
+  ]);
+  await capture("cast", [
+    "send", paymentTokenAddress, "mint(address,uint256)", ANVIL_ACCOUNT, "100000000000",
     "--rpc-url", URLS.anvil, "--private-key", ANVIL_PRIVATE_KEY,
-    "--constructor-args", ANVIL_ACCOUNT, ANVIL_ACCOUNT, ANVIL_ACCOUNT, ANVIL_ACCOUNT, ANVIL_ACCOUNT,
   ], path.join(ROOT, "contracts/escrow"));
+  return { escrowAddress, paymentTokenAddress };
+}
+
+async function deployContract(contract, constructorArgs) {
+  const args = [
+    "create", contract, "--broadcast", "--json",
+    "--rpc-url", URLS.anvil, "--private-key", ANVIL_PRIVATE_KEY,
+  ];
+  if (constructorArgs.length > 0) args.push("--constructor-args", ...constructorArgs);
+  const output = await capture("forge", args, path.join(ROOT, "contracts/escrow"));
   const matched = /"deployedTo"\s*:\s*"(0x[0-9a-fA-F]{40})"/.exec(output)
     ?? /Deployed to:\s*(0x[0-9a-fA-F]{40})/.exec(output);
-  if (matched?.[1] === undefined) throw new Error("Escrow deployment did not return a contract address");
+  if (matched?.[1] === undefined) throw new Error(`${contract} deployment did not return a contract address`);
   return matched[1].toLowerCase();
 }
 
@@ -248,6 +285,49 @@ async function rpc(method, params) {
   return body.data.result;
 }
 
+async function runLocalSettlementAdvancer() {
+  while (!shuttingDown) {
+    try {
+      await advanceLocalSettlementOnce(runInternalWorker, mineLocalConfirmationBlocks);
+    } catch {
+      // 服务刚重载或链短暂不可用时保留 outbox 的重试语义；不输出响应和内部 token。
+      if (!shuttingDown) console.error("本地结算自动推进失败，将在下一轮重试");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+}
+
+/**
+ * 一轮只在资金 worker 真正广播了交易后挖块并同步，避免空闲时每秒制造无意义区块。
+ * 依赖以函数参数注入仅用于纯测试；正式启动始终使用下方受 loopback 与内部 token 约束的实现。
+ */
+async function advanceLocalSettlementOnce(runWorker, mineBlocks) {
+  const rawExecution = await runWorker("/api/internal/workers/escrow-execution");
+  const execution = EscrowExecutionResultSchema.parse(rawExecution);
+  // retry_pending / dead_letter 代表链上交易没有广播，不能挖块后伪装成已确认。
+  if (!execution.claimed || execution.status !== "submitted") return false;
+  await mineBlocks();
+  await runWorker("/api/internal/workers/escrow-sync");
+  return true;
+}
+
+async function runInternalWorker(pathname) {
+  const response = await fetch(`${URLS.business}${pathname}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${INTERNAL_TOKEN}`, "content-type": "application/json" },
+    body: "{}",
+    signal: AbortSignal.timeout(30_000),
+  });
+  const parsed = WorkerResultSchema.safeParse(await response.json());
+  if (!response.ok || !parsed.success) throw new Error(`local worker ${pathname} failed`);
+  return parsed.data;
+}
+
+async function mineLocalConfirmationBlocks() {
+  const blocks = positiveInteger(process.env.LOCAL_DEMO_MINE_BLOCKS ?? "2");
+  await rpc("anvil_mine", [`0x${blocks.toString(16)}`]);
+}
+
 function parseEnv(source) {
   const result = {};
   for (const line of source.split(/\r?\n/)) {
@@ -265,6 +345,14 @@ function readPort(name, fallback) {
   const parsed = z.coerce.number().int().min(1).max(65_535).safeParse(process.env[name] ?? fallback);
   if (!parsed.success) throw new Error(`${name} must be an integer between 1 and 65535`);
   return parsed.data;
+}
+
+function positiveInteger(value) {
+  const parsed = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed) || parsed <= 0 || parsed > 1_000) {
+    throw new Error("LOCAL_DEMO_MINE_BLOCKS must be between 1 and 1000");
+  }
+  return parsed;
 }
 
 function assertDistinctPorts(ports) {
@@ -297,19 +385,22 @@ async function assertPortsAvailable(services, isOpen) {
 }
 
 async function waitForService(managed, label, probe) {
-  const readiness = (async () => {
-    for (let attempt = 0; attempt < 120; attempt += 1) {
-      if (await probe()) return;
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    throw new Error(`${label} did not pass its readiness contract within 30 seconds`);
-  })();
-  const exited = managed.exit.then((outcome) => {
-    if ("error" in outcome) throw new Error(`${label} failed to spawn: ${outcome.error.message}`);
-    const reason = outcome.signal === null ? `code ${outcome.code}` : `signal ${outcome.signal}`;
-    throw new Error(`${label} exited before becoming ready with ${reason}`);
-  });
-  return Promise.race([readiness, exited]);
+	// 子进程退出必须参与每一次探测和退避等待。若在外层用一个 30 秒轮询 Promise
+	// 与退出事件只竞速一次，失败结果返回后落败的轮询仍会保留计时器，导致测试和
+	// 启动失败路径无意义地挂住 30 秒。
+	const exitFailure = managed.exit.then((outcome) => {
+		if ("error" in outcome) throw new Error(`${label} failed to spawn: ${outcome.error.message}`);
+		const reason = outcome.signal === null ? `code ${outcome.code}` : `signal ${outcome.signal}`;
+		throw new Error(`${label} exited before becoming ready with ${reason}`);
+	});
+	for (let attempt = 0; attempt < 120; attempt += 1) {
+		if (await Promise.race([probe(), exitFailure])) return;
+		await Promise.race([
+			new Promise((resolve) => setTimeout(resolve, 250)),
+			exitFailure,
+		]);
+	}
+	throw new Error(`${label} did not pass its readiness contract within 30 seconds`);
 }
 
 async function probeJson(url, schema) {
@@ -356,4 +447,9 @@ function shutdown(code) {
   process.exit(code);
 }
 
-export { assertPortsAvailable, isReadyWebHtml, waitForService };
+export {
+  advanceLocalSettlementOnce,
+  assertPortsAvailable,
+  isReadyWebHtml,
+  waitForService,
+};

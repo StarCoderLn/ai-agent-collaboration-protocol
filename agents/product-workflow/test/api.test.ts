@@ -76,7 +76,7 @@ describe("WorkflowApi", () => {
     expect(signed.status).toBe(200);
   });
 
-  it("returns only stable validation codes when model code output is rejected", async () => {
+  it("returns only stable validation codes and field paths when model output is rejected", async () => {
     const executor: WorkflowExecutor = {
       run: async () => {
         throw new ModelOutputError("MODEL_OUTPUT_INVALID", [
@@ -109,8 +109,9 @@ describe("WorkflowApi", () => {
       message: "model output failed workflow artifact validation",
       retryable: true,
       issue_codes: ["INLINE_STYLES_NOT_ALLOWED"],
+			issues: [{ path: "<code>", code: "INLINE_STYLES_NOT_ALLOWED" }],
     });
-    expect(JSON.stringify(responseBody)).not.toContain("<code>");
+		expect(JSON.stringify(responseBody)).not.toContain("开发一个可以依次选择");
   });
 
   it("accepts a signed dispatch at the stable per-Agent endpoint without waiting for model work", async () => {
@@ -124,7 +125,7 @@ describe("WorkflowApi", () => {
         title: "开发任务市场", description: "完成一条可追踪、可验收的正式 Agent 执行闭环。",
         acceptanceCriteria: "用户可以查看真实结果并验收。", deliverableFormat: "JSON",
         tags: ["产品"], pricingType: "fixed", budgetMinMinor: "100", budgetMaxMinor: "100",
-        currency: "ETH", deadline: "2026-08-24T00:00:00.000Z",
+        currency: "USDC", deadline: "2026-08-24T00:00:00.000Z",
         requiredCapability: "产品需求分析", attachments: [],
       },
       callbacks: {

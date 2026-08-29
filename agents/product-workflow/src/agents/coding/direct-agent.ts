@@ -1,4 +1,4 @@
-import { finalizeArtifact } from "../../domain.js";
+import { extractPrototypeDesignIds, finalizeArtifact } from "../../domain.js";
 import { codeGenerationPrompt, codeSystemInstructions } from "../../prompts.js";
 import { assertAgentInput, type RunContext, type WorkflowAgentDependencies, type WorkflowExecutor } from "../shared/contracts.js";
 
@@ -8,8 +8,10 @@ export class CodingDirectAgent implements WorkflowExecutor {
 
   async run(input: Parameters<WorkflowExecutor["run"]>[0], context: RunContext = {}) {
     assertAgentInput(input, "code-direct", "code");
+    const requiredDesignIds = extractPrototypeDesignIds(input.design.prototype.pageTsx);
     const pageTsx = await this.deps.jsonClient.generateCodePage({
-      system: codeSystemInstructions(), prompt: codeGenerationPrompt(input), maxOutputTokens: 2_500,
+      system: codeSystemInstructions(), prompt: codeGenerationPrompt(input), maxOutputTokens: 7_000,
+      requiredDesignIds,
       ...(context.signal === undefined ? {} : { signal: context.signal }),
     });
     return finalizeArtifact(input, { pageTsx }, this.deps.now());

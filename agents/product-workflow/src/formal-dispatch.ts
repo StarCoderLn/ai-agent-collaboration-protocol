@@ -23,6 +23,7 @@ const TASK_EVENT_ID_STRING = z.string()
   .refine((value) => BigInt(value) <= 9_223_372_036_854_775_807n, "eventId exceeds PostgreSQL BIGINT range");
 const CALLBACK_RESPONSE_LIMIT = 1 << 20;
 const CALLBACK_MAX_ATTEMPTS = 6;
+const EXECUTION_READY_MAX_ATTEMPTS = 12;
 const CALLBACK_BASE_RETRY_MS = 100;
 
 const CallbackErrorSchema = z.object({
@@ -37,6 +38,17 @@ const AttachmentSchema = z.object({
   storageRef: z.string().trim().min(1).max(2_000),
 }).strict();
 
+const UpstreamArtifactSchema = z.object({
+  workflowNodeId: UUID,
+  nodeKey: z.string().trim().min(1).max(64),
+  outputContract: z.string().trim().min(1).max(120),
+  resultId: UUID,
+  artifactKind: z.enum(["inline", "file"]),
+  mimeType: z.string().trim().min(1).max(150),
+  bodyOrFileRef: z.string().min(1).max(1_000_000),
+  generatedAt: z.string().datetime({ offset: true }),
+}).strict();
+
 const CallbackUrlSchema = z.url().superRefine((value, context) => {
   const parsed = new URL(value);
   if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username !== "" || parsed.password !== "" || parsed.hash !== "") {
@@ -49,6 +61,17 @@ export const FormalDispatchInputSchema = z.object({
   schemaVersion: z.literal("dispatch.v1"),
   requestId: UUID,
   assignmentId: UUID,
+  workflow: z.object({
+    nodeId: UUID,
+    nodeKey: z.string().trim().min(1).max(64),
+    kind: z.enum(["requirements", "design", "coding", "testing", "deployment", "research", "image", "video", "generic"]),
+    title: z.string().trim().min(1).max(120),
+    inputContract: z.string().trim().min(1).max(120),
+    outputContract: z.string().trim().min(1).max(120),
+    budgetCapMinor: INTEGER_STRING,
+    agreedAmountMinor: INTEGER_STRING,
+  }).strict().nullable().optional(),
+  upstreamArtifacts: z.array(UpstreamArtifactSchema).max(100).default([]),
   task: z.object({
     id: UUID,
     title: z.string().trim().min(1).max(200),
@@ -59,7 +82,7 @@ export const FormalDispatchInputSchema = z.object({
     pricingType: z.enum(["fixed", "range"]),
     budgetMinMinor: INTEGER_STRING,
     budgetMaxMinor: INTEGER_STRING,
-    currency: z.literal("ETH"),
+    currency: z.literal("USDC"),
     deadline: z.string().datetime({ offset: true }),
     requiredCapability: z.string().trim().min(1).max(2_000),
     attachments: z.array(AttachmentSchema).max(20),
@@ -127,7 +150,7 @@ export class FormalDispatchService {
     const dispatch = FormalDispatchInputSchema.parse(raw);
     findWorkflowAgent(agentId);
     const context = { agentId, callType, dispatch } satisfies ExecutionContext;
-    this.#contexts.set(contextKey(agentId, dispatch.task.id), context);
+    this.#contexts.set(contextKey(agentId, dispatch.assignmentId), context);
     this.#enqueue(context, "initial");
     // accepted 只表示任务已安全进入 Agent 内部队列；平台接单状态由后续签名 ack 回调推进。
     return { queued: true };
@@ -138,7 +161,9 @@ export class FormalDispatchService {
     if (this.#handledEvents.has(event.eventId)) return { received: true, action: "ignored" };
     this.#handledEvents.add(event.eventId);
     if (event.eventType !== "task.rework_requested") return { received: true, action: "ignored" };
-    const context = this.#contexts.get(contextKey(agentId, event.taskId));
+    const matches = [...this.#contexts.values()].filter((context) =>
+      context.agentId === agentId && context.dispatch.task.id === event.taskId);
+    const context = matches.length === 1 ? matches[0] : undefined;
     if (context === undefined) {
       // 进程重启后内存上下文不存在时不能伪造重跑；返回可重试错误由正式 Webhook 死信恢复。
       this.#handledEvents.delete(event.eventId);
@@ -152,7 +177,7 @@ export class FormalDispatchService {
   }
 
   #enqueue(context: ExecutionContext, suffix: string, reworkFeedback?: string): void {
-    const key = contextKey(context.agentId, context.dispatch.task.id);
+    const key = contextKey(context.agentId, context.dispatch.assignmentId);
     const prior = this.#taskQueues.get(key) ?? Promise.resolve();
     const job = prior.catch(() => undefined).then(() => this.#execute(context, suffix, reworkFeedback));
     this.#taskQueues.set(key, job);
@@ -178,9 +203,9 @@ export class FormalDispatchService {
       await this.#callbacks.acknowledge(context);
       await this.#callbacks.reportProgress(context, 10, suffix);
     }
-    const input = adaptFormalTask(context, this.#now(), reworkFeedback);
     let artifact: WorkflowArtifact;
     try {
+      const input = adaptFormalTask(context, this.#now(), reworkFeedback);
       artifact = await this.#executor.run(input);
     } catch (error) {
       // 只把“模型/执行器没有产出制品”归类为执行失败。ack、进度和结果回调自身的
@@ -250,8 +275,8 @@ export class SignedFormalCallbackClient implements FormalCallbackClient {
     const agent = findWorkflowAgent(context.agentId);
     const summary = artifact.schemaVersion === "requirements.artifact.v0.1"
       ? "结构化 PRD 与可执行任务"
-      : artifact.schemaVersion === "design.artifact.v0.1"
-        ? "界面设计规范与安全 SVG 预览"
+      : artifact.schemaVersion === "design.artifact.v0.3"
+        ? "界面设计规范与可运行高保真原型"
         : "代码文件、运行说明与测试计划";
     return this.#post(context.dispatch.callbacks.results, {
       agentId: agent.platformId,
@@ -270,12 +295,19 @@ export class SignedFormalCallbackClient implements FormalCallbackClient {
   async #post(url: string, value: unknown, idempotencyKey: string, callType: CallType): Promise<void> {
     const body = JSON.stringify(value);
     const path = new URL(url).pathname || "/";
-    for (let attempt = 1; attempt <= CALLBACK_MAX_ATTEMPTS; attempt += 1) {
+    for (let attempt = 1; ; attempt += 1) {
       try {
         await this.#postOnce(url, path, body, idempotencyKey, callType);
         return;
       } catch (error) {
-        if (!(error instanceof FormalDispatchError) || !error.retryable || attempt === CALLBACK_MAX_ATTEMPTS) throw error;
+        if (!(error instanceof FormalDispatchError) || !error.retryable) throw error;
+        // ack 由分发服务接收后，还要经过异步 outbox 才能把节点推进到 executing。
+        // EXECUTION_NOT_READY 因此需要覆盖更长的传播窗口；其他网络故障仍保持较短上限，
+        // 避免一个不可用回调长时间占住 Agent 队列。重试始终复用同一幂等键。
+        const maxAttempts = error.code === "EXECUTION_NOT_READY"
+          ? EXECUTION_READY_MAX_ATTEMPTS
+          : CALLBACK_MAX_ATTEMPTS;
+        if (attempt >= maxAttempts) throw error;
         await this.#wait(Math.min(CALLBACK_BASE_RETRY_MS * 2 ** (attempt - 1), 2_000));
       }
     }
@@ -315,11 +347,8 @@ export class FormalDispatchError extends Error {
   constructor(readonly code: string, message: string, readonly retryable: boolean) { super(message); }
 }
 
-/**
- * 正式市场任务只有任务字段，没有画布的上游制品。本适配器用这些已验证字段构造最小上游
- * 制品，且 provenance 归属于当前 Agent 自身的输入准备阶段；不会伪造研究、测试或部署结果。
- */
-export function adaptFormalTask(context: ExecutionContext, generatedAt: Date, reworkFeedback?: string): WorkflowExecutionInput {
+/** 正式节点只消费数据库中已验收的上游制品；缺失或损坏时明确失败，禁止合成假制品。 */
+export function adaptFormalTask(context: ExecutionContext, _generatedAt: Date, reworkFeedback?: string): WorkflowExecutionInput {
   const { dispatch, agentId } = context;
   const manifest = findWorkflowAgent(agentId);
   const request = [
@@ -338,43 +367,34 @@ export function adaptFormalTask(context: ExecutionContext, generatedAt: Date, re
     userRequest: request,
   };
   if (manifest.step === "requirements") return WorkflowExecutionInputSchema.parse({ ...base, step: "requirements" });
-  const requirements = RequirementsArtifactSchema.parse({
-    schemaVersion: "requirements.artifact.v0.1",
-    taskId: dispatch.task.id,
-    title: dispatch.task.title,
-    problemStatement: ensureLength(dispatch.task.description, 20),
-    targetUsers: ["任务发布者定义的目标用户"],
-    goals: [dispatch.task.acceptanceCriteria.slice(0, 500)],
-    nonGoals: ["不实现任务描述与验收标准之外的能力"],
-    userStories: [{ id: "US-1", statement: `作为目标用户，我希望${dispatch.task.title}`, acceptanceCriteria: [dispatch.task.acceptanceCriteria.slice(0, 500)] }],
-    functionalRequirements: [dispatch.task.requiredCapability.slice(0, 500)],
-    constraints: [`交付格式：${dispatch.task.deliverableFormat}`.slice(0, 500)],
-    assumptions: ["正式任务字段由发布者确认并通过平台校验"],
-    openQuestions: [],
-    executableTasks: [{ id: "T-1", title: dispatch.task.title, description: dispatch.task.description.slice(0, 2_000), dependsOn: [], acceptanceCriteria: [dispatch.task.acceptanceCriteria.slice(0, 500)] }],
-    generatedBy: { agentId, strategy: manifest.strategy },
-    generatedAt: generatedAt.toISOString(),
-  });
+  const requirements = readUpstreamArtifact(dispatch, RequirementsArtifactSchema, "RequirementsArtifact");
   if (manifest.step === "design") return WorkflowExecutionInputSchema.parse({ ...base, step: "design", requirements });
-  const design = DesignArtifactSchema.parse({
-    schemaVersion: "design.artifact.v0.1",
-    taskId: dispatch.task.id,
-    title: `${dispatch.task.title}设计输入`,
-    direction: ensureLength(`围绕“${dispatch.task.title}”建立清晰、可信、可验收的产品界面。`, 20),
-    tokens: { primaryColor: "#365E9D", secondaryColor: "#64748B", backgroundColor: "#F8FAFC", textColor: "#172033", borderRadius: "8px", spacingBase: "8px", fontFamily: "system-ui, sans-serif" },
-    pages: [{ id: "page-main", name: dispatch.task.title, purpose: ensureLength(dispatch.task.description, 10), sections: ["任务目标", "核心操作", "状态与反馈"] }],
-    components: [{ id: "component-main", name: "主要任务界面", parentId: null, responsibility: "承载任务核心操作、状态和验收反馈", states: ["默认", "加载", "错误", "完成"] }],
-    interactionRules: ["高风险操作必须先展示对象、后果和确认动作"],
-    responsiveRules: ["桌面与 390px 移动端均不得产生横向溢出"],
-    accessibilityRules: ["交互控件可通过键盘访问并具有可读标签"],
-    assetPlan: [],
-    generatedBy: { agentId, strategy: manifest.strategy },
-    generatedAt: generatedAt.toISOString(),
-    svgPreview: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 960 640\"><rect width=\"960\" height=\"640\" fill=\"#F8FAFC\"/></svg>",
-  });
+  const design = readUpstreamArtifact(dispatch, DesignArtifactSchema, "DesignArtifact");
   return WorkflowExecutionInputSchema.parse({ ...base, step: "code", requirements, design });
 }
 
-function contextKey(agentId: WorkflowAgentId, taskId: string): string { return `${agentId}:${taskId}`; }
-function ensureLength(value: string, minimum: number): string { return value.length >= minimum ? value : `${value}${"。".repeat(minimum - value.length)}`; }
+function readUpstreamArtifact<T>(
+  dispatch: FormalDispatchInput,
+  schema: z.ZodType<T>,
+  contract: string,
+): T {
+  for (const artifact of dispatch.upstreamArtifacts) {
+    if (artifact.outputContract !== contract || artifact.artifactKind !== "inline"
+      || artifact.mimeType !== "application/json") continue;
+    try {
+      const parsed = schema.parse(JSON.parse(artifact.bodyOrFileRef));
+      if ((parsed as { taskId?: string }).taskId !== dispatch.task.id) continue;
+      return parsed;
+    } catch {
+      // 继续检查同契约的其他已验收祖先；全部损坏时统一返回稳定错误码。
+    }
+  }
+  throw new FormalDispatchError(
+    "UPSTREAM_ARTIFACT_REQUIRED",
+    `accepted ${contract} is required for this workflow node`,
+    false,
+  );
+}
+
+function contextKey(agentId: WorkflowAgentId, assignmentId: string): string { return `${agentId}:${assignmentId}`; }
 function wait(delayMs: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, delayMs)); }

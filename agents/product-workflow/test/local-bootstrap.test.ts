@@ -37,7 +37,7 @@ describe("local workflow Agent bootstrap", () => {
     // 显式写入两列，确保生产数据库的 NOT NULL 门禁不会被 bootstrap 绕开。
     expect(agentWrites[0]?.text).toContain("provider_wallet_address,payout_wallet_address");
     expect(agentWrites[0]?.text).toContain("VALUES ($1,$2,$2,$3");
-    expect(agentWrites[0]?.text).toContain("'ETH'");
+    expect(agentWrites[0]?.text).toContain("'USDC'");
     expect(agentWrites[0]?.values).toContain("http://127.0.0.1:9202/v1/agents/prd-direct");
     const credentialWrites = database.calls.filter((call) => call.text.includes("INSERT INTO agent_credentials"));
     expect(credentialWrites).toHaveLength(9);

@@ -4,7 +4,7 @@ import { findWorkflowAgent } from "../../catalog.js";
 import { finalizeArtifact, RequirementsDraftSchema } from "../../domain.js";
 import { generationPrompt, systemInstructions } from "../../prompts.js";
 import { assertAgentInput, type RunContext, type WorkflowAgentDependencies, type WorkflowExecutor } from "../shared/contracts.js";
-import { parseMastraObject, planWithMastra, propagateMastraError } from "../shared/model-steps.js";
+import { generateStructuredWithMastra, planWithMastra } from "../shared/model-steps.js";
 
 /** Mastra PRD Agent：先生成覆盖计划，再用严格结构化输出生成可下游执行的 PRD。 */
 export class PrdMastraAgent implements WorkflowExecutor {
@@ -17,12 +17,15 @@ export class PrdMastraAgent implements WorkflowExecutor {
       id: "prd-mastra-producer", name: findWorkflowAgent(input.agentId).name,
       model: this.deps.mastraModel, instructions: systemInstructions("requirements"),
     });
-    const response = await producer.generate(generationPrompt(input, analysis), {
-      ...(context.signal === undefined ? {} : { abortSignal: context.signal }), maxSteps: 1,
-      modelSettings: { maxOutputTokens: 5_000, timeout: { stepMs: this.deps.modelStepTimeoutMs, totalMs: this.deps.modelStepTimeoutMs } },
-      structuredOutput: { schema: RequirementsDraftSchema, errorStrategy: "strict", jsonPromptInjection: "inline" },
-    });
-    propagateMastraError(response.error);
-    return finalizeArtifact(input, parseMastraObject(response.object, response.text, RequirementsDraftSchema), this.deps.now());
+    const draft = await generateStructuredWithMastra(
+      (prompt) => producer.generate(prompt, {
+        ...(context.signal === undefined ? {} : { abortSignal: context.signal }), maxSteps: 1,
+        modelSettings: { maxOutputTokens: 5_000, timeout: { stepMs: this.deps.modelStepTimeoutMs, totalMs: this.deps.modelStepTimeoutMs } },
+        structuredOutput: { schema: RequirementsDraftSchema, errorStrategy: "strict", jsonPromptInjection: "inline" },
+      }),
+      generationPrompt(input, analysis),
+      RequirementsDraftSchema,
+    );
+    return finalizeArtifact(input, draft, this.deps.now());
   }
 }

@@ -58,15 +58,29 @@ describe("formal dispatch", () => {
       "code-direct", "code-mastra", "code-state-machine",
     ];
     for (const agentId of ids) {
-      const input = adaptFormalTask({ agentId, callType: "production", dispatch: dispatchInput() }, NOW);
+      const input = adaptFormalTask({ agentId, callType: "production", dispatch: dispatchInputFor(agentId) }, NOW);
       expect(input.agentId).toBe(agentId);
       expect(input.taskId).toBe(dispatchInput().task.id);
-      if (input.step === "design") expect(input.requirements.generatedBy.agentId).toBe(agentId);
+      if (input.step === "design") expect(input.requirements.generatedBy.agentId).toBe("prd-direct");
       if (input.step === "code") {
-        expect(input.requirements.generatedBy.agentId).toBe(agentId);
-        expect(input.design.generatedBy.agentId).toBe(agentId);
+        expect(input.requirements.generatedBy.agentId).toBe("prd-direct");
+        expect(input.design.generatedBy.agentId).toBe("design-direct");
       }
     }
+  });
+
+  it("keeps task behavior in coding requirements and treats Agent capability as a constraint", () => {
+    const dispatch = dispatchInputFor("code-direct");
+    const input = adaptFormalTask({ agentId: "code-direct", callType: "production", dispatch }, NOW);
+
+    expect(input.step).toBe("code");
+    if (input.step !== "code") throw new Error("expected a coding execution input");
+
+    // 所需能力描述的是谁适合接单，不是用户最终要使用的产品功能。这里锁定两者的
+    // 领域边界，避免 Coding Agent 再把“会 React”之类的能力误画成页面需求。
+    expect(input.requirements.functionalRequirements.join("\n")).toContain(dispatch.task.description);
+    expect(input.requirements.functionalRequirements).not.toContain(dispatch.task.requiredCapability);
+    expect(input.requirements.constraints.join("\n")).toContain(dispatch.task.requiredCapability);
   });
 
   it("acknowledges, reports progress and submits a result asynchronously, then reruns on rework", async () => {
@@ -97,16 +111,19 @@ describe("formal dispatch", () => {
     const callbacks = new RecordingCallbacks();
     const service = new FormalDispatchService({ executor: new FailingExecutor(), callbacks, now: () => NOW });
 
-    expect(service.accept("code-direct", "production", dispatchInput())).toEqual({ queued: true });
+    expect(service.accept("code-direct", "production", dispatchInputFor("code-direct"))).toEqual({ queued: true });
     await waitFor(() => callbacks.failureCount === 1);
 
     expect(callbacks.operations).toEqual(["ack", "progress:10", "failure"]);
   });
 
-  it("retries an explicitly transient callback with the same idempotency key", async () => {
+  it("keeps retrying the acceptance propagation race with the same idempotency key", async () => {
     const requests: RequestInit[] = [];
     const responses = [
-      new Response(JSON.stringify({ error_code: "EXECUTION_NOT_READY", retryable: true }), { status: 409 }),
+      // 接单 ack 经 Go outbox 异步推进节点状态。这里固定复现六次“尚未就绪”，确保
+      // Agent 的等待窗口覆盖 outbox 传播，而不是恰好只覆盖一次快速重试。
+      ...Array.from({ length: 6 }, () =>
+        new Response(JSON.stringify({ error_code: "EXECUTION_NOT_READY", retryable: true }), { status: 409 })),
       new Response(JSON.stringify({ taskId: dispatchInput().task.id, status: "executing" }), { status: 200 }),
     ];
     const delays: number[] = [];
@@ -124,12 +141,14 @@ describe("formal dispatch", () => {
 
     await client.reportProgress({ agentId: "code-direct", callType: "production", dispatch: dispatchInput() }, 10, "initial");
 
-    expect(requests).toHaveLength(2);
-    expect(delays).toEqual([100]);
+    expect(requests).toHaveLength(7);
+    expect(delays).toEqual([100, 200, 400, 800, 1_600, 2_000]);
     const firstHeaders = new Headers(requests[0]?.headers);
-    const secondHeaders = new Headers(requests[1]?.headers);
-    expect(firstHeaders.get("idempotency-key")).toBe(secondHeaders.get("idempotency-key"));
-    expect(firstHeaders.get("x-nonce")).not.toBe(secondHeaders.get("x-nonce"));
+    for (const request of requests.slice(1)) {
+      const retryHeaders = new Headers(request.headers);
+      expect(firstHeaders.get("idempotency-key")).toBe(retryHeaders.get("idempotency-key"));
+      expect(firstHeaders.get("x-nonce")).not.toBe(retryHeaders.get("x-nonce"));
+    }
   });
 
   it("sends only the public failure code in the signed failure callback", async () => {
@@ -182,6 +201,7 @@ function dispatchInput(): FormalDispatchInput {
     schemaVersion: "dispatch.v1",
     requestId: "92000000-0000-4000-8000-000000000001",
     assignmentId: "92000000-0000-4000-8000-000000000002",
+    upstreamArtifacts: [],
     task: {
       id: "92000000-0000-4000-8000-000000000003",
       title: "开发可信任务市场",
@@ -192,7 +212,7 @@ function dispatchInput(): FormalDispatchInput {
       pricingType: "fixed",
       budgetMinMinor: "9007199254740993",
       budgetMaxMinor: "9007199254740993",
-      currency: "ETH",
+      currency: "USDC",
       deadline: "2026-08-24T08:00:00.000Z",
       requiredCapability: "产品需求分析与可执行任务拆分",
       attachments: [],
@@ -205,6 +225,45 @@ function dispatchInput(): FormalDispatchInput {
   };
 }
 
+function dispatchInputFor(agentId: WorkflowAgentId): FormalDispatchInput {
+  const dispatch = dispatchInput();
+  if (agentId.startsWith("prd-")) return dispatch;
+  const requirements = artifactFor("prd-direct", dispatch.task.id);
+  dispatch.upstreamArtifacts.push(asUpstreamArtifact(
+    "92000000-0000-4000-8000-000000000010",
+    "requirements",
+    "RequirementsArtifact",
+    requirements,
+  ));
+  if (agentId.startsWith("code-")) {
+    dispatch.upstreamArtifacts.push(asUpstreamArtifact(
+      "92000000-0000-4000-8000-000000000011",
+      "design",
+      "DesignArtifact",
+      designArtifactFor(dispatch.task.id),
+    ));
+  }
+  return dispatch;
+}
+
+function asUpstreamArtifact(
+  workflowNodeId: string,
+  nodeKey: string,
+  outputContract: string,
+  artifact: WorkflowArtifact,
+): FormalDispatchInput["upstreamArtifacts"][number] {
+  return {
+    workflowNodeId,
+    nodeKey,
+    outputContract,
+    resultId: workflowNodeId.replace(/.$/, "f"),
+    artifactKind: "inline",
+    mimeType: "application/json",
+    bodyOrFileRef: JSON.stringify(artifact),
+    generatedAt: artifact.generatedAt,
+  };
+}
+
 function artifactFor(agentId: WorkflowAgentId, taskId: string): WorkflowArtifact {
   return {
     schemaVersion: "requirements.artifact.v0.1",
@@ -213,14 +272,73 @@ function artifactFor(agentId: WorkflowAgentId, taskId: string): WorkflowArtifact
     problemStatement: "用户需要一条能够完成发布、执行和验收的可信协作流程。",
     targetUsers: ["任务发布者"],
     goals: ["完成任务闭环"],
-    nonGoals: [],
+    nonGoals: ["不实现已验收范围之外的功能"],
     userStories: [{ id: "US-1", statement: "发布任务", acceptanceCriteria: ["发布成功"] }],
-    functionalRequirements: ["支持正式派发"],
-    constraints: [], assumptions: [], openQuestions: [],
+    functionalRequirements: ["让用户发布需求、比较 Agent，并在完整流程中追踪和验收真实交付结果。"],
+    constraints: ["产品需求分析与可执行任务拆分"], assumptions: [], openQuestions: [],
     executableTasks: [{ id: "T-1", title: "接入", description: "完成正式派发接入", dependsOn: [], acceptanceCriteria: ["结果可验收"] }],
     generatedBy: { agentId, strategy: agentId.includes("mastra") ? "mastra" : agentId.includes("state-machine") ? "state-machine" : "direct" },
     generatedAt: NOW.toISOString(),
   };
+}
+
+function designArtifactFor(taskId: string): WorkflowArtifact {
+	  return {
+	    schemaVersion: "design.artifact.v0.3",
+    taskId,
+    title: "可信任务市场设计",
+    direction: "建立一套清晰可信、可以追踪多 Agent 工作状态和验收结果的产品界面。",
+    tokens: {
+      primaryColor: "#6255E7", secondaryColor: "#64748B", backgroundColor: "#F8FAFC",
+      textColor: "#172033", borderRadius: "12px", spacingBase: "8px", fontFamily: "system-ui",
+    },
+    pages: [{ id: "task-detail", name: "任务详情", purpose: "展示节点进度、Agent 关系与可验收制品。", sections: ["工作流", "制品", "资金"] }],
+    components: [{ id: "workflow", name: "工作流关系图", parentId: null, responsibility: "展示正式节点和 Agent 执行事实", states: ["匹配中", "执行中", "待验收"] }],
+    interactionRules: ["点击节点切换到对应制品与验收动作"],
+    responsiveRules: ["窄屏切换为纵向节点列表"],
+    accessibilityRules: ["所有节点可通过键盘聚焦"],
+    assetPlan: [],
+		preview: {
+			navigation: { brand: "AgentOS", items: [{ label: "任务", active: true }, { label: "Agent", active: false }], action: "发布任务" },
+			hero: { eyebrow: "可信协作", title: "任务详情", description: "查看节点进度、Agent 关系与可验收制品。", primaryAction: "查看当前产物", secondaryAction: null },
+			metrics: [{ label: "整体进度", value: "68%", detail: "设计阶段进行中", tone: "primary" }],
+			sections: [
+				previewSection("workflow", "progress", "交付进度", "需求阶段已完成"),
+				previewSection("agents", "cards", "执行 Agent", "设计 Agent 执行中"),
+				previewSection("settlement", "table", "里程碑结算", "35 USDC 待验收"),
+			],
+			},
+		prototype: {
+			pageTsx: "// 正式派发测试使用完整可运行原型，验证 Coding 节点确实接收到设计阶段的页面结构。\n// 稳定锚点是跨 Agent 继承契约，不能在适配上游制品时被丢弃。\nexport default function Page(){return <main data-design-id=\"page-shell\"><header data-design-id=\"task-header\">任务详情</header><section data-design-id=\"workflow\">执行进度</section><section data-design-id=\"settlement\">里程碑结算</section></main>};",
+			globalsCss: "/* 正式派发测试保留 Design Agent 的完整视觉基线，下游代码制品必须逐字复用。 */\n/* 样式自包含且不引用远程资源，满足平台 iframe 预览的安全边界。 */\n*{box-sizing:border-box}body{margin:0;background:#f8fafc;color:#172033;font-family:system-ui}main{min-height:100vh;padding:40px}header,section{padding:24px;margin:0 auto 16px;border:1px solid #d8dcec;border-radius:12px}",
+		},
+	    generatedBy: { agentId: "design-direct", strategy: "direct" },
+	    generatedAt: NOW.toISOString(),
+	  };
+}
+
+function previewSection(
+	id: string,
+	kind: "cards" | "progress" | "table",
+	title: string,
+	description: string,
+) {
+	return {
+		id,
+		kind,
+		layout: kind === "table" ? "full" as const : "split" as const,
+		title,
+		description,
+		items: [0, 1].map((index) => ({
+			title: `${title}${index + 1}`,
+			description: `${description}的详细说明`,
+			value: index === 0 ? "68%" : "35 USDC",
+			status: index === 0 ? "进行中" : "待验收",
+			progress: index === 0 ? 68 : null,
+			action: "查看详情",
+			tone: index === 0 ? "primary" as const : "warning" as const,
+		})),
+	};
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

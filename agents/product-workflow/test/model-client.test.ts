@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { DeepSeekJsonClient, ModelOutputError } from "../src/model-client.js";
+import { DeepSeekJsonClient, ModelOutputError, parseGeneratedPrototype } from "../src/model-client.js";
 
 const OutputSchema = z.object({ title: z.string().min(1) }).strict();
 
@@ -36,6 +36,60 @@ describe("DeepSeekJsonClient", () => {
 		await expect(client.generateCodePage({
 			system: "Return raw TSX.", prompt: "Build one page.", maxOutputTokens: 2_000,
 		})).rejects.toThrow("TSX_SYNTAX_INVALID");
+	});
+
+	it("Coding 输出必须保留 Design Agent 的全部设计锚点", async () => {
+		const missing = 'export default function Page(){return <main data-design-id="page-shell">缺少其他设计区块</main>}'.padEnd(180, " ");
+		const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => completion(missing, "stop"));
+		const client = createClient(fetchImpl);
+
+		await expect(client.generateCodePage({
+			system: "Return raw TSX.", prompt: "Enhance the design page.", maxOutputTokens: 2_000,
+			requiredDesignIds: ["page-shell", "task-header", "content-panel"],
+		})).rejects.toThrow("DESIGN_ID_MISSING");
+		expect(fetchImpl).toHaveBeenCalledTimes(2);
+	});
+
+	it("解析 Design 原型的 TSX/CSS 分段并拒绝外部 CSS 引用", () => {
+		const prototype = validPrototypeEnvelope();
+		expect(parseGeneratedPrototype(prototype).pageTsx).toContain('data-design-id="page-shell"');
+		expect(() => parseGeneratedPrototype(prototype.replace(
+			"*{box-sizing:border-box}",
+			"@import url('https://example.com/theme.css');",
+		))).toThrow("UNSAFE_CSS_REFERENCE");
+	});
+
+	it("Design 原型格式失败后只携带稳定校验码进行一次修复", async () => {
+		const invalid = "<<<AICP_PAGE_TSX>>>\nexport default function Page(){return <main />}";
+		const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => completion(invalid, "stop"));
+		const client = createClient(fetchImpl);
+
+		await expect(client.generatePrototype({
+			system: "Return a runnable prototype.", prompt: "Build a task page.", maxOutputTokens: 4_000,
+		})).rejects.toThrow("PROTOTYPE_SECTIONS_INVALID");
+		const retry = requestBody(fetchImpl.mock.calls[1]?.[1]);
+		expect(retry.messages[0]?.content).toContain("PROTOTYPE_SECTIONS_INVALID");
+		expect(JSON.stringify(retry)).not.toContain("return <main />");
+	});
+
+	it("Design 原型内联样式失败时给出 CSS 分档类修复方法", async () => {
+		const valid = validPrototypeEnvelope();
+		const inlineStyle = valid.replace(
+			'<main data-design-id="page-shell">',
+			'<main style={{width:"75%"}} data-design-id="page-shell">',
+		);
+		const fetchImpl = vi.fn<typeof fetch>()
+			.mockResolvedValueOnce(completion(inlineStyle, "stop"))
+			.mockResolvedValueOnce(completion(valid, "stop"));
+		const client = createClient(fetchImpl);
+
+		await expect(client.generatePrototype({
+			system: "Return a runnable prototype.", prompt: "Build a task page.", maxOutputTokens: 4_000,
+		})).resolves.toMatchObject({ globalsCss: expect.stringContaining("box-sizing") });
+		const retry = requestBody(fetchImpl.mock.calls[1]?.[1]);
+		expect(retry.messages[0]?.content).toContain("INLINE_STYLES_NOT_ALLOWED");
+		expect(retry.messages[0]?.content).toContain("predefined CSS classes");
+		expect(JSON.stringify(retry)).not.toContain('width:"75%"');
 	});
 
 	it("代码重试只携带脱敏校验码并给出可执行的修复约束", async () => {
@@ -111,6 +165,23 @@ describe("DeepSeekJsonClient", () => {
 		expect((caught as Error).message).toContain("title:invalid_type");
 		expect((caught as Error).message).not.toContain("不要进入日志");
 	});
+
+	it("结构化输出重试携带安全字段路径而不携带无效字段值", async () => {
+		const schema = z.object({
+			pages: z.array(z.object({ sections: z.array(z.string()) }).strict()),
+		}).strict();
+		const fetchImpl = vi.fn<typeof fetch>()
+			.mockResolvedValueOnce(completion('{"pages":[{"sections":[{"private":"不要进入提示"}]}]}', "stop"))
+			.mockResolvedValueOnce(completion('{"pages":[{"sections":["项目总览"]}]}', "stop"));
+		const client = createClient(fetchImpl);
+
+		await expect(client.generateJson({
+			system: "Return JSON only.", prompt: "Create a design.", schema, maxOutputTokens: 1_000,
+		})).resolves.toEqual({ pages: [{ sections: ["项目总览"] }] });
+		const retry = requestBody(fetchImpl.mock.calls[1]?.[1]);
+		expect(retry.messages[0]?.content).toContain("pages.0.sections.0:invalid_type");
+		expect(JSON.stringify(retry)).not.toContain("不要进入提示");
+	});
 });
 
 function createClient(fetchImpl: typeof fetch): DeepSeekJsonClient {
@@ -136,4 +207,10 @@ function requestBody(init: RequestInit | undefined): {
 		max_tokens: z.number().int(),
 		messages: z.array(z.object({ role: z.string(), content: z.string() })),
 	}).parse(JSON.parse(init.body));
+}
+
+function validPrototypeEnvelope(): string {
+	const page = '// 解析器测试使用完整设计源文件，确保分段协议不会丢失页面结构或设计锚点。\n// Coding Agent 必须继承这些锚点，平台据此拒绝重新设计的输出。\nexport default function Page(){return <main data-design-id="page-shell"><header data-design-id="task-header">任务</header><section data-design-id="summary-panel">摘要</section><section data-design-id="action-panel"><button>开始</button></section></main>}';
+	const css = "/* 样式完全自包含，解析后会成为设计预览与 Coding 交付共同使用的视觉真相源。 */\n/* 外部引用在此边界统一拒绝，调用方无需重复理解安全规则。 */\n*{box-sizing:border-box}body{margin:0;background:#080b18;color:#fff;font-family:system-ui}main{min-height:100vh;padding:48px}header,section{padding:24px;margin-bottom:16px;border:1px solid #30375c;border-radius:14px}button{cursor:pointer}";
+	return `<<<AICP_PAGE_TSX>>>\n${page}\n<<<AICP_GLOBALS_CSS>>>\n${css}\n<<<AICP_END>>>`;
 }

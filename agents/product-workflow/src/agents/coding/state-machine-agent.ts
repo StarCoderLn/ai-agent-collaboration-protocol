@@ -1,4 +1,4 @@
-import { finalizeArtifact } from "../../domain.js";
+import { extractPrototypeDesignIds, finalizeArtifact } from "../../domain.js";
 import { codeGenerationPrompt, codeSystemInstructions } from "../../prompts.js";
 import { assertAgentInput, type RunContext, type WorkflowAgentDependencies, type WorkflowExecutor } from "../shared/contracts.js";
 import { analyzeWithClient, type AgentAnalysis, reviewWithClient } from "../shared/model-steps.js";
@@ -24,8 +24,10 @@ export class CodingStateMachineAgent implements WorkflowExecutor {
   ) {
     const basePrompt = codeGenerationPrompt(input, analysis);
     const prompt = reviewIssues.length === 0 ? basePrompt : `${basePrompt}\n\nFix these review issues:\n${JSON.stringify(reviewIssues)}`;
+    const requiredDesignIds = extractPrototypeDesignIds(input.design.prototype.pageTsx);
     const pageTsx = await this.deps.jsonClient.generateCodePage({
-      system: codeSystemInstructions(), prompt, maxOutputTokens: 2_500,
+      system: codeSystemInstructions(), prompt, maxOutputTokens: 7_000,
+      requiredDesignIds,
       ...(context.signal === undefined ? {} : { signal: context.signal }),
     });
     return { pageTsx };

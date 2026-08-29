@@ -43,7 +43,7 @@ export async function bootstrapLocalAgents(
            estimated_duration_seconds,response_minutes
          -- 本地目录没有真实提供者配置收款钱包，因此显式复用稳定测试所有者地址。
          -- 仍分别写入两个字段，避免用数据库默认值掩盖正式注册流程遗漏收款地址。
-         ) VALUES ($1,$2,$2,$3,$4,$5,$6,'fixed',$7,'ETH',$8,$9,'active',$10,1)
+         ) VALUES ($1,$2,$2,$3,$4,$5,$6,'fixed',$7,'USDC',$8,$9,'active',$10,1)
          ON CONFLICT (id) DO UPDATE SET
            name=EXCLUDED.name,category_id=EXCLUDED.category_id,
            capability_desc=EXCLUDED.capability_desc,tags=EXCLUDED.tags,

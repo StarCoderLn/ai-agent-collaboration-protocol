@@ -1,8 +1,13 @@
 import { DesignDraftSchema, finalizeArtifact } from "../../domain.js";
-import { generationPrompt, systemInstructions } from "../../prompts.js";
+import {
+  generationPrompt,
+  prototypeGenerationPrompt,
+  prototypeSystemInstructions,
+  systemInstructions,
+} from "../../prompts.js";
 import { assertAgentInput, type RunContext, type WorkflowAgentDependencies, type WorkflowExecutor } from "../shared/contracts.js";
 
-/** 快速设计基线：一次调用生成设计 token、页面、组件和交互规范。 */
+/** 快速设计基线：先确定结构化设计，再把同一决策实现成下游可直接继承的运行原型。 */
 export class DesignDirectAgent implements WorkflowExecutor {
   constructor(private readonly deps: WorkflowAgentDependencies) {}
 
@@ -12,6 +17,12 @@ export class DesignDirectAgent implements WorkflowExecutor {
       system: systemInstructions("design"), prompt: generationPrompt(input), schema: DesignDraftSchema,
       maxOutputTokens: 4_500, ...(context.signal === undefined ? {} : { signal: context.signal }),
     });
-    return finalizeArtifact(input, draft, this.deps.now());
+    const prototype = await this.deps.jsonClient.generatePrototype({
+      system: prototypeSystemInstructions(),
+      prompt: prototypeGenerationPrompt(input, draft),
+      maxOutputTokens: 7_000,
+      ...(context.signal === undefined ? {} : { signal: context.signal }),
+    });
+    return finalizeArtifact(input, { ...draft, prototype }, this.deps.now());
   }
 }

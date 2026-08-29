@@ -1,5 +1,6 @@
 import { z } from "zod";
 import ts from "typescript";
+import { PrototypeFilesSchema, type PrototypeFiles } from "./domain.js";
 
 const DeepSeekResponseSchema = z
   .object({
@@ -29,10 +30,18 @@ export type JsonModelClient = {
 		prompt: string;
 		maxOutputTokens: number;
 		signal?: AbortSignal;
+		requiredDesignIds?: readonly string[];
 	}): Promise<string>;
+	generatePrototype(options: {
+		system: string;
+		prompt: string;
+		maxOutputTokens: number;
+		signal?: AbortSignal;
+	}): Promise<PrototypeFiles>;
 };
 
-const GeneratedCodePageSchema = z.string().trim().min(100).max(30_000).superRefine((source, context) => {
+function generatedCodePageSchema(requiredDesignIds: readonly string[] = []) {
+	return z.string().trim().min(100).max(30_000).superRefine((source, context) => {
 	if (!/export\s+default\s+(?:async\s+)?function|export\s+default\s+[A-Za-z_$]/.test(source)) {
 		context.addIssue({ code: "custom", message: "DEFAULT_EXPORT_MISSING" });
 	}
@@ -65,13 +74,35 @@ const GeneratedCodePageSchema = z.string().trim().min(100).max(30_000).superRefi
 	if (syntaxDiagnostics.length > 0) {
 		context.addIssue({ code: "custom", message: "TSX_SYNTAX_INVALID" });
 	}
-});
+	for (const designId of requiredDesignIds) {
+		if (!source.includes(`data-design-id="${designId}"`) && !source.includes(`data-design-id='${designId}'`)) {
+			context.addIssue({ code: "custom", message: `DESIGN_ID_MISSING:${designId}` });
+		}
+	}
+	});
+}
 
 /** 接受纯 TSX 或恰好一个 fenced TSX 块；前后夹带说明文字会被拒绝。 */
-export function parseGeneratedCodePage(content: string): string {
+export function parseGeneratedCodePage(
+	content: string,
+	requiredDesignIds: readonly string[] = [],
+): string {
 	const trimmed = content.trim();
 	const fenced = /^```(?:tsx?|typescript|jsx)?\s*\n([\s\S]*?)\n```$/.exec(trimmed);
-	return GeneratedCodePageSchema.parse(fenced?.[1] ?? trimmed);
+	return generatedCodePageSchema(requiredDesignIds).parse(fenced?.[1] ?? trimmed);
+}
+
+/**
+ * 原型使用两个显式分隔段，避免把大段 TSX/CSS 塞进 JSON 字符串导致转义或截断。
+ * 解析后仍分别经过 TSX、CSS、设计锚点和外部引用校验，分隔符本身不构成信任依据。
+ */
+export function parseGeneratedPrototype(content: string): PrototypeFiles {
+	const match = /^<<<AICP_PAGE_TSX>>>\s*\n([\s\S]*?)\n<<<AICP_GLOBALS_CSS>>>\s*\n([\s\S]*?)\n<<<AICP_END>>>\s*$/.exec(content.trim());
+	if (match?.[1] === undefined || match[2] === undefined) {
+		throw new z.ZodError([{ code: "custom", path: [], message: "PROTOTYPE_SECTIONS_INVALID" }]);
+	}
+	const pageTsx = parseGeneratedCodePage(match[1]);
+	return PrototypeFilesSchema.parse({ pageTsx, globalsCss: match[2] });
 }
 
 /**
@@ -138,19 +169,20 @@ export class DeepSeekJsonClient implements JsonModelClient {
 		prompt: string;
 		maxOutputTokens: number;
 		signal?: AbortSignal;
+		requiredDesignIds?: readonly string[];
 	}): Promise<string> {
 		let lastFailure: "MODEL_OUTPUT_INVALID" | "MODEL_OUTPUT_TRUNCATED" = "MODEL_OUTPUT_INVALID";
 		let lastIssues: ModelOutputIssue[] = [];
 		for (let attempt = 0; attempt < 2; attempt += 1) {
 			const completion: { content: string; finishReason: string | null } = await this.#complete(
-				{ ...options, schema: GeneratedCodePageSchema },
+				{ ...options, schema: generatedCodePageSchema(options.requiredDesignIds) },
 				attempt,
 				lastFailure,
 				lastIssues,
 				"code",
 			);
 			try {
-				return parseGeneratedCodePage(completion.content);
+				return parseGeneratedCodePage(completion.content, options.requiredDesignIds);
 			} catch (error) {
 				if (!(error instanceof z.ZodError)) throw error;
 				lastFailure = completion.finishReason === "length"
@@ -159,6 +191,36 @@ export class DeepSeekJsonClient implements JsonModelClient {
 				lastIssues = error.issues.slice(0, 8).map((issue) => ({
 					path: issue.path.join(".") || "<code>",
 					code: issue.code === "custom" ? normalizeCodeIssue(issue.message) : issue.code,
+				}));
+			}
+		}
+		throw new ModelOutputError(lastFailure, lastIssues);
+	}
+
+	async generatePrototype(options: {
+		system: string;
+		prompt: string;
+		maxOutputTokens: number;
+		signal?: AbortSignal;
+	}): Promise<PrototypeFiles> {
+		let lastFailure: "MODEL_OUTPUT_INVALID" | "MODEL_OUTPUT_TRUNCATED" = "MODEL_OUTPUT_INVALID";
+		let lastIssues: ModelOutputIssue[] = [];
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			const completion: { content: string; finishReason: string | null } = await this.#complete(
+				{ ...options, schema: PrototypeFilesSchema },
+				attempt,
+				lastFailure,
+				lastIssues,
+				"prototype",
+			);
+			try {
+				return parseGeneratedPrototype(completion.content);
+			} catch (error) {
+				if (!(error instanceof z.ZodError)) throw error;
+				lastFailure = completion.finishReason === "length" ? "MODEL_OUTPUT_TRUNCATED" : "MODEL_OUTPUT_INVALID";
+				lastIssues = error.issues.slice(0, 8).map((issue) => ({
+					path: issue.path.join(".") || "<prototype>",
+					code: issue.code === "custom" ? normalizePrototypeIssue(issue.message) : issue.code,
 				}));
 			}
 		}
@@ -176,23 +238,30 @@ export class DeepSeekJsonClient implements JsonModelClient {
 		attempt: number,
 		previousFailure: "MODEL_OUTPUT_INVALID" | "MODEL_OUTPUT_TRUNCATED",
 		previousIssues: readonly ModelOutputIssue[],
-		mode: "json" | "code" = "json",
+		mode: "json" | "code" | "prototype" = "json",
 	): Promise<{ content: string; finishReason: string | null }> {
 		const timeoutSignal = AbortSignal.timeout(this.#timeoutMs);
 		const signal = options.signal === undefined
 			? timeoutSignal
 			: AbortSignal.any([options.signal, timeoutSignal]);
-		const validationCodes = [...new Set(previousIssues.map((issue) => issue.code))].join(", ");
-		const issueInstruction = validationCodes === ""
+		// 字段路径来自 Zod Schema，不包含模型原始值。把路径与稳定错误码一起回传，既不会
+		// 泄漏任务内容，也能避免模型只看到 invalid_type 后继续修错无关字段。
+		const validationIssues = [...new Set(previousIssues.map((issue) => `${issue.path}:${issue.code}`))].join(", ");
+		const issueInstruction = validationIssues === ""
 			? ""
-			: ` Validation failures to eliminate: ${validationCodes}.`;
+			: ` Validation failures to eliminate: ${validationIssues}.`;
 		const inlineStyleInstruction = previousIssues.some((issue) => issue.code === "INLINE_STYLES_NOT_ALLOWED")
 			? " Do not use a JSX style prop or a dynamic-width progress bar. Render progress as text with the supplied class names."
+			: "";
+		const prototypeInlineStyleInstruction = previousIssues.some((issue) => issue.code === "INLINE_STYLES_NOT_ALLOWED")
+			? " Remove every JSX style prop. Move static declarations into globals.css; implement progress widths with predefined CSS classes such as progress-25, progress-50, progress-75 and progress-100."
 			: "";
 		const repairInstruction = attempt === 0
 			? ""
 			: mode === "code"
-				? `\nA prior TSX response failed validation (${previousFailure}).${issueInstruction}${inlineStyleInstruction} Regenerate a complete source file from the compact original input. Return raw TSX only, keep it below 6,000 characters, use only the supplied CSS class names, write no CSS, and finish the default export before decoration.`
+				? `\nA prior TSX response failed validation (${previousFailure}).${issueInstruction}${inlineStyleInstruction} Regenerate the complete page from the original input without omitting any designed section. Preserve every design anchor and existing class name. If the design page already satisfies the requirements, return it unchanged. Return raw TSX only, write no CSS, and finish the default export.`
+				: mode === "prototype"
+					? `\nA prior runnable design prototype failed validation (${previousFailure}).${issueInstruction}${prototypeInlineStyleInstruction} Regenerate both complete sections with the exact AICP markers. Keep TSX and CSS self-contained, preserve at least four literal data-design-id anchors, use no remote assets or network APIs, and finish with <<<AICP_END>>>.`
 				: `\nA prior response failed validation (${previousFailure}).${issueInstruction} Regenerate from the original input. Keep every string concise, stay within the requested field limits, close every JSON string/array/object, and return one complete JSON object only.`;
 		const retryBudget = previousFailure === "MODEL_OUTPUT_TRUNCATED"
 			? Math.min(Math.ceil(options.maxOutputTokens * 1.5), 12_000)
@@ -256,7 +325,25 @@ export class ModelOutputError extends Error {
 type ModelOutputIssue = { path: string; code: string };
 
 function normalizeCodeIssue(message: string): string {
+	if (message.startsWith("DESIGN_ID_MISSING:")) return "DESIGN_ID_MISSING";
 	return ["DEFAULT_EXPORT_MISSING", "FORBIDDEN_IMPORT", "FORBIDDEN_RUNTIME_API", "UNEXPECTED_CODE_FENCE", "INLINE_STYLES_NOT_ALLOWED", "TSX_SYNTAX_INVALID"].includes(message)
 		? message
 		: "CODE_SCHEMA_INVALID";
+}
+
+function normalizePrototypeIssue(message: string): string {
+	return [
+		"PROTOTYPE_SECTIONS_INVALID",
+		"DESIGN_ID_COVERAGE_MISSING",
+		"UNSAFE_CSS_REFERENCE",
+		"UNSAFE_PROTOTYPE_SOURCE",
+		"DEFAULT_EXPORT_MISSING",
+		"FORBIDDEN_IMPORT",
+		"FORBIDDEN_RUNTIME_API",
+		"UNEXPECTED_CODE_FENCE",
+		"INLINE_STYLES_NOT_ALLOWED",
+		"TSX_SYNTAX_INVALID",
+	].includes(message)
+		? message
+		: "PROTOTYPE_SCHEMA_INVALID";
 }

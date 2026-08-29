@@ -29,7 +29,9 @@ const CODE_AGENT_ID = "91000000-0000-4000-8000-000000000007";
 const SOFTWARE_CATEGORY_ID = "40000000-0000-4000-8000-000000000023";
 const RUN_ID = randomUUID();
 const SCENARIO = z.enum(["normal", "dispute-refund"]).parse(process.env.AICP_MVP_SCENARIO ?? "normal");
-const ESCROW_AMOUNT_MINOR = "12800000000000000";
+// 验收任务预算固定为 32 USDC：既能覆盖当前 24 USDC 的快速代码 Agent 报价，
+// 又能验证结算时未使用预算退回发布者。所有金额都使用 USDC 的 6 位最小单位。
+const ESCROW_AMOUNT_MINOR = "32000000";
 
 const UUID = z.uuid();
 const INTEGER = z.string().regex(/^\d+$/);
@@ -44,7 +46,12 @@ const CreatedSchema = z.object({ taskId: UUID, status: z.literal("draft"), statu
 const SubmittedSchema = z.object({ taskId: UUID, status: z.literal("awaiting_escrow"), statusVersion: INTEGER }).passthrough();
 const EscrowPreparedSchema = z.object({
 	taskId: UUID, status: z.literal("prepared"), chainId: INTEGER, contractAddress: ADDRESS,
-	transaction: z.object({ to: ADDRESS, data: z.string().regex(/^0x[0-9a-fA-F]*$/), value: z.string().regex(/^0x[0-9a-fA-F]+$/) }),
+	paymentTokenAddress: ADDRESS,
+	amountMinor: z.literal(ESCROW_AMOUNT_MINOR),
+	transactions: z.object({
+		approve: z.object({ to: ADDRESS, data: z.string().regex(/^0x[0-9a-fA-F]*$/), value: z.literal("0x0") }),
+		deposit: z.object({ to: ADDRESS, data: z.string().regex(/^0x[0-9a-fA-F]*$/), value: z.literal("0x0") }),
+	}),
 }).passthrough();
 const EscrowStatusSchema = z.object({ taskId: UUID, status: z.string(), txHash: HASH.nullable() }).passthrough();
 const CandidateRecordSchema = z.object({
@@ -126,9 +133,9 @@ async function main() {
 			deliverableFormat: "可运行源码、使用说明与测试计划",
 			categoryId: SOFTWARE_CATEGORY_ID,
 			tags: ["typescript", "next.js", "agent"],
-			// 0.0128 ETH，协议层始终传十进制 wei 字符串。
+			// 32 USDC；协议边界始终传 6 位最小单位的十进制整数字符串。
 			pricing: { type: "fixed", amountMinor: ESCROW_AMOUNT_MINOR },
-			currency: "ETH",
+			currency: "USDC",
 			deadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1_000).toISOString(),
 			requiredCapability: "Next.js、TypeScript、React 状态建模和可访问性",
 			attachments: [], visibility: "public",
@@ -138,13 +145,30 @@ async function main() {
 	const taskId = created.taskId;
 	await api(`/api/tasks/${taskId}/submit`, { method: "POST", cookie: sessionCookie, key: key("submit"), body: {}, schema: SubmittedSchema });
 
-	console.log("3/10 准备并广播本地 Escrow 托管交易");
+	console.log("3/10 准备并广播 USDC 授权与 Escrow 托管交易");
 	const prepared = await api(`/api/tasks/${taskId}/escrow/prepare`, {
 		method: "POST", cookie: sessionCookie, key: key("escrow-prepare"), body: {}, schema: EscrowPreparedSchema,
 	});
 	if (prepared.chainId !== "31337") throw new Error(`Escrow 返回了非本地 Chain ID：${prepared.chainId}`);
+	if (prepared.transactions.approve.to.toLowerCase() !== prepared.paymentTokenAddress.toLowerCase()) {
+		throw new Error("USDC 授权交易目标与服务端声明的支付 Token 不一致");
+	}
+	if (prepared.transactions.deposit.to.toLowerCase() !== prepared.contractAddress.toLowerCase()) {
+		throw new Error("存款交易目标与服务端声明的 Escrow 合约不一致");
+	}
+	// ERC-20 托管必须先精确授权当前任务金额，再调用 Escrow 拉取资金。只把 deposit
+	// 的哈希提交给平台，因为它才是托管事实；approve 只改变 Token allowance。
+	await rpc("eth_sendTransaction", [{
+		from: PUBLISHER,
+		to: prepared.transactions.approve.to,
+		data: prepared.transactions.approve.data,
+		value: prepared.transactions.approve.value,
+	}]);
 	const txHash = HASH.parse(await rpc("eth_sendTransaction", [{
-		from: PUBLISHER, to: prepared.transaction.to, data: prepared.transaction.data, value: prepared.transaction.value,
+		from: PUBLISHER,
+		to: prepared.transactions.deposit.to,
+		data: prepared.transactions.deposit.data,
+		value: prepared.transactions.deposit.value,
 	}]));
 	await api(`/api/tasks/${taskId}/escrow/submission`, {
 		method: "POST", cookie: sessionCookie, key: key("escrow-submit"),
@@ -353,7 +377,9 @@ async function rpc(method, params) {
 }
 
 async function advanceChain(worker) {
-	await rpc("anvil_mine", ["0xc"]);
+	// 本地策略要求 2 次确认；Anvil 不会自然出块，因此显式推进两个区块即可覆盖
+	// pending -> confirmed 边界。继续沿用旧脚本的 12 个区块只会增加噪声和等待。
+	await rpc("anvil_mine", ["0x2"]);
 	await internalWorker(`/api/internal/workers/${worker}`);
 }
 

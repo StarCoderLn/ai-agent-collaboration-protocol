@@ -3,7 +3,12 @@ import test from "node:test";
 
 process.env.AICP_LOCAL_MVP_TEST_MODE = "true";
 
-const { assertPortsAvailable, isReadyWebHtml, waitForService } = await import("./local-mvp.mjs");
+const {
+  advanceLocalSettlementOnce,
+  assertPortsAvailable,
+  isReadyWebHtml,
+  waitForService,
+} = await import("./local-mvp.mjs");
 
 test("端口门禁会列出占用服务并在启动副作用之前失败", async () => {
   const probes = [];
@@ -49,4 +54,43 @@ test("Web 就绪契约不依赖中英文营销文案", () => {
   assert.equal(isReadyWebHtml(`<title>AICP · Verifiable Agent Network</title>${navigation}`), true);
   // 只有品牌文字但缺少产品导航的错误页不能被误认为完整 Web 应用。
   assert.equal(isReadyWebHtml("<title>AICP · Error</title>"), false);
+});
+
+test("本地结算只在资金 worker 广播交易后挖块并同步", async () => {
+  const calls = [];
+  const advanced = await advanceLocalSettlementOnce(
+    async (path) => {
+      calls.push(path);
+      return path.endsWith("escrow-execution")
+        ? { claimed: true, status: "submitted" }
+        : { processed: 2 };
+    },
+    async () => { calls.push("mine"); },
+  );
+  assert.equal(advanced, true);
+  assert.deepEqual(calls, [
+    "/api/internal/workers/escrow-execution",
+    "mine",
+    "/api/internal/workers/escrow-sync",
+  ]);
+
+  calls.length = 0;
+  const idle = await advanceLocalSettlementOnce(
+    async (path) => { calls.push(path); return { claimed: false, status: "idle" }; },
+    async () => { calls.push("mine"); },
+  );
+  assert.equal(idle, false);
+  assert.deepEqual(calls, ["/api/internal/workers/escrow-execution"]);
+
+  // worker 已领取任务并不等于交易已经广播。重试和死信都必须保留原状态，不能通过
+  // 挖块或同步把失败任务伪装成已确认结算。
+  for (const status of ["retry_pending", "dead_letter"]) {
+    calls.length = 0;
+    const failed = await advanceLocalSettlementOnce(
+      async (path) => { calls.push(path); return { claimed: true, status }; },
+      async () => { calls.push("mine"); },
+    );
+    assert.equal(failed, false);
+    assert.deepEqual(calls, ["/api/internal/workers/escrow-execution"]);
+  }
 });

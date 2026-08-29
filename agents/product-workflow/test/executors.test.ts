@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { z } from "zod";
+import { PrototypeFilesSchema, type PrototypeFiles } from "../src/domain.js";
 import { WorkflowExecutorRouter } from "../src/executors.js";
 import type { JsonModelClient } from "../src/model-client.js";
 
@@ -52,6 +53,10 @@ class QueuedJsonClient implements JsonModelClient {
 		const value = this.values.shift();
 		if (typeof value !== "string") throw new Error("queued code page must be a string");
 		return value;
+	}
+
+	async generatePrototype(): Promise<PrototypeFiles> {
+		return PrototypeFilesSchema.parse(this.values.shift());
 	}
 }
 
