@@ -26,7 +26,7 @@ type Client struct {
 	HTTP    *http.Client
 }
 
-func (c *Client) Forward(ctx context.Context, taskID, operation, idempotencyKey string, body []byte) (Response, error) {
+func (c *Client) Forward(ctx context.Context, taskID, workflowNodeID, operation, idempotencyKey string, body []byte) (Response, error) {
 	if c.BaseURL == "" || c.Token == "" || c.HTTP == nil {
 		return Response{}, errors.New("execution proxy is not configured")
 	}
@@ -38,6 +38,10 @@ func (c *Client) Forward(ctx context.Context, taskID, operation, idempotencyKey 
 		return Response{}, err
 	}
 	base.Path = strings.TrimSuffix(base.Path, "/") + "/api/internal/tasks/" + url.PathEscape(taskID) + "/execution/" + operation
+	if workflowNodeID != "" {
+		base.Path = strings.TrimSuffix(strings.TrimSuffix(base.Path, "/execution/"+operation), "/") +
+			"/workflow-nodes/" + url.PathEscape(workflowNodeID) + "/execution/" + operation
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), bytes.NewReader(body))
 	if err != nil {
 		return Response{}, err

@@ -24,6 +24,33 @@ export class DispatchEngineClient implements DispatchEngineGateway {
   latestAssignment(taskId: string, actorId: string): Promise<TaskServiceResult> {
     return this.request("GET", `/internal/tasks/${taskId}/assignments/latest`, actorId);
   }
+  retryExecution(taskId: string, actorId: string, idempotencyKey: string): Promise<TaskServiceResult> {
+    return this.request("POST", `/internal/tasks/${taskId}/execution-retry`, actorId, undefined, idempotencyKey);
+  }
+  workflowNodeCandidates(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult> {
+    return this.request("GET", `/internal/tasks/${taskId}/workflow-nodes/${nodeId}/candidates`, actorId);
+  }
+  rematchWorkflowNode(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult> {
+    return this.request("POST", `/internal/tasks/${taskId}/workflow-nodes/${nodeId}/rematch`, actorId);
+  }
+  confirmWorkflowNode(
+    taskId: string,
+    nodeId: string,
+    agentId: string,
+    actorId: string,
+    idempotencyKey: string,
+  ): Promise<TaskServiceResult> {
+    return this.request(
+      "POST",
+      `/internal/tasks/${taskId}/workflow-nodes/${nodeId}/assignments`,
+      actorId,
+      { agentId },
+      idempotencyKey,
+    );
+  }
+  latestWorkflowNodeAssignment(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult> {
+    return this.request("GET", `/internal/tasks/${taskId}/workflow-nodes/${nodeId}/assignments/latest`, actorId);
+  }
 
   /**
    * Agent 生命周期状态只由 Go 分发引擎迁移。Business API 传递经 SIWE 验证的操作者，

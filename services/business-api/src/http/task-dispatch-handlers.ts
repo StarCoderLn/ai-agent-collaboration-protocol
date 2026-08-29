@@ -7,13 +7,18 @@ import { withCredentialedCors } from "./cors";
 
 const assignmentInput = z.object({ agentId: z.string().uuid() }).strict();
 
-export type TaskDispatchRouteContext = Readonly<{ params: Promise<{ id: string }> }>;
+export type TaskDispatchRouteContext = Readonly<{ params: Promise<{ id: string; nodeId?: string }> }>;
 
 export interface TaskDispatchOperations {
   candidates(taskId: string, actorId: string): Promise<TaskServiceResult>;
   rematch(taskId: string, actorId: string): Promise<TaskServiceResult>;
   confirm(taskId: string, agentId: string, actorId: string, idempotencyKey: string | undefined): Promise<TaskServiceResult>;
   latestAssignment(taskId: string, actorId: string): Promise<TaskServiceResult>;
+  retryExecution(taskId: string, actorId: string, idempotencyKey: string | undefined): Promise<TaskServiceResult>;
+  workflowNodeCandidates(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult>;
+  rematchWorkflowNode(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult>;
+  confirmWorkflowNode(taskId: string, nodeId: string, agentId: string, actorId: string, idempotencyKey: string | undefined): Promise<TaskServiceResult>;
+  latestWorkflowNodeAssignment(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult>;
 }
 
 export interface TaskDispatchHttpDeps {
@@ -30,6 +35,24 @@ export function createTaskDispatchHandlers(deps: TaskDispatchHttpDeps) {
       (taskId, actorId) => deps.service.rematch(taskId, actorId)),
     latestAssignment: (request: Request, context: TaskDispatchRouteContext) => authenticated(request, context, deps,
       (taskId, actorId) => deps.service.latestAssignment(taskId, actorId)),
+    retryExecution: (request: Request, context: TaskDispatchRouteContext) => authenticated(request, context, deps,
+      (taskId, actorId) => deps.service.retryExecution(
+        taskId,
+        actorId,
+        request.headers.get("idempotency-key") ?? undefined,
+      )),
+    workflowNodeCandidates: (request: Request, context: TaskDispatchRouteContext) => authenticatedNode(
+      request, context, deps,
+      (taskId, nodeId, actorId) => deps.service.workflowNodeCandidates(taskId, nodeId, actorId),
+    ),
+    rematchWorkflowNode: (request: Request, context: TaskDispatchRouteContext) => authenticatedNode(
+      request, context, deps,
+      (taskId, nodeId, actorId) => deps.service.rematchWorkflowNode(taskId, nodeId, actorId),
+    ),
+    latestWorkflowNodeAssignment: (request: Request, context: TaskDispatchRouteContext) => authenticatedNode(
+      request, context, deps,
+      (taskId, nodeId, actorId) => deps.service.latestWorkflowNodeAssignment(taskId, nodeId, actorId),
+    ),
     confirm: async (request: Request, context: TaskDispatchRouteContext): Promise<Response> => {
       let rawInput: unknown;
       try { rawInput = await request.json(); }
@@ -39,7 +62,38 @@ export function createTaskDispatchHandlers(deps: TaskDispatchHttpDeps) {
       return authenticated(request, context, deps, (taskId, actorId) =>
         deps.service.confirm(taskId, parsed.data.agentId, actorId, request.headers.get("idempotency-key") ?? undefined));
     },
+    confirmWorkflowNode: async (request: Request, context: TaskDispatchRouteContext): Promise<Response> => {
+      let rawInput: unknown;
+      try { rawInput = await request.json(); }
+      catch { return response(deps, 400, errorBody("VALIDATION_FAILED", "请求体不是合法 JSON", false)); }
+      const parsed = assignmentInput.safeParse(rawInput);
+      if (!parsed.success) return response(deps, 422, errorBody("VALIDATION_FAILED", "agentId 格式不正确", false));
+      return authenticatedNode(request, context, deps, (taskId, nodeId, actorId) =>
+        deps.service.confirmWorkflowNode(
+          taskId, nodeId, parsed.data.agentId, actorId,
+          request.headers.get("idempotency-key") ?? undefined,
+        ));
+    },
   };
+}
+
+/** 节点 ID 与任务 ID 一起在网关边界校验，不能把任意路径片段转发给内部服务。 */
+async function authenticatedNode(
+  request: Request,
+  context: TaskDispatchRouteContext,
+  deps: TaskDispatchHttpDeps,
+  action: (taskId: string, nodeId: string, actorId: string) => Promise<{ statusCode: number; body: unknown }>,
+): Promise<Response> {
+  const { id, nodeId } = await context.params;
+  if (!isUuid(id) || nodeId === undefined || !isUuid(nodeId)) {
+    return response(deps, 404, errorBody("WORKFLOW_NODE_NOT_FOUND", "工作节点不存在或无权访问", false));
+  }
+  return authenticated(
+    request,
+    { params: Promise.resolve({ id }) },
+    deps,
+    (_taskId, actorId) => action(id, nodeId, actorId),
+  );
 }
 
 async function authenticated(

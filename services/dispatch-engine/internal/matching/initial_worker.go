@@ -14,8 +14,21 @@ type InitialMatchSource interface {
 	PendingInitialMatchTaskIDs(ctx context.Context, limit int) ([]string, error)
 }
 
+type WorkflowMatchTarget struct {
+	TaskID         string
+	WorkflowNodeID string
+}
+
+type WorkflowInitialMatchSource interface {
+	PendingInitialWorkflowNodes(ctx context.Context, limit int) ([]WorkflowMatchTarget, error)
+}
+
 type InitialMatchRunner interface {
 	RunMatching(ctx context.Context, taskID string) (Record, error)
+}
+
+type WorkflowInitialMatchRunner interface {
+	RunWorkflowNodeMatching(ctx context.Context, taskID, workflowNodeID string) (Record, error)
 }
 
 type AutomaticDispatcher interface {
@@ -63,6 +76,42 @@ func (c InitialMatchCoordinator) RunMatching(ctx context.Context, taskID string)
 	}
 }
 
+func (c InitialMatchCoordinator) RunWorkflowNodeMatching(
+	ctx context.Context,
+	taskID, workflowNodeID string,
+) (Record, error) {
+	matcher, ok := c.Matcher.(WorkflowInitialMatchRunner)
+	if !ok || taskID == "" || workflowNodeID == "" {
+		return Record{}, errors.New("initial workflow matching requires node-aware matcher")
+	}
+	record, err := matcher.RunWorkflowNodeMatching(ctx, taskID, workflowNodeID)
+	if err != nil {
+		return Record{}, err
+	}
+	switch record.AssignmentMode {
+	case AssignmentManual:
+		return record, nil
+	case AssignmentAutomatic:
+		if len(record.Candidates) == 0 {
+			return record, nil
+		}
+		if c.Dispatcher == nil || record.ID == "" {
+			return Record{}, errors.New("automatic workflow assignment requires dispatcher and matching record")
+		}
+		_, err = c.Dispatcher.ConfirmCandidate(ctx, dispatch.LockCommand{
+			TaskID: taskID, WorkflowNodeID: workflowNodeID,
+			AgentID: record.Candidates[0].AgentID, ActorID: "system:auto",
+			IdempotencyKey: fmt.Sprintf("dispatch:auto:%s:%s:%s", taskID, workflowNodeID, record.ID),
+		})
+		if err != nil {
+			return Record{}, err
+		}
+		return record, nil
+	default:
+		return Record{}, fmt.Errorf("unsupported assignment mode %q", record.AssignmentMode)
+	}
+}
+
 type InitialMatchWorker struct {
 	Source InitialMatchSource
 	Runner InitialMatchRunner
@@ -72,6 +121,34 @@ type InitialMatchWorker struct {
 type InitialMatchBatch struct {
 	Claimed   int
 	Generated int
+}
+
+type WorkflowInitialMatchWorker struct {
+	Source WorkflowInitialMatchSource
+	Runner WorkflowInitialMatchRunner
+	Limit  int
+}
+
+// RunOnce 的失败隔离与旧任务 worker 相同，但处理单位是 node，不是 task。一个并行节点
+// 匹配失败不能阻塞同一工作流的另一条已经解锁分支。
+func (w *WorkflowInitialMatchWorker) RunOnce(ctx context.Context) (InitialMatchBatch, error) {
+	if w.Source == nil || w.Runner == nil || w.Limit <= 0 {
+		return InitialMatchBatch{}, errors.New("workflow match worker requires source, runner and positive limit")
+	}
+	targets, err := w.Source.PendingInitialWorkflowNodes(ctx, w.Limit)
+	if err != nil {
+		return InitialMatchBatch{}, err
+	}
+	result := InitialMatchBatch{Claimed: len(targets)}
+	var failures []error
+	for _, target := range targets {
+		if _, runErr := w.Runner.RunWorkflowNodeMatching(ctx, target.TaskID, target.WorkflowNodeID); runErr == nil {
+			result.Generated++
+		} else if !errors.Is(runErr, ErrTaskNotMatchable) {
+			failures = append(failures, runErr)
+		}
+	}
+	return result, errors.Join(failures...)
 }
 
 // RunOnce 逐项执行并汇总错误：单个损坏任务不能饿死同批其他任务；失败任务因没有记录，

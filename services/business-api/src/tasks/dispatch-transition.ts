@@ -11,7 +11,7 @@ const uuid = z.string().uuid();
 export const dispatchTransitionInputSchema = z.object({
   eventId: uuid,
   assignmentId: uuid,
-  eventType: z.enum(["assignment_locked", "agent_accepted", "assignment_failed"]),
+  eventType: z.enum(["assignment_locked", "agent_accepted", "assignment_failed", "execution_retry_requested"]),
 }).strict();
 
 export type DispatchTransitionInput = z.infer<typeof dispatchTransitionInputSchema>;
@@ -61,6 +61,8 @@ export function asTaskTransitionEvent(input: DispatchTransitionInput): TaskTrans
       return { type: input.eventType, assignmentId: input.assignmentId };
     case "assignment_failed":
       return { type: input.eventType };
+    case "execution_retry_requested":
+      return { type: input.eventType, assignmentId: input.assignmentId };
   }
 }
 

@@ -43,7 +43,7 @@ func TestAgentLifecycleRepositoryPostgresPersistsAdminReviewEvidence(t *testing.
 			 id,provider_wallet_address,name,category_id,capability_desc,tags,pricing_type,price_amount,
 			 price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
 			) VALUES ($1,'0x8310000000000000000000000000000000000001',$2,
-			 '40000000-0000-4000-8000-000000000001','审核测试',ARRAY['agent'],'fixed',1000,
+			 '40000000-0000-4000-8000-000000000001','审核测试',ARRAY['agent'],'fixed',1000000,
 			 'USDC','http://127.0.0.1:9999/v1/tasks','review@example.com','pending_review',60,1)`, agent.id, agent.name)
 		if err != nil {
 			t.Fatal(err)
@@ -192,19 +192,19 @@ func seedLifecycleFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool)
 		 price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
 		) VALUES ('83100000-0000-4000-8000-000000000001','0x8310000000000000000000000000000000000001',
 		 '生命周期集成 Agent','40000000-0000-4000-8000-000000000001','生命周期测试',ARRAY['agent'],
-		 'fixed',1000,'USDC','http://127.0.0.1:9999/v1/tasks','lifecycle@example.com','active',60,1)`,
+		 'fixed',1000000,'USDC','http://127.0.0.1:9999/v1/tasks','lifecycle@example.com','active',60,1)`,
 		`INSERT INTO tasks(
 		 id,publisher_id,title,description,acceptance_criteria,deliverable_format,category_id,category_version,
 		 pricing_type,budget_min_minor,budget_max_minor,currency,deadline,required_capability,visibility,status
 		) VALUES ('83100000-0000-4000-8000-000000000002','publisher-lifecycle','生命周期任务',
 		 '验证暂停不影响在途任务','保持 executing','测试','40000000-0000-4000-8000-000000000001',1,
-		 'fixed',1000,1000,'USDC','2091-01-01T00:00:00Z','agent','private','executing')`,
+		 'fixed',1000000,1000000,'USDC','2091-01-01T00:00:00Z','agent','private','executing')`,
 		`INSERT INTO job_distribution_records(id,task_id,rule_version,input_fingerprint,input_snapshot,candidates,filter_reasons)
 		 VALUES ('83100000-0000-4000-8000-000000000003','83100000-0000-4000-8000-000000000002',
 		 'ranking-v1','lifecycle-fixture','{}'::jsonb,'[]'::jsonb,'{}'::jsonb)`,
 		`INSERT INTO task_assignments(id,task_id,agent_id,distribution_record_id,agreed_amount_minor,status,assigned_by,accept_by,responded_at)
 		 VALUES ('83100000-0000-4000-8000-000000000004','83100000-0000-4000-8000-000000000002',
-		 '83100000-0000-4000-8000-000000000001','83100000-0000-4000-8000-000000000003',1000,'accepted',
+		 '83100000-0000-4000-8000-000000000001','83100000-0000-4000-8000-000000000003',1000000,'accepted',
 		 'publisher-lifecycle','2090-02-01T01:00:00Z','2090-02-01T00:00:00Z')`,
 	}
 	for _, statement := range statements {

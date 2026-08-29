@@ -11,10 +11,13 @@ import (
 )
 
 var (
-	ErrCandidateNotFound       = errors.New("CANDIDATE_NOT_FOUND")
-	ErrAssignmentAlreadyLocked = domain.ErrAssignmentAlreadyLocked
-	ErrIdempotencyKeyReused    = domain.ErrIdempotencyKeyReused
-	ErrDispatchNotFound        = errors.New("DISPATCH_ATTEMPT_NOT_FOUND")
+	ErrCandidateNotFound        = errors.New("CANDIDATE_NOT_FOUND")
+	ErrAssignmentAlreadyLocked  = domain.ErrAssignmentAlreadyLocked
+	ErrIdempotencyKeyReused     = domain.ErrIdempotencyKeyReused
+	ErrDispatchNotFound         = errors.New("DISPATCH_ATTEMPT_NOT_FOUND")
+	ErrTaskNotFound             = errors.New("TASK_NOT_FOUND")
+	ErrExecutionRetryNotAllowed = errors.New("EXECUTION_RETRY_NOT_ALLOWED")
+	ErrEscrowNotConfirmed       = errors.New("ESCROW_NOT_CONFIRMED")
 )
 
 type AttemptStatus string
@@ -40,6 +43,7 @@ type DispatchAttempt struct {
 
 type LockCommand struct {
 	TaskID         string
+	WorkflowNodeID string
 	AgentID        string
 	ActorID        string
 	IdempotencyKey string
@@ -55,10 +59,20 @@ type LockResult struct {
 type DispatchMessage struct {
 	AssignmentID      string `json:"assignmentId"`
 	TaskID            string `json:"taskId"`
+	WorkflowNodeID    string `json:"workflowNodeId,omitempty"`
 	AgentID           string `json:"agentId"`
 	AttemptID         string `json:"attemptId"`
 	IdempotencyKey    string `json:"idempotencyKey"`
 	ProtocolRequestID string `json:"protocolRequestId"`
+}
+
+// ExecutionRetryResult 是“取消失败分配”这一持久化事实的最小回执。它不包含目标任务
+// 状态；目标状态仍由 Business API 的权威任务状态机根据 transition event 计算。
+type ExecutionRetryResult struct {
+	TaskID            string `json:"taskId"`
+	AssignmentID      string `json:"assignmentId"`
+	TransitionEventID string `json:"transitionEventId"`
+	Replayed          bool   `json:"replayed"`
 }
 
 type Repository interface {
@@ -68,6 +82,8 @@ type Repository interface {
 	Acknowledge(ctx context.Context, assignmentID, agentID string, accepted bool, respondedAt time.Time) (domain.Assignment, error)
 	ExpireDue(ctx context.Context, now time.Time, limit int) ([]domain.Assignment, error)
 	LatestForTask(ctx context.Context, taskID string) (LockResult, error)
+	LatestForWorkflowNode(ctx context.Context, taskID, workflowNodeID string) (LockResult, error)
+	PrepareExecutionRetry(ctx context.Context, taskID, actorID string) (ExecutionRetryResult, error)
 }
 
 type Queue interface {
@@ -109,7 +125,8 @@ func (s *Service) ConfirmCandidate(ctx context.Context, command LockCommand) (Lo
 	}
 	message := DispatchMessage{
 		AssignmentID: result.Assignment.ID, TaskID: result.Assignment.TaskID,
-		AgentID: result.Assignment.AgentID, AttemptID: result.Attempt.ID,
+		WorkflowNodeID: result.Assignment.WorkflowNodeID,
+		AgentID:        result.Assignment.AgentID, AttemptID: result.Attempt.ID,
 		IdempotencyKey: result.Attempt.IdempotencyKey, ProtocolRequestID: result.Attempt.ProtocolRequestID,
 	}
 	if err = s.Queue.Send(ctx, message); err != nil {
@@ -146,6 +163,15 @@ func (s *Service) ExpireDue(ctx context.Context, limit int) ([]domain.Assignment
 		now = s.Now()
 	}
 	return s.Repository.ExpireDue(ctx, now, limit)
+}
+
+// RetryFailedExecution 只创建可审计的“重新匹配”事实，不直接写 tasks.status，也不在
+// 这里重新选择 Agent。这样取消旧分配、任务状态迁移和后续匹配仍各自由原有服务负责。
+func (s *Service) RetryFailedExecution(ctx context.Context, taskID, actorID string) (ExecutionRetryResult, error) {
+	if s.Repository == nil || taskID == "" || actorID == "" {
+		return ExecutionRetryResult{}, errors.New("execution retry requires repository, task and actor")
+	}
+	return s.Repository.PrepareExecutionRetry(ctx, taskID, actorID)
 }
 
 func backoff(attempt int) time.Duration {

@@ -144,9 +144,9 @@ func TestMatchingRejectsAgentThatCannotMeetDeadlineAndInvalidRules(t *testing.T)
 
 func TestMatchingRejectsAQuoteInAnotherCurrency(t *testing.T) {
 	now := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
-	task := MatchTask{ID: "task", CategoryID: "code", Currency: "ETH", BudgetMinor: 10_000, Deadline: now.Add(time.Hour)}
+	task := MatchTask{ID: "task", CategoryID: "code", Currency: "USDC", BudgetMinor: 10_000, Deadline: now.Add(time.Hour)}
 	agent := AgentCandidate{
-		ID: "usdc-agent", CategoryID: "code", Currency: "USDC", PriceMinor: 1,
+		ID: "legacy-eth-agent", CategoryID: "code", Currency: "ETH", PriceMinor: 1,
 		State: AgentState{Status: AgentActive}, EstimatedDuration: time.Minute,
 		RatingSampleSize: 30, PriorWeight: 20,
 	}

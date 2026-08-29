@@ -54,7 +54,7 @@ func TestWebhookRepositoryLeaseRetryAndDeadLetter(t *testing.T) {
 		) VALUES (
 		  $1,'publisher-webhook','Webhook 租约集成任务','验证租约、重试和死信告警。',
 		  '40000000-0000-4000-8000-000000000001',1,'重复投递不会覆盖新租约。','测试报告',
-		  'fixed',ARRAY['agent'],'private',8000,8000,'USDC',now()+interval '1 day','Go/PostgreSQL',
+		  'fixed',ARRAY['agent'],'private',8000000,8000000,'USDC',now()+interval '1 day','Go/PostgreSQL',
 		  '[]'::jsonb,'executing','{"mode":"manual"}'::jsonb,'manual','{}'::jsonb,1
 		)`, taskID)
 	if err != nil {
@@ -66,7 +66,7 @@ func TestWebhookRepositoryLeaseRetryAndDeadLetter(t *testing.T) {
 		  price_amount,price_currency,service_endpoint,email,status
 		) VALUES (
 		  $1,'0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','Webhook 测试 Agent',
-		  '40000000-0000-4000-8000-000000000001','Go',ARRAY['agent'],'fixed',7000,
+		  '40000000-0000-4000-8000-000000000001','Go',ARRAY['agent'],'fixed',7000000,
 		  'USDC','https://agent.example/v1','webhook@example.com','active'
 		)`, agentID)
 	if err != nil {

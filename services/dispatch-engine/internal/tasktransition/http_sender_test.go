@@ -34,3 +34,28 @@ func TestHTTPSenderUsesServiceAuthAndPreservesRetryability(t *testing.T) {
 		t.Fatalf("response classification mismatch: %v", err)
 	}
 }
+
+func TestHTTPSenderTargetsWorkflowNodeAuthorityWhenNodeIsPresent(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		want := "/api/internal/tasks/task-1/workflow-nodes/node-2/transitions"
+		if request.URL.Path != want {
+			t.Fatalf("workflow transition target mismatch: got=%s want=%s", request.URL.Path, want)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"status":"executing"}`)),
+			Request:    request,
+		}, nil
+	})}
+	err := (&HTTPSender{BaseURL: "http://business-api.local", Token: "secret", Client: client}).Send(
+		context.Background(),
+		Event{
+			ID: "event-1", TaskID: "task-1", WorkflowNodeID: "node-2",
+			AssignmentID: "assignment-1", EventType: "agent_accepted",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+}

@@ -14,7 +14,7 @@ const TASK: TaskRecordForAudience = {
   visibility: "public",
   budgetMinMinor: 10_000n,
   budgetMaxMinor: 20_000n,
-  currency: "ETH",
+  currency: "USDC",
   deadline: new Date("2026-09-01T00:00:00.000Z"),
   requiredCapability: "前端开发",
   attachments: [{ name: "private.pdf", storageRef: "s3://secret" }],

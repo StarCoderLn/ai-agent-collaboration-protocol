@@ -15,6 +15,8 @@ const (
 	integrationTaskID   = "80000000-0000-4000-8000-000000000001"
 	integrationAgentID  = "80000000-0000-4000-8000-000000000002"
 	overBudgetAgentID   = "80000000-0000-4000-8000-000000000003"
+	integrationRunID    = "80000000-0000-4000-8000-000000000004"
+	integrationNodeID   = "80000000-0000-4000-8000-000000000005"
 	integrationCategory = "40000000-0000-4000-8000-000000000001"
 )
 
@@ -50,7 +52,7 @@ func TestMatchingRepositoryPostgresVerticalSlice(t *testing.T) {
 		) VALUES (
 		 $1,'publisher','真实 Go 匹配集成任务','验证 PostgreSQL 输入快照、规则排序和候选证据持久化。',
 		 '只有满足分类、预算、状态和时限的 Agent 才能进入候选。','Go 测试',
-		 $2,1,ARRAY['agent','next.js'],'fixed',8000,8000,'USDC',$3,'Go 与 PostgreSQL','[]'::jsonb,
+		 $2,1,ARRAY['agent','next.js'],'fixed',8000000,8000000,'USDC',$3,'Go 与 PostgreSQL','[]'::jsonb,
 		 'public','matching','{"mode":"manual"}'::jsonb,'manual','{}'::jsonb
 		)`, integrationTaskID, integrationCategory, deadline)
 	if err != nil {
@@ -73,18 +75,18 @@ func TestMatchingRepositoryPostgresVerticalSlice(t *testing.T) {
 		t.Helper()
 		_, insertErr := pool.Exec(ctx, `
 			INSERT INTO agents (
-			 id, provider_wallet_address, name, category_id, capability_desc, tags,
+			 id, provider_wallet_address, payout_wallet_address, name, category_id, capability_desc, tags,
 			 pricing_type, price_amount, price_currency, service_endpoint, email, status,
 			 estimated_duration_seconds, response_minutes
-			) VALUES ($1,'0x1111111111111111111111111111111111111111',$2,$3,'Go API',ARRAY['agent','next.js'],
+			) VALUES ($1,'0x1111111111111111111111111111111111111111','0x1111111111111111111111111111111111111111',$2,$3,'Go API',ARRAY['agent','next.js'],
 			 'fixed',$4,'USDC','http://127.0.0.1:3999/agent','agent@example.com','active',3600,2)`,
 			id, name, integrationCategory, price)
 		if insertErr != nil {
 			t.Fatal(insertErr)
 		}
 	}
-	insertAgent(integrationAgentID, "符合约束的 Agent", 7000)
-	insertAgent(overBudgetAgentID, "超出预算的 Agent", 9000)
+	insertAgent(integrationAgentID, "符合约束的 Agent", 7000000)
+	insertAgent(overBudgetAgentID, "超出预算的 Agent", 9000000)
 
 	repository := &MatchingRepository{Pool: pool}
 	service := matching.Service{Repository: repository, Now: time.Now}
@@ -161,8 +163,8 @@ func TestInitialMatchCoordinatorPostgresAutomaticallyLocksFrozenTopCandidate(t *
 		) VALUES (
 		 $1,'publisher','自动分配集成任务','验证冻结候选第一名通过正式事务被系统锁定。',
 		 '自动模式只能选择已展示的排序第一名。','Go 测试',$2,1,ARRAY['agent'],
-		 'fixed',8000,8000,'USDC',$3,'Go 自动分配','[]'::jsonb,'public','matching',
-		 '{"mode":"automatic","priceCapMinor":"8000","rankingBasis":"active-ranking-rule","fallbackOnFail":"manual"}'::jsonb,
+		 'fixed',8000000,8000000,'USDC',$3,'Go 自动分配','[]'::jsonb,'public','matching',
+		 '{"mode":"automatic","priceCapMinor":"8000000","rankingBasis":"active-ranking-rule","fallbackOnFail":"manual"}'::jsonb,
 		 'manual','{}'::jsonb
 		)`, integrationTaskID, integrationCategory, deadline)
 	if err != nil {
@@ -173,14 +175,14 @@ func TestInitialMatchCoordinatorPostgresAutomaticallyLocksFrozenTopCandidate(t *
 		price    int64
 	}{
 		{integrationAgentID, "排序第一的 Agent", 6500},
-		{overBudgetAgentID, "排序第二的 Agent", 7500},
+		{overBudgetAgentID, "排序第二的 Agent", 7500000},
 	} {
 		_, err = pool.Exec(ctx, `
 			INSERT INTO agents (
-			 id, provider_wallet_address, name, category_id, capability_desc, tags,
+			 id, provider_wallet_address, payout_wallet_address, name, category_id, capability_desc, tags,
 			 pricing_type, price_amount, price_currency, service_endpoint, email, status,
 			 estimated_duration_seconds, response_minutes
-			) VALUES ($1,'0x1111111111111111111111111111111111111111',$2,$3,'Go API',ARRAY['agent'],
+			) VALUES ($1,'0x1111111111111111111111111111111111111111','0x1111111111111111111111111111111111111111',$2,$3,'Go API',ARRAY['agent'],
 			 'fixed',$4,'USDC','http://127.0.0.1:3999/agent','agent@example.com','active',1800,1)`,
 			agent.id, agent.name, integrationCategory, agent.price)
 		if err != nil {
@@ -232,6 +234,74 @@ func TestInitialMatchCoordinatorPostgresAutomaticallyLocksFrozenTopCandidate(t *
 	}
 }
 
+func TestPendingInitialWorkflowNodesRetriesAutomaticNodeWithFrozenCandidates(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	cleanupMatchingFixtures(t, ctx, pool)
+	t.Cleanup(func() { cleanupMatchingFixtures(t, ctx, pool) })
+
+	deadline := time.Now().UTC().Add(2 * time.Hour)
+	_, err = pool.Exec(ctx, `
+		INSERT INTO tasks (
+		 id,publisher_id,title,description,acceptance_criteria,deliverable_format,
+		 category_id,category_version,tag_names,pricing_type,budget_min_minor,
+		 budget_max_minor,currency,deadline,required_capability,attachments,
+		 visibility,status,assignment_mode_config,acceptance_mode,acceptor_config
+		) VALUES (
+		 $1,'publisher','自动工作流恢复测试','验证已有冻结候选但派发尚未成功时会重新进入 worker。',
+		 '自动分配必须能够从瞬时失败中恢复。','Go 测试',$2,1,ARRAY['agent'],
+		 'fixed',8000000,8000000,'USDC',$3,'自动分配','[]'::jsonb,'private','executing',
+		 '{"mode":"automatic","priceCapMinor":"8000000","rankingBasis":"active-ranking-rule","fallbackOnFail":"manual"}'::jsonb,
+		 'manual','{}'::jsonb
+		)`, integrationTaskID, integrationCategory, deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO task_workflow_runs(
+		 id,task_id,status,currency,total_budget_minor,released_amount_minor,refundable_amount_minor
+		) VALUES ($1,$2,'running','USDC',8000000,0,8000000)`, integrationRunID, integrationTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO task_workflow_nodes(
+		 id,workflow_run_id,task_id,node_key,kind,title,description,category_id,tags,
+		 required_capability,input_contract,output_contract,budget_cap_minor,position_index,status
+		) VALUES ($1,$2,$3,'design','design','界面设计','生成正式设计制品',$4,ARRAY['agent'],
+		 '界面设计','RequirementsArtifact','DesignArtifact',8000000,1,'matching')`,
+		integrationNodeID, integrationRunID, integrationTaskID, integrationCategory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO job_distribution_records(
+		 task_id,workflow_node_id,rule_version,input_fingerprint,input_snapshot,candidates,filter_reasons
+		) VALUES ($1,$2,'ranking-v1','frozen-before-dispatch','{}'::jsonb,
+		 '[{"agentId":"80000000-0000-4000-8000-000000000002","quoteMinor":"7000000"}]'::jsonb,
+		 '{}'::jsonb)`, integrationTaskID, integrationNodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targets, err := (&MatchingRepository{Pool: pool}).PendingInitialWorkflowNodes(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []matching.WorkflowMatchTarget{{TaskID: integrationTaskID, WorkflowNodeID: integrationNodeID}}
+	if len(targets) != 1 || targets[0] != want[0] {
+		t.Fatalf("automatic node with frozen candidates must remain retryable: got=%+v want=%+v", targets, want)
+	}
+}
+
 func cleanupMatchingFixtures(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	// 明确列出测试 UUID，避免清理命令影响用户或其他用例创建的数据。
@@ -240,6 +310,9 @@ func cleanupMatchingFixtures(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		`DELETE FROM dispatch_attempts WHERE assignment_id IN (SELECT id FROM task_assignments WHERE task_id='80000000-0000-4000-8000-000000000001')`,
 		`DELETE FROM task_assignments WHERE task_id='80000000-0000-4000-8000-000000000001'`,
 		`DELETE FROM job_distribution_records WHERE task_id='80000000-0000-4000-8000-000000000001'`,
+		`DELETE FROM task_workflow_edges WHERE workflow_run_id='80000000-0000-4000-8000-000000000004'`,
+		`DELETE FROM task_workflow_nodes WHERE task_id='80000000-0000-4000-8000-000000000001'`,
+		`DELETE FROM task_workflow_runs WHERE task_id='80000000-0000-4000-8000-000000000001'`,
 		`DELETE FROM agent_status_config WHERE agent_id IN ('80000000-0000-4000-8000-000000000002','80000000-0000-4000-8000-000000000003')`,
 		`DELETE FROM agents WHERE id IN ('80000000-0000-4000-8000-000000000002','80000000-0000-4000-8000-000000000003')`,
 		`DELETE FROM tasks WHERE id='80000000-0000-4000-8000-000000000001'`,

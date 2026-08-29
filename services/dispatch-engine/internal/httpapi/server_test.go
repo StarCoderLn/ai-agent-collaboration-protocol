@@ -25,6 +25,14 @@ func (f fakeMatcher) RunMatching(context.Context, string) (matching.Record, erro
 func (f fakeMatcher) LatestCandidates(context.Context, string) (matching.Record, error) {
 	return f.record, nil
 }
+func (f fakeMatcher) RunWorkflowNodeMatching(_ context.Context, taskID, workflowNodeID string) (matching.Record, error) {
+	f.record.TaskID, f.record.WorkflowNodeID = taskID, workflowNodeID
+	return f.record, nil
+}
+func (f fakeMatcher) LatestWorkflowNodeCandidates(_ context.Context, taskID, workflowNodeID string) (matching.Record, error) {
+	f.record.TaskID, f.record.WorkflowNodeID = taskID, workflowNodeID
+	return f.record, nil
+}
 
 type fakeDispatcher struct {
 	command      dispatch.LockCommand
@@ -34,7 +42,8 @@ type fakeDispatcher struct {
 func (f *fakeDispatcher) ConfirmCandidate(_ context.Context, command dispatch.LockCommand) (dispatch.LockResult, error) {
 	f.command = command
 	return dispatch.LockResult{Assignment: domain.Assignment{
-		ID: "assignment-1", TaskID: command.TaskID, AgentID: command.AgentID, AgreedAmountMinor: 9_007_199_254_740_993,
+		ID: "assignment-1", TaskID: command.TaskID, WorkflowNodeID: command.WorkflowNodeID,
+		AgentID: command.AgentID, AgreedAmountMinor: 9_007_199_254_740_993,
 	}}, nil
 }
 func (f *fakeDispatcher) Acknowledge(_ context.Context, assignmentID, agentID string, accepted bool) (domain.Assignment, error) {
@@ -45,11 +54,21 @@ func (f *fakeDispatcher) Acknowledge(_ context.Context, assignmentID, agentID st
 	}
 	return domain.Assignment{ID: assignmentID, AgentID: agentID, Status: status}, nil
 }
+func (f *fakeDispatcher) RetryFailedExecution(_ context.Context, taskID, actorID string) (dispatch.ExecutionRetryResult, error) {
+	return dispatch.ExecutionRetryResult{
+		TaskID: taskID, AssignmentID: "assignment-1", TransitionEventID: "event-1",
+	}, nil
+}
 
 type fakeAssignmentReader struct{}
 
 func (fakeAssignmentReader) LatestForTask(context.Context, string) (dispatch.LockResult, error) {
 	return dispatch.LockResult{Assignment: domain.Assignment{ID: "assignment-1"}}, nil
+}
+func (fakeAssignmentReader) LatestForWorkflowNode(_ context.Context, taskID, workflowNodeID string) (dispatch.LockResult, error) {
+	return dispatch.LockResult{Assignment: domain.Assignment{
+		ID: "assignment-node-1", TaskID: taskID, WorkflowNodeID: workflowNodeID,
+	}}, nil
 }
 
 type fixedKeys struct{ secret string }
@@ -82,7 +101,7 @@ func (f *fakeAgentLifecycle) Transition(_ context.Context, command agentlifecycl
 	return agentlifecycle.Snapshot{AgentID: command.AgentID, Status: domain.AgentPaused, PauseReason: &pauseReason, UpdatedAt: command.Now}, nil
 }
 
-func (f *fakeExecutionProxy) Forward(_ context.Context, _, _, key string, body []byte) (executionproxy.Response, error) {
+func (f *fakeExecutionProxy) Forward(_ context.Context, _, _, _, key string, body []byte) (executionproxy.Response, error) {
 	f.called, f.key, f.body = true, key, append([]byte(nil), body...)
 	return executionproxy.Response{StatusCode: http.StatusOK, Body: []byte(`{"status":"executing"}`)}, nil
 }
@@ -117,6 +136,62 @@ func TestInternalRoutesRequireServiceTokenAndForwardVerifiedActor(t *testing.T) 
 		responseBody.Assignment.ID != "assignment-1" || responseBody.Assignment.TaskID != "task-1" ||
 		responseBody.Assignment.AgreedAmountMinor != "9007199254740993" {
 		t.Fatalf("assignment JSON contract is unsafe or unstable: body=%s err=%v", response.Body.String(), err)
+	}
+}
+
+func TestWorkflowNodeRoutesKeepTaskAndNodeIdentityInTheContract(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	server := Server{
+		InternalToken: "internal-secret", Matcher: fakeMatcher{}, Dispatcher: dispatcher,
+		AssignmentReader: fakeAssignmentReader{},
+	}
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/internal/tasks/task-1/workflow-nodes/node-2/assignments",
+		strings.NewReader(`{"agentId":"agent-3"}`),
+	)
+	request.Header.Set("Authorization", "Bearer internal-secret")
+	request.Header.Set(headerInternalActor, "publisher-1")
+	request.Header.Set("Idempotency-Key", "dispatch:node-2:request-1")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusCreated || dispatcher.command.TaskID != "task-1" ||
+		dispatcher.command.WorkflowNodeID != "node-2" || dispatcher.command.AgentID != "agent-3" {
+		t.Fatalf("workflow assignment lost target identity: status=%d command=%+v body=%s", response.Code, dispatcher.command, response.Body.String())
+	}
+
+	candidatesRequest := httptest.NewRequest(
+		http.MethodGet, "/internal/tasks/task-1/workflow-nodes/node-2/candidates", nil,
+	)
+	candidatesRequest.Header.Set("Authorization", "Bearer internal-secret")
+	candidates := httptest.NewRecorder()
+	server.Handler().ServeHTTP(candidates, candidatesRequest)
+	if candidates.Code != http.StatusOK || !strings.Contains(candidates.Body.String(), `"workflowNodeId":"node-2"`) {
+		t.Fatalf("workflow candidates lost node identity: status=%d body=%s", candidates.Code, candidates.Body.String())
+	}
+
+	latestRequest := httptest.NewRequest(
+		http.MethodGet, "/internal/tasks/task-1/workflow-nodes/node-2/assignments/latest", nil,
+	)
+	latestRequest.Header.Set("Authorization", "Bearer internal-secret")
+	latest := httptest.NewRecorder()
+	server.Handler().ServeHTTP(latest, latestRequest)
+	if latest.Code != http.StatusOK || !strings.Contains(latest.Body.String(), `"workflowNodeId":"node-2"`) {
+		t.Fatalf("workflow latest assignment lost node identity: status=%d body=%s", latest.Code, latest.Body.String())
+	}
+}
+
+func TestExecutionRetryPersistsARecoveryFactThroughTheDispatcher(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	server := Server{InternalToken: "internal-secret", Dispatcher: dispatcher}
+	request := httptest.NewRequest(http.MethodPost, "/internal/tasks/task-1/execution-retry", nil)
+	request.Header.Set("Authorization", "Bearer internal-secret")
+	request.Header.Set(headerInternalActor, "publisher-1")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"transitionEventId":"event-1"`) {
+		t.Fatalf("execution retry route mismatch: status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

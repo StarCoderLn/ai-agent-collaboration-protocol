@@ -27,15 +27,19 @@ const (
 type Matcher interface {
 	RunMatching(ctx context.Context, taskID string) (matching.Record, error)
 	LatestCandidates(ctx context.Context, taskID string) (matching.Record, error)
+	RunWorkflowNodeMatching(ctx context.Context, taskID, workflowNodeID string) (matching.Record, error)
+	LatestWorkflowNodeCandidates(ctx context.Context, taskID, workflowNodeID string) (matching.Record, error)
 }
 
 type Dispatcher interface {
 	ConfirmCandidate(ctx context.Context, command dispatch.LockCommand) (dispatch.LockResult, error)
 	Acknowledge(ctx context.Context, assignmentID, agentID string, accepted bool) (domain.Assignment, error)
+	RetryFailedExecution(ctx context.Context, taskID, actorID string) (dispatch.ExecutionRetryResult, error)
 }
 
 type AssignmentReader interface {
 	LatestForTask(ctx context.Context, taskID string) (dispatch.LockResult, error)
+	LatestForWorkflowNode(ctx context.Context, taskID, workflowNodeID string) (dispatch.LockResult, error)
 }
 
 type Server struct {
@@ -46,7 +50,7 @@ type Server struct {
 	AgentLifecycle   agentlifecycle.Transitioner
 	Verifier         *protocol.Verifier
 	ExecutionProxy   interface {
-		Forward(ctx context.Context, taskID, operation, idempotencyKey string, body []byte) (executionproxy.Response, error)
+		Forward(ctx context.Context, taskID, workflowNodeID, operation, idempotencyKey string, body []byte) (executionproxy.Response, error)
 	}
 }
 
@@ -56,14 +60,41 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/tasks/{id}/rematch", s.internal(s.rematch))
 	mux.HandleFunc("POST /internal/tasks/{id}/assignments", s.internal(s.confirmAssignment))
 	mux.HandleFunc("GET /internal/tasks/{id}/assignments/latest", s.internal(s.latestAssignment))
+	mux.HandleFunc("GET /internal/tasks/{id}/workflow-nodes/{nodeId}/candidates", s.internal(s.getWorkflowNodeCandidates))
+	mux.HandleFunc("POST /internal/tasks/{id}/workflow-nodes/{nodeId}/rematch", s.internal(s.rematchWorkflowNode))
+	mux.HandleFunc("POST /internal/tasks/{id}/workflow-nodes/{nodeId}/assignments", s.internal(s.confirmWorkflowNodeAssignment))
+	mux.HandleFunc("GET /internal/tasks/{id}/workflow-nodes/{nodeId}/assignments/latest", s.internal(s.latestWorkflowNodeAssignment))
+	mux.HandleFunc("POST /internal/tasks/{id}/execution-retry", s.internal(s.retryFailedExecution))
 	mux.HandleFunc("POST /internal/agents/{id}/transitions", s.internal(s.transitionAgentLifecycle))
 	mux.HandleFunc("POST /agent-callback/assignments/{id}/ack", s.acknowledgeAssignment)
 	mux.HandleFunc("POST /agent-callback/tasks/{id}/status", s.forwardExecutionStatus)
 	mux.HandleFunc("POST /agent-callback/tasks/{id}/results", s.forwardExecutionResults)
+	mux.HandleFunc("POST /agent-callback/tasks/{id}/workflow-nodes/{nodeId}/status", s.forwardWorkflowExecutionStatus)
+	mux.HandleFunc("POST /agent-callback/tasks/{id}/workflow-nodes/{nodeId}/results", s.forwardWorkflowExecutionResults)
 	mux.HandleFunc("GET /health", func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	return mux
+}
+
+func (s *Server) retryFailedExecution(writer http.ResponseWriter, request *http.Request) {
+	if s.Dispatcher == nil {
+		writeError(writer, http.StatusServiceUnavailable, "DISPATCHER_UNAVAILABLE", "派发服务暂不可用", true)
+		return
+	}
+	actorID := request.Header.Get(headerInternalActor)
+	if actorID == "" {
+		writeError(writer, http.StatusUnauthorized, "UNAUTHENTICATED", "发布者身份缺失", false)
+		return
+	}
+	result, err := s.Dispatcher.RetryFailedExecution(request.Context(), request.PathValue("id"), actorID)
+	if err != nil {
+		writeDispatchError(writer, err)
+		return
+	}
+	// 202 表示取消事实与 outbox 已持久化；任务主状态由 Business API 异步推进，调用方
+	// 应读取任务状态而不是假定这里已经进入 matching。
+	writeJSON(writer, http.StatusAccepted, result)
 }
 
 func (s *Server) transitionAgentLifecycle(writer http.ResponseWriter, request *http.Request) {
@@ -145,14 +176,22 @@ func writeLifecycleError(writer http.ResponseWriter, err error) {
 }
 
 func (s *Server) forwardExecutionStatus(writer http.ResponseWriter, request *http.Request) {
-	s.forwardExecutionCallback(writer, request, "status")
+	s.forwardExecutionCallback(writer, request, "", "status")
 }
 
 func (s *Server) forwardExecutionResults(writer http.ResponseWriter, request *http.Request) {
-	s.forwardExecutionCallback(writer, request, "results")
+	s.forwardExecutionCallback(writer, request, "", "results")
 }
 
-func (s *Server) forwardExecutionCallback(writer http.ResponseWriter, request *http.Request, operation string) {
+func (s *Server) forwardWorkflowExecutionStatus(writer http.ResponseWriter, request *http.Request) {
+	s.forwardExecutionCallback(writer, request, request.PathValue("nodeId"), "status")
+}
+
+func (s *Server) forwardWorkflowExecutionResults(writer http.ResponseWriter, request *http.Request) {
+	s.forwardExecutionCallback(writer, request, request.PathValue("nodeId"), "results")
+}
+
+func (s *Server) forwardExecutionCallback(writer http.ResponseWriter, request *http.Request, workflowNodeID, operation string) {
 	if s.Verifier == nil || s.ExecutionProxy == nil {
 		writeError(writer, http.StatusServiceUnavailable, "CALLBACK_UNAVAILABLE", "执行回调暂不可用", true)
 		return
@@ -184,7 +223,9 @@ func (s *Server) forwardExecutionCallback(writer http.ResponseWriter, request *h
 		writeJSON(writer, protocolError.Code.HTTPStatus(), protocolError.Response())
 		return
 	}
-	result, err := s.ExecutionProxy.Forward(request.Context(), request.PathValue("id"), operation, idempotencyKey, body)
+	result, err := s.ExecutionProxy.Forward(
+		request.Context(), request.PathValue("id"), workflowNodeID, operation, idempotencyKey, body,
+	)
 	if err != nil {
 		writeError(writer, http.StatusBadGateway, "BUSINESS_API_UNAVAILABLE", "业务状态服务暂不可用", true)
 		return
@@ -227,6 +268,21 @@ func (s *Server) getCandidates(writer http.ResponseWriter, request *http.Request
 	writeJSON(writer, http.StatusOK, record)
 }
 
+func (s *Server) getWorkflowNodeCandidates(writer http.ResponseWriter, request *http.Request) {
+	if s.Matcher == nil {
+		writeError(writer, http.StatusServiceUnavailable, "MATCHER_UNAVAILABLE", "匹配服务暂不可用", true)
+		return
+	}
+	record, err := s.Matcher.LatestWorkflowNodeCandidates(
+		request.Context(), request.PathValue("id"), request.PathValue("nodeId"),
+	)
+	if err != nil {
+		writeMatchingError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, record)
+}
+
 func (s *Server) rematch(writer http.ResponseWriter, request *http.Request) {
 	if s.Matcher == nil {
 		writeError(writer, http.StatusServiceUnavailable, "MATCHER_UNAVAILABLE", "匹配服务暂不可用", true)
@@ -240,7 +296,32 @@ func (s *Server) rematch(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, record)
 }
 
+func (s *Server) rematchWorkflowNode(writer http.ResponseWriter, request *http.Request) {
+	if s.Matcher == nil {
+		writeError(writer, http.StatusServiceUnavailable, "MATCHER_UNAVAILABLE", "匹配服务暂不可用", true)
+		return
+	}
+	record, err := s.Matcher.RunWorkflowNodeMatching(
+		request.Context(), request.PathValue("id"), request.PathValue("nodeId"),
+	)
+	if err != nil {
+		writeMatchingError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, record)
+}
+
 func (s *Server) confirmAssignment(writer http.ResponseWriter, request *http.Request) {
+	s.confirmAssignmentForTarget(writer, request, "")
+}
+
+func (s *Server) confirmWorkflowNodeAssignment(writer http.ResponseWriter, request *http.Request) {
+	s.confirmAssignmentForTarget(writer, request, request.PathValue("nodeId"))
+}
+
+// confirmAssignmentForTarget 让旧任务和正式工作流共用相同的鉴权、校验与错误语义；
+// workflowNodeID 只取自路由，不能由请求体伪造或替换强一致锁的目标。
+func (s *Server) confirmAssignmentForTarget(writer http.ResponseWriter, request *http.Request, workflowNodeID string) {
 	if s.Dispatcher == nil {
 		writeError(writer, http.StatusServiceUnavailable, "DISPATCHER_UNAVAILABLE", "派发服务暂不可用", true)
 		return
@@ -254,7 +335,8 @@ func (s *Server) confirmAssignment(writer http.ResponseWriter, request *http.Req
 	}
 	actorID, idempotencyKey := request.Header.Get(headerInternalActor), request.Header.Get("Idempotency-Key")
 	result, err := s.Dispatcher.ConfirmCandidate(request.Context(), dispatch.LockCommand{
-		TaskID: request.PathValue("id"), AgentID: body.AgentID, ActorID: actorID, IdempotencyKey: idempotencyKey,
+		TaskID: request.PathValue("id"), WorkflowNodeID: workflowNodeID,
+		AgentID: body.AgentID, ActorID: actorID, IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
 		writeDispatchError(writer, err)
@@ -264,11 +346,27 @@ func (s *Server) confirmAssignment(writer http.ResponseWriter, request *http.Req
 }
 
 func (s *Server) latestAssignment(writer http.ResponseWriter, request *http.Request) {
+	s.latestAssignmentForTarget(writer, request, "")
+}
+
+func (s *Server) latestWorkflowNodeAssignment(writer http.ResponseWriter, request *http.Request) {
+	s.latestAssignmentForTarget(writer, request, request.PathValue("nodeId"))
+}
+
+func (s *Server) latestAssignmentForTarget(writer http.ResponseWriter, request *http.Request, workflowNodeID string) {
 	if s.AssignmentReader == nil {
 		writeError(writer, http.StatusServiceUnavailable, "DISPATCHER_UNAVAILABLE", "派发服务暂不可用", true)
 		return
 	}
-	result, err := s.AssignmentReader.LatestForTask(request.Context(), request.PathValue("id"))
+	var result dispatch.LockResult
+	var err error
+	if workflowNodeID == "" {
+		result, err = s.AssignmentReader.LatestForTask(request.Context(), request.PathValue("id"))
+	} else {
+		result, err = s.AssignmentReader.LatestForWorkflowNode(
+			request.Context(), request.PathValue("id"), workflowNodeID,
+		)
+	}
 	if err != nil {
 		writeDispatchError(writer, err)
 		return
@@ -350,6 +448,12 @@ func writeMatchingError(writer http.ResponseWriter, err error) {
 
 func writeDispatchError(writer http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, dispatch.ErrTaskNotFound):
+		writeError(writer, http.StatusNotFound, "TASK_NOT_FOUND", "任务不存在或无权访问", false)
+	case errors.Is(err, dispatch.ErrExecutionRetryNotAllowed):
+		writeError(writer, http.StatusConflict, "EXECUTION_RETRY_NOT_ALLOWED", "当前任务或分配状态不允许重新执行", false)
+	case errors.Is(err, dispatch.ErrEscrowNotConfirmed):
+		writeError(writer, http.StatusConflict, "ESCROW_NOT_CONFIRMED", "托管资金尚未确认，不能重新执行", false)
 	case errors.Is(err, dispatch.ErrAssignmentAlreadyLocked):
 		writeError(writer, http.StatusConflict, "ASSIGNMENT_ALREADY_LOCKED", "任务已被其他候选锁定", false)
 	case errors.Is(err, dispatch.ErrCandidateNotFound):

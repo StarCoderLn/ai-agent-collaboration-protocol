@@ -6,6 +6,11 @@ export interface DispatchEngineGateway {
   rematch(taskId: string, actorId: string): Promise<TaskServiceResult>;
   confirm(taskId: string, agentId: string, actorId: string, idempotencyKey: string): Promise<TaskServiceResult>;
   latestAssignment(taskId: string, actorId: string): Promise<TaskServiceResult>;
+  retryExecution(taskId: string, actorId: string, idempotencyKey: string): Promise<TaskServiceResult>;
+  workflowNodeCandidates(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult>;
+  rematchWorkflowNode(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult>;
+  confirmWorkflowNode(taskId: string, nodeId: string, agentId: string, actorId: string, idempotencyKey: string): Promise<TaskServiceResult>;
+  latestWorkflowNodeAssignment(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult>;
 }
 
 export class TaskDispatchServiceError extends Error {
@@ -54,6 +59,57 @@ export class TaskDispatchService {
   async latestAssignment(taskId: string, actorId: string): Promise<TaskServiceResult> {
     await this.assertPublisher(taskId, actorId);
     return this.dispatch.latestAssignment(taskId, actorId);
+  }
+
+  async workflowNodeCandidates(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult> {
+    await this.assertPublisher(taskId, actorId);
+    return this.dispatch.workflowNodeCandidates(taskId, nodeId, actorId);
+  }
+
+  async rematchWorkflowNode(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult> {
+    await this.assertPublisher(taskId, actorId);
+    return this.dispatch.rematchWorkflowNode(taskId, nodeId, actorId);
+  }
+
+  async confirmWorkflowNode(
+    taskId: string,
+    nodeId: string,
+    agentId: string,
+    actorId: string,
+    idempotencyKey: string | undefined,
+  ): Promise<TaskServiceResult> {
+    await this.assertPublisher(taskId, actorId);
+    this.assertIdempotencyKey(idempotencyKey, "确认节点候选");
+    return this.dispatch.confirmWorkflowNode(taskId, nodeId, agentId, actorId, idempotencyKey);
+  }
+
+  async latestWorkflowNodeAssignment(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult> {
+    await this.assertPublisher(taskId, actorId);
+    return this.dispatch.latestWorkflowNodeAssignment(taskId, nodeId, actorId);
+  }
+
+  /**
+   * 失败重试不会直接修改任务或资金。分发引擎先取消旧分配并写入 outbox，随后
+   * Business API 的权威状态机消费该事实回到 matching，保留原托管和完整历史。
+   */
+  async retryExecution(
+    taskId: string,
+    actorId: string,
+    idempotencyKey: string | undefined,
+  ): Promise<TaskServiceResult> {
+    await this.assertPublisher(taskId, actorId);
+    this.assertIdempotencyKey(idempotencyKey, "重新执行");
+    return this.dispatch.retryExecution(taskId, actorId, idempotencyKey);
+  }
+
+  private assertIdempotencyKey(value: string | undefined, operation: string): asserts value is string {
+    if (value === undefined || value.trim().length < 8 || value.length > 200) {
+      throw new TaskDispatchServiceError(
+        "IDEMPOTENCY_KEY_REQUIRED",
+        `${operation}必须提供 8–200 字符的幂等键`,
+        400,
+      );
+    }
   }
 
   private async assertPublisher(taskId: string, actorId: string): Promise<void> {

@@ -61,6 +61,15 @@ func (r *memoryDispatchRepository) LatestForTask(context.Context, string) (LockR
 	}
 	return r.result, nil
 }
+func (r *memoryDispatchRepository) LatestForWorkflowNode(context.Context, string, string) (LockResult, error) {
+	if !r.locked {
+		return LockResult{}, ErrDispatchNotFound
+	}
+	return r.result, nil
+}
+func (r *memoryDispatchRepository) PrepareExecutionRetry(_ context.Context, taskID, _ string) (ExecutionRetryResult, error) {
+	return ExecutionRetryResult{TaskID: taskID, AssignmentID: "assignment-1", TransitionEventID: "event-1"}, nil
+}
 
 type recordingQueue struct {
 	messages []DispatchMessage
@@ -109,5 +118,13 @@ func TestAcknowledgementAndExpiryDelegateToTransactionalRepository(t *testing.T)
 	expired, err := service.ExpireDue(context.Background(), 10)
 	if err != nil || len(expired) != 1 || expired[0].Status != domain.AssignmentAcceptFailed {
 		t.Fatalf("expiry failed: assignments=%+v err=%v", expired, err)
+	}
+}
+
+func TestExecutionRetryDelegatesToTransactionalRepository(t *testing.T) {
+	service := Service{Repository: &memoryDispatchRepository{}}
+	result, err := service.RetryFailedExecution(context.Background(), "task", "publisher")
+	if err != nil || result.TaskID != "task" || result.TransitionEventID != "event-1" {
+		t.Fatalf("execution retry was not delegated: result=%+v err=%v", result, err)
 	}
 }

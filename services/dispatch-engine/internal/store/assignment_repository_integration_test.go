@@ -67,7 +67,7 @@ func TestAssignmentRepositoryPostgresConcurrencyIdempotencyAndRecovery(t *testin
 	}
 	// 成交必须使用用户看到的冻结候选报价。匹配后 Agent 即使改价，也不能静默改变
 	// 已展示候选的 agreed_amount_minor。
-	if _, err = pool.Exec(ctx, `UPDATE agents SET price_amount=7500 WHERE id IN ($1,$2)`, dispatchAgentAID, dispatchAgentBID); err != nil {
+	if _, err = pool.Exec(ctx, `UPDATE agents SET price_amount=7500000 WHERE id IN ($1,$2)`, dispatchAgentAID, dispatchAgentBID); err != nil {
 		t.Fatal(err)
 	}
 	repository := &AssignmentRepository{Pool: pool}
@@ -108,8 +108,8 @@ func TestAssignmentRepositoryPostgresConcurrencyIdempotencyAndRecovery(t *testin
 	if successes != 1 || conflicts != 1 || queue.count() != 1 {
 		t.Fatalf("expected one durable lock/send: successes=%d conflicts=%d queue=%d", successes, conflicts, queue.count())
 	}
-	if winner.Assignment.AgreedAmountMinor != 7000 {
-		t.Fatalf("assignment ignored frozen candidate quote: agreed=%d current-agent-price=7500", winner.Assignment.AgreedAmountMinor)
+	if winner.Assignment.AgreedAmountMinor != 7000000 {
+		t.Fatalf("assignment ignored frozen candidate quote: agreed=%d current-agent-price=7500000", winner.Assignment.AgreedAmountMinor)
 	}
 	deliveryRepository := &AgentDeliveryRepository{
 		Pool: pool, Decryptor: integrationDecryptor{}, CallbackBaseURL: "http://dispatch.local",
@@ -130,7 +130,7 @@ func TestAssignmentRepositoryPostgresConcurrencyIdempotencyAndRecovery(t *testin
 			Ack string `json:"ack"`
 		} `json:"callbacks"`
 	}
-	if err = json.Unmarshal(target.Body, &payload); err != nil || payload.Task.BudgetMinMinor != "8000" || payload.Callbacks.Ack == "" {
+	if err = json.Unmarshal(target.Body, &payload); err != nil || payload.Task.BudgetMinMinor != "8000000" || payload.Callbacks.Ack == "" {
 		t.Fatalf("dispatch payload lost exact money/callback data: err=%v", err)
 	}
 
@@ -298,7 +298,7 @@ func seedDispatchFixtures(t *testing.T, ctx context.Context, pool *pgxpool.Pool)
 		) VALUES (
 		 $1,'publisher-dispatch','并发候选确认集成任务','验证多个候选同时确认时只有一个数据库锁成功。',
 		 '拒单和超时后都可以选择另一个候选。','Go 测试',$2,1,ARRAY['agent'],
-		 'fixed',8000,8000,'USDC',$3,'Go 并发与 PostgreSQL','[]'::jsonb,
+		 'fixed',8000000,8000000,'USDC',$3,'Go 并发与 PostgreSQL','[]'::jsonb,
 		 'public','matching','{"mode":"manual"}'::jsonb,'manual','{}'::jsonb
 		)`, dispatchTaskID, integrationCategory, deadline)
 	if err != nil {
@@ -310,10 +310,10 @@ func seedDispatchFixtures(t *testing.T, ctx context.Context, pool *pgxpool.Pool)
 	} {
 		_, err = pool.Exec(ctx, `
 			INSERT INTO agents (
-			 id, provider_wallet_address, name, category_id, capability_desc, tags,
+			 id, provider_wallet_address, payout_wallet_address, name, category_id, capability_desc, tags,
 			 pricing_type, price_amount, price_currency, service_endpoint, email, status,
 			 estimated_duration_seconds, response_minutes
-			) VALUES ($1,$2,$3,$4,'Go API',ARRAY['agent'],'fixed',7000,'USDC',
+			) VALUES ($1,$2,$2,$3,$4,'Go API',ARRAY['agent'],'fixed',7000000,'USDC',
 			 'http://127.0.0.1:3999/agent','dispatch@example.com','active',1800,1)`,
 			values.id, values.wallet, values.name, integrationCategory)
 		if err != nil {

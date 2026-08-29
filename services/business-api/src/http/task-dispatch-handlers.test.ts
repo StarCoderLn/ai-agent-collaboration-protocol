@@ -5,6 +5,7 @@ import { createTaskDispatchHandlers, type TaskDispatchHttpDeps, type TaskDispatc
 
 const TASK_ID = "11111111-1111-4111-8111-111111111111";
 const AGENT_ID = "22222222-2222-4222-8222-222222222222";
+const NODE_ID = "33333333-3333-4333-8333-333333333333";
 
 function operations(): TaskDispatchOperations {
   return {
@@ -12,6 +13,11 @@ function operations(): TaskDispatchOperations {
     rematch: vi.fn(async () => ({ statusCode: 200, body: { candidates: [{ agentId: AGENT_ID }] } })),
     confirm: vi.fn(async () => ({ statusCode: 201, body: { assignment: { agentId: AGENT_ID } } })),
     latestAssignment: vi.fn(async () => ({ statusCode: 200, body: { assignment: { agentId: AGENT_ID } } })),
+    retryExecution: vi.fn(async () => ({ statusCode: 202, body: { transitionEventId: "event-1" } })),
+    workflowNodeCandidates: vi.fn(async () => ({ statusCode: 200, body: { candidates: [] } })),
+    rematchWorkflowNode: vi.fn(async () => ({ statusCode: 200, body: { candidates: [] } })),
+    confirmWorkflowNode: vi.fn(async () => ({ statusCode: 201, body: { assignment: { agentId: AGENT_ID } } })),
+    latestWorkflowNodeAssignment: vi.fn(async () => ({ statusCode: 200, body: { assignment: { agentId: AGENT_ID } } })),
   };
 }
 
@@ -59,5 +65,33 @@ describe("task dispatch façade handlers", () => {
     );
     expect(response.status).toBe(422);
     expect(deps.service.confirm).not.toHaveBeenCalled();
+  });
+
+  it("forwards publisher and idempotency evidence when retrying a failed execution", async () => {
+    const deps = dependencies();
+    const response = await createTaskDispatchHandlers(deps).retryExecution(
+      new Request(`http://api.local/api/tasks/${TASK_ID}/execution-retry`, {
+        method: "POST", headers: { "idempotency-key": "retry-execution-1" },
+      }),
+      { params: Promise.resolve({ id: TASK_ID }) },
+    );
+    expect(response.status).toBe(202);
+    expect(deps.service.retryExecution).toHaveBeenCalledWith(TASK_ID, "publisher-1", "retry-execution-1");
+  });
+
+  it("validates and forwards workflow-node candidate confirmation", async () => {
+    const deps = dependencies();
+    const response = await createTaskDispatchHandlers(deps).confirmWorkflowNode(
+      new Request(`http://api.local/api/tasks/${TASK_ID}/workflow-nodes/${NODE_ID}/assignments`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "confirm-node-123" },
+        body: JSON.stringify({ agentId: AGENT_ID }),
+      }),
+      { params: Promise.resolve({ id: TASK_ID, nodeId: NODE_ID }) },
+    );
+    expect(response.status).toBe(201);
+    expect(deps.service.confirmWorkflowNode).toHaveBeenCalledWith(
+      TASK_ID, NODE_ID, AGENT_ID, "publisher-1", "confirm-node-123",
+    );
   });
 });

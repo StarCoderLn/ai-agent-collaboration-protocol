@@ -36,4 +36,19 @@ describe("DispatchEngineClient", () => {
       "agent-1", "reviewer-1", "admin", "admin_approve", "approve:agent:request-1", "资料核验通过",
     )).resolves.toMatchObject({ statusCode: 200, body: { status: "active" } });
   });
+
+  it("forwards execution retry without inventing a second task or escrow", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
+      const headers = new Headers(init?.headers);
+      expect(url.pathname).toBe("/internal/tasks/task-1/execution-retry");
+      expect(headers.get("x-actor-id")).toBe("publisher-1");
+      expect(headers.get("idempotency-key")).toBe("retry-execution-1");
+      expect(init?.body).toBeUndefined();
+      return Response.json({ taskId: "task-1", transitionEventId: "event-1" }, { status: 202 });
+    });
+    const client = new DispatchEngineClient("http://dispatch.local", "internal-secret", fetcher);
+    await expect(client.retryExecution("task-1", "publisher-1", "retry-execution-1"))
+      .resolves.toMatchObject({ statusCode: 202 });
+  });
 });

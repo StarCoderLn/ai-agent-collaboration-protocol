@@ -28,10 +28,11 @@ const (
 )
 
 type MatchInput struct {
-	Task          domain.MatchTask
-	TaskUpdatedAt time.Time
-	Agents        []domain.AgentCandidate
-	Rules         domain.RankingRules
+	Task           domain.MatchTask
+	WorkflowNodeID string
+	TaskUpdatedAt  time.Time
+	Agents         []domain.AgentCandidate
+	Rules          domain.RankingRules
 	// AssignmentMode 与候选输入一起进入指纹和快照。自动分配只能依据这份被冻结的
 	// 匹配事实，不能在生成候选后重新读取可能已经变化的任务设置。
 	AssignmentMode AssignmentMode
@@ -54,6 +55,7 @@ type CandidateView struct {
 type Record struct {
 	ID               string                              `json:"id"`
 	TaskID           string                              `json:"taskId"`
+	WorkflowNodeID   string                              `json:"workflowNodeId,omitempty"`
 	RuleVersion      string                              `json:"ruleVersion"`
 	InputFingerprint string                              `json:"inputFingerprint"`
 	InputSnapshot    json.RawMessage                     `json:"inputSnapshot"`
@@ -71,6 +73,15 @@ type Repository interface {
 	Latest(ctx context.Context, taskID string) (Record, error)
 }
 
+// WorkflowNodeRepository 在旧任务级接口旁增加节点维度。旧实现无需伪造空节点；只有
+// 正式多 Agent 仓储实现本接口，Service 在节点入口显式检查能力是否存在。
+type WorkflowNodeRepository interface {
+	LoadWorkflowNodeInput(ctx context.Context, taskID, workflowNodeID string) (MatchInput, error)
+	FindWorkflowNodeByFingerprint(ctx context.Context, taskID, workflowNodeID, fingerprint string) (Record, error)
+	SaveWorkflowNode(ctx context.Context, record Record) (Record, error)
+	LatestWorkflowNode(ctx context.Context, taskID, workflowNodeID string) (Record, error)
+}
+
 type Service struct {
 	Repository Repository
 	Now        func() time.Time
@@ -81,7 +92,49 @@ func (s *Service) RunMatching(ctx context.Context, taskID string) (Record, error
 	if taskID == "" || s.Repository == nil {
 		return Record{}, errors.New("matching service requires task id and repository")
 	}
-	input, err := s.Repository.LoadInput(ctx, taskID)
+	return s.runMatching(
+		ctx,
+		taskID,
+		"",
+		s.Repository.LoadInput,
+		s.Repository.FindByFingerprint,
+		s.Repository.Save,
+	)
+}
+
+// RunWorkflowNodeMatching 使用节点自身的分类、标签、预算上限和依赖截止时间匹配。
+// 候选仍复用同一排序领域函数，但快照和唯一键都带 node id，互不覆盖相邻节点。
+func (s *Service) RunWorkflowNodeMatching(ctx context.Context, taskID, workflowNodeID string) (Record, error) {
+	if taskID == "" || workflowNodeID == "" || s.Repository == nil {
+		return Record{}, errors.New("workflow matching requires task, node and repository")
+	}
+	repository, ok := s.Repository.(WorkflowNodeRepository)
+	if !ok {
+		return Record{}, errors.New("matching repository does not support workflow nodes")
+	}
+	return s.runMatching(
+		ctx,
+		taskID,
+		workflowNodeID,
+		func(ctx context.Context, taskID string) (MatchInput, error) {
+			return repository.LoadWorkflowNodeInput(ctx, taskID, workflowNodeID)
+		},
+		func(ctx context.Context, taskID, fingerprint string) (Record, error) {
+			return repository.FindWorkflowNodeByFingerprint(ctx, taskID, workflowNodeID, fingerprint)
+		},
+		repository.SaveWorkflowNode,
+	)
+}
+
+func (s *Service) runMatching(
+	ctx context.Context,
+	taskID string,
+	workflowNodeID string,
+	load func(context.Context, string) (MatchInput, error),
+	find func(context.Context, string, string) (Record, error),
+	save func(context.Context, Record) (Record, error),
+) (Record, error) {
+	input, err := load(ctx, taskID)
 	if err != nil {
 		return Record{}, err
 	}
@@ -90,7 +143,7 @@ func (s *Service) RunMatching(ctx context.Context, taskID string) (Record, error
 	if err != nil {
 		return Record{}, err
 	}
-	if existing, findErr := s.Repository.FindByFingerprint(ctx, taskID, fingerprint); findErr == nil {
+	if existing, findErr := find(ctx, taskID, fingerprint); findErr == nil {
 		return existing, nil
 	} else if !errors.Is(findErr, ErrRecordNotFound) {
 		return Record{}, findErr
@@ -105,6 +158,7 @@ func (s *Service) RunMatching(ctx context.Context, taskID string) (Record, error
 	}
 	record := Record{
 		TaskID:           taskID,
+		WorkflowNodeID:   workflowNodeID,
 		RuleVersion:      distribution.RuleVersion,
 		InputFingerprint: fingerprint,
 		InputSnapshot:    snapshotWithEvaluationTime(snapshot, evaluatedAt),
@@ -112,7 +166,7 @@ func (s *Service) RunMatching(ctx context.Context, taskID string) (Record, error
 		FilterReasons:    distribution.FilterReasons,
 		AssignmentMode:   input.AssignmentMode,
 	}
-	return s.Repository.Save(ctx, record)
+	return save(ctx, record)
 }
 
 func (s *Service) LatestCandidates(ctx context.Context, taskID string) (Record, error) {
@@ -120,6 +174,17 @@ func (s *Service) LatestCandidates(ctx context.Context, taskID string) (Record, 
 		return Record{}, errors.New("matching service requires task id and repository")
 	}
 	return s.Repository.Latest(ctx, taskID)
+}
+
+func (s *Service) LatestWorkflowNodeCandidates(ctx context.Context, taskID, workflowNodeID string) (Record, error) {
+	if taskID == "" || workflowNodeID == "" || s.Repository == nil {
+		return Record{}, errors.New("workflow matching requires task, node and repository")
+	}
+	repository, ok := s.Repository.(WorkflowNodeRepository)
+	if !ok {
+		return Record{}, errors.New("matching repository does not support workflow nodes")
+	}
+	return repository.LatestWorkflowNode(ctx, taskID, workflowNodeID)
 }
 
 func candidateViews(candidates []domain.RankedCandidate) []CandidateView {

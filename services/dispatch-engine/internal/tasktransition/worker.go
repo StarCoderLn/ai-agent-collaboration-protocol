@@ -9,11 +9,12 @@ import (
 )
 
 type Event struct {
-	ID           string
-	TaskID       string
-	AssignmentID string
-	EventType    string
-	AttemptNo    int
+	ID             string
+	TaskID         string
+	WorkflowNodeID string
+	AssignmentID   string
+	EventType      string
+	AttemptNo      int
 }
 
 type Repository interface {

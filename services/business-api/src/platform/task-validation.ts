@@ -73,7 +73,7 @@ export function validateTaskDraft(input: TaskDraft, now: Date, config: TaskValid
   if (input.deliverableFormat.trim().length === 0) errors.push(error("deliverableFormat", "DELIVERABLE_FORMAT_REQUIRED", "请填写交付格式"));
   if (input.requiredCapability.trim().length === 0) errors.push(error("requiredCapability", "REQUIRED_CAPABILITY_REQUIRED", "请填写所需能力"));
   if (input.currency !== MVP_CURRENCY) {
-    errors.push(error("currency", "CURRENCY_UNSUPPORTED", "MVP 托管仅支持原生 ETH，金额使用 wei"));
+    errors.push(error("currency", "CURRENCY_UNSUPPORTED", "任务预算、报价与托管仅支持 USDC"));
   }
   if (input.deadline.getTime() < now.getTime() + config.minExecutionPeriodMs) {
     errors.push(error("deadline", "DEADLINE_TOO_SOON", `截止时间至少应晚于当前 ${Math.ceil(config.minExecutionPeriodMs / 60_000)} 分钟`));

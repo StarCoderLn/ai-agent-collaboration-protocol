@@ -19,7 +19,7 @@ function task(overrides: Partial<StoredTask> = {}): StoredTask {
       categoryId: CATEGORY_ID,
       tags: ["agent", "next.js"],
       pricing: { type: "fixed", amountMinor: 10_000n },
-      currency: "ETH",
+      currency: "USDC",
       deadline: new Date("2026-08-24T00:00:00.000Z"),
       requiredCapability: "Next.js 与 PostgreSQL",
       attachments: [{ name: "private.pdf", mimeType: "application/pdf", sizeBytes: 100n, storageRef: "s3://private" }],

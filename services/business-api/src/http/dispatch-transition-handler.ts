@@ -1,6 +1,5 @@
-import { timingSafeEqual } from "node:crypto";
-
 import { DispatchTransitionError, type AppliedDispatchTransition } from "../tasks/dispatch-transition";
+import { validInternalBearer } from "./internal-service-auth";
 
 export type DispatchTransitionRouteContext = Readonly<{ params: Promise<{ id: string }> }>;
 
@@ -13,7 +12,7 @@ export interface DispatchTransitionHttpDeps {
 export function createDispatchTransitionHandler(deps: DispatchTransitionHttpDeps) {
   return async (request: Request, context: DispatchTransitionRouteContext): Promise<Response> => {
     if (deps.internalToken.length === 0) return errorResponse(503, "INTERNAL_AUTH_NOT_CONFIGURED", "内部服务认证尚未配置", true);
-    if (!validBearer(request.headers.get("authorization"), deps.internalToken)) {
+    if (!validInternalBearer(request.headers.get("authorization"), deps.internalToken)) {
       return errorResponse(401, "UNAUTHENTICATED", "内部服务认证失败", false);
     }
     const { id } = await context.params;
@@ -31,13 +30,6 @@ export function createDispatchTransitionHandler(deps: DispatchTransitionHttpDeps
       return errorResponse(500, "TRANSITION_INTERNAL_ERROR", "任务状态迁移失败", true);
     }
   };
-}
-
-function validBearer(header: string | null, expected: string): boolean {
-  if (header === null || !header.startsWith("Bearer ")) return false;
-  const provided = Buffer.from(header.slice("Bearer ".length));
-  const wanted = Buffer.from(expected);
-  return provided.length === wanted.length && timingSafeEqual(provided, wanted);
 }
 
 function serializeResult(result: AppliedDispatchTransition) {

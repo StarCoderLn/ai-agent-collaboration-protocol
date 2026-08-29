@@ -75,8 +75,18 @@ func run(ctx context.Context) error {
 	dispatcher := &dispatch.Service{Repository: assignmentRepository, Queue: transport.queue}
 	initialMatchCoordinator := &matching.InitialMatchCoordinator{Matcher: matcher, Dispatcher: dispatcher}
 	initialMatchWorker := &matching.InitialMatchWorker{Source: matchingRepository, Runner: initialMatchCoordinator, Limit: 50}
+	workflowMatchWorker := &matching.WorkflowInitialMatchWorker{Source: matchingRepository, Runner: initialMatchCoordinator, Limit: 50}
 	transitionWorker := &tasktransition.Worker{
 		Repository: &store.TaskTransitionRepository{Pool: pool},
+		Sender: &tasktransition.HTTPSender{
+			BaseURL: businessAPIURL,
+			Token:   internalToken,
+			Client:  &http.Client{Timeout: 10 * time.Second},
+		},
+		Lease: 30 * time.Second,
+	}
+	workflowTransitionWorker := &tasktransition.Worker{
+		Repository: &store.WorkflowNodeTransitionRepository{Pool: pool},
 		Sender: &tasktransition.HTTPSender{
 			BaseURL: businessAPIURL,
 			Token:   internalToken,
@@ -177,6 +187,9 @@ func run(ctx context.Context) error {
 			if _, transitionErr := transitionWorker.RunOnce(ctx, 50); transitionErr != nil && !errors.Is(transitionErr, context.Canceled) {
 				log.Printf("task transition delivery had failures")
 			}
+			if _, transitionErr := workflowTransitionWorker.RunOnce(ctx, 100); transitionErr != nil && !errors.Is(transitionErr, context.Canceled) {
+				log.Printf("workflow node transition delivery had failures")
+			}
 			select {
 			case <-ctx.Done():
 				return
@@ -241,6 +254,9 @@ func run(ctx context.Context) error {
 		for {
 			if _, matchErr := initialMatchWorker.RunOnce(ctx); matchErr != nil && !errors.Is(matchErr, context.Canceled) {
 				log.Printf("initial task matching had failures")
+			}
+			if _, matchErr := workflowMatchWorker.RunOnce(ctx); matchErr != nil && !errors.Is(matchErr, context.Canceled) {
+				log.Printf("workflow node matching had failures")
 			}
 			select {
 			case <-ctx.Done():

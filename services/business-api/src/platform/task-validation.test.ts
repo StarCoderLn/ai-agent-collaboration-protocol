@@ -25,7 +25,7 @@ function validDraft(overrides: Partial<TaskDraft> = {}): TaskDraft {
     categoryId: "category-code",
     tags: ["Next.js", "Design"],
     pricing: { type: "fixed", amountMinor: 20_000n },
-    currency: "ETH",
+    currency: "USDC",
     deadline: new Date(NOW.getTime() + 31 * 60_000),
     requiredCapability: "产品设计与前端开发",
     attachments: [],
@@ -59,8 +59,8 @@ describe("validateTaskDraft", () => {
       ]));
   });
 
-  it("rejects currencies the native ETH escrow cannot settle", () => {
-    expect(validateTaskDraft(validDraft({ currency: "USDC" }), NOW, CONFIG)).toContainEqual(
+  it("rejects ETH because business settlement only supports USDC", () => {
+    expect(validateTaskDraft(validDraft({ currency: "ETH" }), NOW, CONFIG)).toContainEqual(
       expect.objectContaining({ field: "currency", code: "CURRENCY_UNSUPPORTED" }),
     );
   });

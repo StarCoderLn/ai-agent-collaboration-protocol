@@ -36,6 +36,10 @@ func (s *HTTPSender) Send(ctx context.Context, event Event) error {
 		return err
 	}
 	base.Path = strings.TrimSuffix(base.Path, "/") + "/api/internal/tasks/" + url.PathEscape(event.TaskID) + "/transitions"
+	if event.WorkflowNodeID != "" {
+		base.Path = strings.TrimSuffix(strings.TrimSuffix(base.Path, "/transitions"), "/") +
+			"/workflow-nodes/" + url.PathEscape(event.WorkflowNodeID) + "/transitions"
+	}
 	body, err := json.Marshal(map[string]string{
 		"eventId": event.ID, "assignmentId": event.AssignmentID, "eventType": event.EventType,
 	})

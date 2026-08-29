@@ -23,9 +23,10 @@ const (
 // Assignment 是分发引擎完成原子占用后持有的最小快照。IdempotencyKey 属于请求，
 // 因此同一个键只能重放完全相同的 task/agent 组合，不能被复用到另一条分配上。
 type Assignment struct {
-	ID      string `json:"id"`
-	TaskID  string `json:"taskId"`
-	AgentID string `json:"agentId"`
+	ID             string `json:"id"`
+	TaskID         string `json:"taskId"`
+	WorkflowNodeID string `json:"workflowNodeId,omitempty"`
+	AgentID        string `json:"agentId"`
 	// 和候选报价使用同一字符串契约；内部仍保留 int64 参与 SQL 与领域比较。
 	AgreedAmountMinor int64            `json:"-"`
 	IdempotencyKey    string           `json:"idempotencyKey"`
@@ -43,6 +44,7 @@ func (assignment Assignment) MarshalJSON() ([]byte, error) {
 	type assignmentJSON struct {
 		ID                string           `json:"id"`
 		TaskID            string           `json:"taskId"`
+		WorkflowNodeID    string           `json:"workflowNodeId,omitempty"`
 		AgentID           string           `json:"agentId"`
 		AgreedAmountMinor string           `json:"agreedAmountMinor"`
 		IdempotencyKey    string           `json:"idempotencyKey"`
@@ -54,7 +56,7 @@ func (assignment Assignment) MarshalJSON() ([]byte, error) {
 		RespondedAt       time.Time        `json:"respondedAt"`
 	}
 	return json.Marshal(assignmentJSON{
-		ID: assignment.ID, TaskID: assignment.TaskID, AgentID: assignment.AgentID,
+		ID: assignment.ID, TaskID: assignment.TaskID, WorkflowNodeID: assignment.WorkflowNodeID, AgentID: assignment.AgentID,
 		AgreedAmountMinor: strconv.FormatInt(assignment.AgreedAmountMinor, 10),
 		IdempotencyKey:    assignment.IdempotencyKey, AssignedBy: assignment.AssignedBy,
 		Version: strconv.FormatInt(assignment.Version, 10), Status: assignment.Status, LockedAt: assignment.LockedAt,
@@ -99,12 +101,13 @@ func (b *AssignmentBook) Lock(input Assignment) (Assignment, error) {
 	defer b.mu.Unlock()
 
 	if existing, ok := b.byIdempotency[input.IdempotencyKey]; ok {
-		if existing.TaskID == input.TaskID && existing.AgentID == input.AgentID {
+		if existing.TaskID == input.TaskID && existing.WorkflowNodeID == input.WorkflowNodeID && existing.AgentID == input.AgentID {
 			return existing, nil
 		}
 		return Assignment{}, ErrIdempotencyKeyReused
 	}
-	if existing, ok := b.byTask[input.TaskID]; ok && isAssignmentActive(existing.Status) {
+	targetKey := assignmentTargetKey(input.TaskID, input.WorkflowNodeID)
+	if existing, ok := b.byTask[targetKey]; ok && isAssignmentActive(existing.Status) {
 		return Assignment{}, ErrAssignmentAlreadyLocked
 	}
 
@@ -113,7 +116,7 @@ func (b *AssignmentBook) Lock(input Assignment) (Assignment, error) {
 		input.Version = 1
 	}
 	input.RespondedAt = time.Time{}
-	b.byTask[input.TaskID] = input
+	b.byTask[targetKey] = input
 	b.byIdempotency[input.IdempotencyKey] = input
 	return input, nil
 }
@@ -124,7 +127,7 @@ func (b *AssignmentBook) Acknowledge(taskID, agentID string, accepted bool, resp
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	assignment, ok := b.byTask[taskID]
+	assignment, ok := b.byTask[assignmentTargetKey(taskID, "")]
 	if !ok || assignment.AgentID != agentID {
 		return Assignment{}, ErrAssignmentNotFound
 	}
@@ -164,8 +167,15 @@ func (b *AssignmentBook) Expire(now time.Time) []Assignment {
 }
 
 func (b *AssignmentBook) replace(assignment Assignment) {
-	b.byTask[assignment.TaskID] = assignment
+	b.byTask[assignmentTargetKey(assignment.TaskID, assignment.WorkflowNodeID)] = assignment
 	b.byIdempotency[assignment.IdempotencyKey] = assignment
+}
+
+func assignmentTargetKey(taskID, workflowNodeID string) string {
+	if workflowNodeID == "" {
+		return "task:" + taskID
+	}
+	return "node:" + workflowNodeID
 }
 
 func isAssignmentActive(status AssignmentStatus) bool {

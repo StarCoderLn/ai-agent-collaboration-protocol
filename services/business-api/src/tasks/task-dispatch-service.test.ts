@@ -8,7 +8,7 @@ const storedTask: StoredTask = {
   publisherId: "publisher-1",
   draft: {
     title: "测试任务", description: "用于验证发布者授权。", acceptanceCriteria: "只有所有者可操作。",
-    deliverableFormat: "测试", categoryId: null, tags: [], pricing: null, currency: "ETH",
+    deliverableFormat: "测试", categoryId: null, tags: [], pricing: null, currency: "USDC",
     deadline: null, requiredCapability: "", attachments: [],
   },
   categoryVersion: null,
@@ -39,6 +39,11 @@ function gateway(): DispatchEngineGateway {
     rematch: vi.fn(async () => ({ statusCode: 200, body: {} })),
     confirm: vi.fn(async () => ({ statusCode: 201, body: {} })),
     latestAssignment: vi.fn(async () => ({ statusCode: 200, body: {} })),
+    retryExecution: vi.fn(async () => ({ statusCode: 202, body: { transitionEventId: "event-1" } })),
+    workflowNodeCandidates: vi.fn(async () => ({ statusCode: 200, body: {} })),
+    rematchWorkflowNode: vi.fn(async () => ({ statusCode: 200, body: {} })),
+    confirmWorkflowNode: vi.fn(async () => ({ statusCode: 201, body: {} })),
+    latestWorkflowNodeAssignment: vi.fn(async () => ({ statusCode: 200, body: {} })),
   };
 }
 
@@ -57,6 +62,25 @@ describe("TaskDispatchService", () => {
       code: "IDEMPOTENCY_KEY_REQUIRED",
     });
     expect(dispatch.confirm).not.toHaveBeenCalled();
+  });
+
+  it("authorizes and forwards an idempotent failed-execution retry", async () => {
+    const dispatch = gateway();
+    const service = new TaskDispatchService(repository(true), dispatch);
+    await expect(service.retryExecution("task-1", "publisher-1", "retry-execution-1"))
+      .resolves.toMatchObject({ statusCode: 202 });
+    expect(dispatch.retryExecution).toHaveBeenCalledWith("task-1", "publisher-1", "retry-execution-1");
+  });
+
+  it("uses the same publisher authorization boundary for workflow-node assignment", async () => {
+    const dispatch = gateway();
+    const service = new TaskDispatchService(repository(true), dispatch);
+    await expect(service.confirmWorkflowNode(
+      "task-1", "node-1", "agent-1", "publisher-1", "confirm-node-1",
+    )).resolves.toMatchObject({ statusCode: 201 });
+    expect(dispatch.confirmWorkflowNode).toHaveBeenCalledWith(
+      "task-1", "node-1", "agent-1", "publisher-1", "confirm-node-1",
+    );
   });
 });
 

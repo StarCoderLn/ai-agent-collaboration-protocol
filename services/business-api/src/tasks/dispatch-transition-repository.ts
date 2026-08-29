@@ -118,5 +118,6 @@ function assignmentStatusSupportsEvent(
   // 仍能证明“曾经锁定”；后两个事件则必须与仓储中的最终分配事实一致。
   if (eventType === "assignment_locked") return true;
   if (eventType === "agent_accepted") return status === "accepted";
+  if (eventType === "execution_retry_requested") return status === "cancelled";
   return status === "accept_failed" || status === "cancelled";
 }

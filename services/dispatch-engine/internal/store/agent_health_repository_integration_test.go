@@ -33,7 +33,7 @@ func TestAgentHealthRepositoryPostgresPauseRecoveryAndLease(t *testing.T) {
 		 id,provider_wallet_address,name,category_id,capability_desc,tags,pricing_type,price_amount,
 		 price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
 		) VALUES ($1,'0x1111111111111111111111111111111111111111','健康探测集成 Agent',
-		 '40000000-0000-4000-8000-000000000001','协议健康探测',ARRAY['agent'],'fixed',1000,
+		 '40000000-0000-4000-8000-000000000001','协议健康探测',ARRAY['agent'],'fixed',1000000,
 		 'USDC','http://127.0.0.1:9999/v1/tasks','health@example.com','active',60,1)`, healthAgentID)
 	if err != nil {
 		t.Fatal(err)
