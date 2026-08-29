@@ -5,6 +5,7 @@
 | 日期       | 版本 | 说明     |
 | ---------- | ---- | -------- |
 | 2026-08-20 | v1   | 初始任务 |
+| 2026-08-30 | v2   | 对齐已落地的 `platform_actor_roles` 权威角色表，禁止再建平行角色模型 |
 
 ## 项目信息
 
@@ -16,7 +17,7 @@
 
 ### 功能 1: 权限与二次确认基础设施
 
-- [ ] T-001: 实现 `roles`/`user_roles` 表、`RequirePermission()` 中间件与高风险操作二次确认 token 机制 ~30min
+- [ ] T-001: 基于现有 `platform_actor_roles` 实现 `RequirePermission()` 权限映射与高风险操作二次确认 token 机制；仅在现有角色枚举无法承载已确认角色时扩展 migration，不新建平行角色表 ~30min
 
 ### 功能 2: 运营查询
 
@@ -48,4 +49,7 @@
 
 ## 风险点
 
-- 本 feature 的 T-001（RBAC 中间件）是 [[3.agent-health-lifecycle]] 和 [[13.dispute-and-arbitration]] 权限校验的共同依赖；若开发顺序不按 PLAN.md 推荐顺序执行，那两个 feature 需要先用临时权限占位实现，待本 feature 交付后替换，避免相互阻塞。
+- [[3.agent-health-lifecycle]] 和 [[13.dispute-and-arbitration]] 已直接复用服务端
+  `platform_actor_roles` 完成角色守卫，不依赖客户端声明或临时权限占位。T-001 需要在这张
+  权威表之上增加权限点映射和二次确认能力，并保持已有审核、仲裁入口的外部行为不变；
+  [[15.agent-sandbox-admission]] 的正式判定入口仍须等待该统一中间件完成。

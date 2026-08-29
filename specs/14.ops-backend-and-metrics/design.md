@@ -5,6 +5,7 @@
 | 日期       | 版本 | 说明     |
 | ---------- | ---- | -------- |
 | 2026-08-20 | v1   | 初始设计 |
+| 2026-08-30 | v2   | 权限模型改为扩展现有 `platform_actor_roles`，避免第二套角色事实源 |
 
 ## 项目架构
 
@@ -17,8 +18,12 @@
 
 **涉及层及关键设计:**
 
-- `roles` + `user_roles` 表 + 静态的「角色 → 权限点」映射（代码中定义，不做动态可配置权限点管理，避免为未经确认的需求建立框架）。
-- 提供统一的权限校验中间件 `RequirePermission(permissionKey)`，本 feature 定义的权限点供 [[3.agent-health-lifecycle]] 的审核接口、[[13.dispute-and-arbitration]] 的仲裁决定接口等复用，是唯一的权限校验实现，不允许各 feature 各自判断角色字符串。
+- `platform_actor_roles` 是后台角色的唯一事实源；Feature 3/13 已使用其中的
+  `agent_reviewer` 与 `arbitrator`。本 feature 只在已确认的运营角色无法表达时扩展枚举，
+  不再创建 `roles`/`user_roles` 平行表。
+- 提供统一的权限校验中间件 `RequirePermission(permissionKey)`，由代码中的静态
+  「角色 → 权限点」映射吸收角色判断。迁移已有审核、仲裁入口时先建立特征测试，保持当前
+  未授权拒绝和审计行为不变；新入口不得各自判断角色字符串。
 - 高风险操作二次确认作为通用前端交互组件 + 后端要求请求体携带 `confirmationToken`（由「预览接口」生成，短时有效），避免仅靠前端弹窗这种可绕过的伪二次确认。
 
 ### 模块 2: 运营查询
@@ -44,7 +49,8 @@
 
 ## 数据模型
 
-- `roles(id PK, name)`，`user_roles(user_id, role_id)`。
+- 复用 `platform_actor_roles(actor_id, role, granted_by, granted_at)`；若新增运营或管理员角色，
+  通过向前 migration 扩展其角色约束，不复制已经存在的角色记录。
 - `metrics_daily(date, metric_key, value, sample_size, computed_at)`，主键 `(date, metric_key)`。
 - 复用：`audit_logs`（[[2.agent-registration]]）、`dispatch_attempts`（[[9.dispatch-and-acceptance]]）、`reconciliation_alerts`（[[6.escrow-sync-and-wallet]]）。
 
@@ -61,5 +67,5 @@
 
 | 决策 | 选项 | 理由 |
 | ---- | ---- | ---- |
-| 权限模型复杂度 | 静态角色→权限点映射（选中）vs 可配置动态权限系统 | PRD 明确标注权限分级与审批方式待确认，构建动态权限系统属于为未经确认的需求建立框架，先用静态映射满足 MVP，需要时再升级 |
+| 权限模型复杂度 | 现有角色表 + 静态角色→权限点映射（选中）vs 新建通用 RBAC 表 | 已有审核和仲裁入口共享 `platform_actor_roles`；再建平行表会引入迁移、双写与授权分歧。静态映射满足当前权限点，未来只有明确需要动态授权策略时才重新设计 |
 | 运营查询数据来源 | 直读权威表（选中）vs 独立运营专用宽表 | 独立宽表需要额外的同步机制，在 MVP 阶段引入数据双写不一致的风险，收益不足以覆盖成本 |

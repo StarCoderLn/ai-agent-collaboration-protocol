@@ -4,9 +4,9 @@
 
 平台到 Agent 的签名异步 Webhook 通知（含退避重试与死信队列）、用户端 SSE 进度推送与断线续传、以及通知失败时的状态补拉能力。对应 PRD FR-M03。
 
-> 2026-08-23 正式体验映射：三步 Agent 编排画布仍负责同步比较候选产物；正式任务详情
-> 已接入 `task_events` SSE、浏览器 `Last-Event-ID` 续传和每 5 秒 `/status` 补拉。
-> Webhook 由独立 Go worker 从持久化 outbox 投递，画布产物文件不承担传输层状态。
+> 2026-08-30 正式工作流映射：任务级事件继续使用 `task_events` SSE、浏览器
+> `Last-Event-ID` 续传和 `/status` 补拉；节点接单状态通过独立持久化 outbox/inbox
+> 传递。Agent 进度和制品由签名回调写入节点事实，前端关系图只读取结果，不承担同步。
 
 ## 项目信息
 

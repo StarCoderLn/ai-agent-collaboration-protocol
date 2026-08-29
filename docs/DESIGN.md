@@ -107,7 +107,7 @@ Meet WCAG AA contrast, show keyboard focus, use 44px minimum interactive targets
 
 Trust in a financial product is carried by the numbers, not just the palette. Amounts, timestamps, and identifiers must render identically everywhere they appear.
 
-- Amounts: fixed decimal precision per currency (e.g. 2 decimals for stablecoins, up to 6 for ETH display values — never show raw 18-decimal wei), thousands separators, currency label always attached, right-aligned in tables and lists.
+- Amounts: task pricing, escrow, refunds, and settlement use USDC only. Accept up to 6 decimal places without floating-point conversion, trim insignificant trailing zeros for display, keep the USDC label visible, and right-align values in tables. ETH appears only as the connected EVM network's Gas balance, never as a business price or escrow asset.
 - Never let an amount's decimal count shift between screens (list, detail, preview, receipt) for the same currency.
 - Timestamps: absolute time on hover/detail, relative time ("3 分钟前") on list views; always the same relative-time phrasing across the product, not different phrasings per page.
 - Wallet addresses and transaction hashes: shortened form `0x1234…abcd` with a copy affordance, full value available on hover or click — never truncate silently without a way to get the full value.

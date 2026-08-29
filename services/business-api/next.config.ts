@@ -6,12 +6,12 @@ import type { NextConfig } from "next";
  * specs/PLAN.md 项目级技术栈决策）。
  *
  * `output: "standalone"` 产出自包含的 `.next/standalone` 运行时（含最小化
- * `node_modules`），是当前主流 Next.js on Lambda 方案（如 AWS Lambda Web Adapter）
- * 的标准前置条件，不额外引入具体打包/IaC 工具依赖。
+ * `node_modules`），并由 `infra/build-lambda.sh` 解析 pnpm 软链接、补齐静态资源后生成
+ * AWS Lambda Web Adapter 的 zip 部署目录。
  *
- * 具体 Lambda 打包与 IaC 方案（如 AWS Lambda Web Adapter、OpenNext、SST、CDK/SAM）
- * 尚未被 PLAN.md 或 design.md 冻结为项目级决策，属于本 task（T-009，仅搭骨架、不挂载
- * 业务路由）范围之外的后续基础设施任务，需单独确认后再引入相应依赖。
+ * 项目已冻结为 LWA + zip + AWS CDK；本文件只声明 Next.js 运行时产物，不复制 CDK、
+ * Secrets Manager 或 Function URL 配置。部署契约统一由 `infra/` 承担，避免应用配置和
+ * 基础设施代码分别维护两套环境知识。
  */
 const nextConfig: NextConfig = {
 	output: "standalone",

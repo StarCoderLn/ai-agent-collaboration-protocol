@@ -9,6 +9,8 @@
 | 2026-08-20 | v3   | 拆分 `TREASURY_ROLE`（原 `setFeeReceiver()` 挂在 `PAUSER_ROLE` 下不合理，两者风险等级不同）；明确三个角色各自的密钥托管方式 |
 | 2026-08-20 | v4   | 模块 3 补充多签签名人数量的分级参考表（按托管资金规模，参考 Aave 等协议实践），完整表格见 requirements.md 开放问题 |
 | 2026-08-23 | v5   | `release()` 增加实际成交额参数，将未使用的预算上限差额退回发布者，修复链上与链下结算不一致 |
+| 2026-08-27 | v6   | 业务资金统一为 USDC；部署时固定支付代币，存款改为精确金额 `transferFrom`，ETH 仅保留为 Gas |
+| 2026-08-30 | v7   | 扩展累计释放账本，支持工作流节点里程碑结算、最终余额退款和部分释放后的剩余退款 |
 
 ## 项目架构
 
@@ -21,16 +23,22 @@
 
 **涉及层及关键设计:**
 
-- `mapping(bytes32 taskId => Escrow)`，`Escrow { address payer; uint256 amount; EscrowState state; }`。
+- `mapping(bytes32 taskId => EscrowRecord)`，记录 `payer`、原托管 `amount`、累计
+  `releasedAmount` 与 `state`；累计值让多个里程碑共享一笔托管而不创建链上子账户。
 - `taskId` 由链下（feature 4 的任务 ID）派生的确定性哈希，保证链上链下一一对应，不引入自增 ID 的链下链上双写同步问题。
-- 存款函数校验 `state == None`，写入后置为 `Deposited`，防止重复托管同一任务。
+- 合约构造时固定一个 `paymentToken`，调用方不能在每次存款时自选 Token 地址，避免
+  混币和恶意代币注入。存款函数校验 `state == None` 与 `amount > 0`，再通过
+  `transferFrom` 拉取发布者已经精确授权的 USDC。
+- 存款前后检查合约 USDC 余额差必须等于声明金额，拒绝扣税/通缩代币导致账面金额
+  大于实际到账金额；失败时整笔交易回滚，不留下半完成托管记录。
 
 ### 模块 2: 结算与退款
 
 **涉及层及关键设计:**
 
-- `release(taskId, payee, agentGrossAmount, feeAmount)` 与 `refund(taskId)` 均要求 `msg.sender` 具备 `OPERATOR_ROLE`（OpenZeppelin `AccessControl`），且 `state == Deposited`，执行后置为终态（`Released` / `Refunded`），从状态设计上直接阻止重复执行，而不是靠外部校验。
+- `release()`、`releaseMilestone()`、`finalize()` 与 `refund()` 均要求 `OPERATOR_ROLE` 且 `state == Deposited`。一次性 `release()`、最终 `finalize()` 和 `refund()` 写入终态；`releaseMilestone()` 只增加 `releasedAmount`，保持托管打开供后续节点使用。
 - `[v5]` `release()` 的转账拆分：`payee` 收到 `agentGrossAmount - feeAmount`，`feeReceiver` 收到 `feeAmount`，发布者收到 `escrowAmount - agentGrossAmount`。任务按预算上限托管但允许 Agent 以较低报价成交，因此不能把整笔托管额都视为 Agent 应得金额。合约强制 `agentGrossAmount <= escrowAmount`、`feeAmount <= agentGrossAmount`，三笔之和严格等于托管额。
+- `[v7]` `releaseMilestone()` 强制节点成交额大于零且不超过 `amount - releasedAmount`，只向 Agent 与平台转账；`finalize()` 在全部节点完成后把 `amount - releasedAmount` 退给发布者。任一节点失败时 `refund()` 使用同一剩余金额公式，已验收里程碑不会被追回。
 - `[v3]` `feeReceiver` 由专设的 `TREASURY_ROLE`（不是 `PAUSER_ROLE`）更新，不是部署时写死的常量，允许平台后续更换收款地址而不需要合约升级——见模块 3 关于为什么这条不能跟暂停权限共用。
 - 遵循 checks-effects-interactions：先校验状态、更新状态变量，再执行外部转账调用；引入 OpenZeppelin `ReentrancyGuard`。
 
@@ -52,34 +60,42 @@
 
 - `event Deposited(bytes32 indexed taskId, address indexed payer, uint256 amount)`
 - `event Released(bytes32 indexed taskId, address indexed payee, uint256 escrowAmount, uint256 agentGrossAmount, uint256 feeAmount, uint256 payerRefundAmount)`
-- `event Refunded(bytes32 indexed taskId, address indexed payer, uint256 amount)`
+- `event MilestoneReleased(bytes32 indexed taskId, address indexed payee, uint256 escrowAmount, uint256 milestoneGrossAmount, uint256 feeAmount, uint256 totalReleasedAmount, uint256 remainingAmount)`
+- `event Finalized(bytes32 indexed taskId, address indexed payer, uint256 escrowAmount, uint256 releasedAmount, uint256 payerRefundAmount)`
+- `event Refunded(bytes32 indexed taskId, address indexed payer, uint256 escrowAmount, uint256 releasedAmount, uint256 payerRefundAmount)`
 - `event Paused(address account)` / `event Unpaused(address account)`（继承自 OpenZeppelin `Pausable`）
 - 事件是 [[6.escrow-sync-and-wallet]] 链下同步的唯一事实来源，链下不允许仅依赖交易 receipt 状态推断资金结果。
 
 ## 接口契约
 
 ```solidity
-function deposit(bytes32 taskId) external payable; // MVP 先支持原生 ETH，ERC20 支持视需要扩展
+function deposit(bytes32 taskId, uint256 amount) external; // amount 是 USDC 的 6 位最小单位
 function release(bytes32 taskId, address payee, uint256 agentGrossAmount, uint256 feeAmount) external onlyRole(OPERATOR_ROLE);
+function releaseMilestone(bytes32 taskId, address payee, uint256 agentGrossAmount, uint256 feeAmount) external onlyRole(OPERATOR_ROLE);
+function finalize(bytes32 taskId) external onlyRole(OPERATOR_ROLE);
 function refund(bytes32 taskId) external onlyRole(OPERATOR_ROLE);
 function pause() external onlyRole(PAUSER_ROLE);
 function unpause() external onlyRole(PAUSER_ROLE);
 function escrowOf(bytes32 taskId) external view returns (Escrow memory);
 function setFeeReceiver(address newReceiver) external onlyRole(TREASURY_ROLE); // [v3 修改：从 PAUSER_ROLE 改为独立的 TREASURY_ROLE]
 function feeReceiver() external view returns (address); // [v2 新增]
+function paymentToken() external view returns (IERC20); // 部署时固定的 USDC，之后不可更换
 ```
 
 ## 数据模型
 
-- 链上：`mapping(bytes32 => Escrow)`，`enum EscrowState { None, Deposited, Released, Refunded }`，`[v2 新增]` `address public feeReceiver`（部署时初始化，可由 `setFeeReceiver()` 更新，变更触发 `event FeeReceiverUpdated(address indexed oldReceiver, address indexed newReceiver)`）。
+- 链上：`mapping(bytes32 => EscrowRecord)`；记录包含 `payer`、原托管 `amount`、只增的 `releasedAmount` 与 `EscrowState { None, Deposited, Released, Refunded }`。`address public feeReceiver` 在部署时初始化，可由 `setFeeReceiver()` 更新并触发 `FeeReceiverUpdated`。
 - 链下镜像表在 [[6.escrow-sync-and-wallet]] 中定义，本 feature 不涉及链下存储。
 
 ## 安全考虑
 
-- 重入保护：`release`/`refund` 使用 `nonReentrant` 修饰符。
+- 重入保护：`deposit`/`release`/`refund` 使用 `nonReentrant` 修饰符；即使支付代币是
+  恶意实现并在转账时回调，也不能重复进入资金状态机。
+- 授权策略：Web 只授权当前任务金额，不使用无限授权；合约通过 OpenZeppelin
+  `SafeERC20` 兼容标准 ERC-20 返回值和失败语义。
 - `[v3 修改]` 权限分离：暂停（`PAUSER_ROLE`）、资金结算（`OPERATOR_ROLE`）、手续费收款地址变更（`TREASURY_ROLE`）三类操作使用三个独立角色，不是简单两两分离——任一角色的密钥泄露，影响范围都被限制在该角色自身能做的事，不会连带影响另外两类操作。
 - `[v3 新增]` 私钥托管方式按角色风险特征区分：`PAUSER_ROLE`/`TREASURY_ROLE` 用多签（阈值按响应速度需求不同：`PAUSER_ROLE` 偏小、`TREASURY_ROLE` 偏大）；`OPERATOR_ROLE` 因需要自动化高频调用，用服务持有的密钥但要求云端 KMS/HSM 托管，不落地明文私钥。具体多签人选和阈值是部署时的运维决策，不在合约代码范围内。
-- 实际成交额和手续费金额由调用方（授权地址）传入而非合约内置业务公式；链下（feature 6）必须用验收时冻结的成交价和费率快照构造参数，合约层独立校验 `agentGrossAmount <= escrowAmount` 与 `feeAmount <= agentGrossAmount`。
+- 实际成交额和手续费金额由调用方（授权地址）传入而非合约内置业务公式；链下必须用验收时冻结的成交价和费率快照构造参数，合约独立校验 `agentGrossAmount <= amount - releasedAmount` 与 `feeAmount <= agentGrossAmount`。最终关闭或退款只处理剩余余额。
 - 独立第三方审计是上线前置条件，本 feature 的 tasks 只覆盖内部测试，审计流程作为 PRD §13 上线验收清单项，不在本 feature 的完成标准内。
 
 ## 技术决策

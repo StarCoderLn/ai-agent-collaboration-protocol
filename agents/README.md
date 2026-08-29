@@ -1,4 +1,4 @@
-# 平台自建 Agent 技术验证
+# 平台自建 Agent
 
 本目录承载平台自建、可真实执行任务的 Agent。它们用于协议联调、质量评估和演示，不改变第三方 Agent 通过框架无关协议接入平台的边界。
 
@@ -17,22 +17,24 @@
 模型，避免把模型差异错误归因给 Agent 架构。页面默认只执行用户选中的一个候选，不会
 为了凑齐三个结果自动产生三倍费用。
 
-三个步骤依次交付 `RequirementsArtifact`、`DesignArtifact` 和 `CodeArtifact`。设计预览
-的 SVG 由可信代码模板根据已验证 token 生成，模型不能直接提交可执行 SVG/HTML；Coding
-制品只展示文件和运行说明，不直接写入仓库或执行模型命令。完整契约见
+三个步骤依次交付 `RequirementsArtifact`、`DesignArtifact` 和 `CodeArtifact`。设计 Agent
+交付受约束的 `page.tsx + globals.css` 可运行原型；Coding Agent 必须继承完整原型、设计
+锚点和需求制品，再增量实现交互。平台只在无同源、无网络权限的 iframe 中编译预览，
+不会把 Agent 代码导入平台进程，也不会执行模型生成的命令。完整契约见
 [`docs/workflow-artifacts.md`](../docs/workflow-artifacts.md)。
 
 ### 核心代码阅读顺序
 
 1. `product-workflow/src/catalog.ts`：9 个 Agent ID、展示名称和真实策略映射。
-2. `product-workflow/src/domain.ts`：三类输入输出 schema、可信字段补齐和安全 SVG 渲染。
+2. `product-workflow/src/domain.ts`：三类输入输出 schema、可信字段补齐和原型安全约束。
 3. `product-workflow/src/agents/prd/`：三个 PRD Agent 的独立核心实现。
 4. `product-workflow/src/agents/design/`：三个设计 Agent 的独立核心实现。
 5. `product-workflow/src/agents/coding/`：三个 Coding Agent 的独立核心实现。
 6. `product-workflow/src/executors.ts`：只按九个稳定 Agent ID 路由，不包含模型策略分支。
 7. `product-workflow/src/model-client.ts`：DeepSeek JSON/TSX 客户端与代码安全校验。
-8. `product-workflow/src/api.ts`：协议验签、幂等、输入校验、超时和执行路由。
-9. `product-workflow/src/index.ts`：配置、执行器、API 与 HTTP 服务的组合根。
+8. `product-workflow/src/formal-dispatch.ts`：正式接单、进度、结果和返工回调。
+9. `product-workflow/src/api.ts`：协议验签、幂等、输入校验、超时和执行路由。
+10. `product-workflow/src/index.ts`：配置、执行器、API 与 HTTP 服务的组合根。
 
 每个 Agent 的展示名、实现方式和核心文件完整对应表见
 [`product-workflow/README.md`](product-workflow/README.md)。
@@ -49,10 +51,11 @@ set +a
 pnpm --filter @aicp/product-workflow-agents dev
 ```
 
-服务默认监听 `127.0.0.1:9202`。再启动 Web 后访问
-`http://127.0.0.1:3001/tasks/experience`。如果希望使用独立凭据，按
-`product-workflow/.env.example` 配置 `WORKFLOW_AGENT_SECRET`，并在 Web 服务端使用相同
-值。所有密钥都只能位于服务端环境变量，变量名不得添加 `NEXT_PUBLIC_`。
+服务默认监听 `127.0.0.1:9202`。完整体验应使用仓库根目录的 `scripts/local-mvp.mjs`
+启动平台、注册 9 个 Agent，再从任务发布页创建和托管真实任务；任务详情会展示正式
+节点、候选、分配、执行与制品。手动单独启动时按 `product-workflow/.env.example` 配置
+`WORKFLOW_AGENT_SECRET`，并确保分发引擎注册信息使用同一服务地址和凭据。所有密钥都
+只能位于服务端环境变量，变量名不得添加 `NEXT_PUBLIC_`。
 
 ## 论文调研报告 Agent 能力说明
 
@@ -136,7 +139,10 @@ DeepSeek 模式已在 2026-08-22 通过 500 字、3 个来源的真实页面闭�
 
 核心数据流是：`签名请求 → 协议校验 → 幂等检查 → Mastra 规划一次检索 → OpenAlex 返回并冻结证据 → 无工具 Mastra Agent 生成草稿 → 引用白名单校验 → 返回报告`。
 
-当前是 v0.1 技术验证，不是生产部署：请求同步等待模型完成，nonce 与幂等结果只保存在内存中，进程重启后丢失。等 `9.dispatch-and-acceptance`～`11.execution-tracking-and-delivery` 的任务与回调 payload 冻结后，再接入持久任务状态、异步进度和结果回调。
+当前是 v0.1 技术验证，不是生产部署：请求同步等待模型完成，nonce 与幂等结果只保存在
+内存中，进程重启后丢失。平台的正式派发、节点进度和结果回调契约已经冻结；若要把论文
+Agent 升级为正式市场 Agent，应像 `product-workflow` 一样实现该契约并接入持久任务状态，
+不能继续复用 Agent Lab 的同步代理作为生产入口。
 
 ## 本地运行
 

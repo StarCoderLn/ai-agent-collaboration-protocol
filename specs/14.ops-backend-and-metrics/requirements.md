@@ -15,6 +15,7 @@
 | ---------- | ---- | -------- |
 | 2026-08-20 | v1   | 初始需求 |
 | 2026-08-20 | v2   | 补记 PRD §14 P1-3（服务等级/告警阈值/备份恢复/容量目标），此前切分时遗漏未被任何 feature 承接 |
+| 2026-08-30 | v3   | 明确复用 `platform_actor_roles`，避免与已上线的审核、仲裁角色边界重复建模 |
 
 ## 用户故事
 
@@ -24,7 +25,7 @@
 
 ## 功能需求
 
-1. [F-001] 角色权限体系：区分任务发布者、Agent 提供者、仲裁员/运营、平台管理员等角色，后台查询和操作受角色权限控制。
+1. [F-001] 角色权限体系：钱包会话负责识别任务发布者和 Agent 提供者；后台角色复用现有 `platform_actor_roles`，在其上集中映射仲裁员、审核员、运营和平台管理员的权限点。后台查询和操作必须由服务端权限守卫控制，不得信任客户端角色声明。
 2. [F-002] 任务查询：运营可查询全量任务及其状态，支持按状态、时间、异常类型筛选。
 3. [F-003] 派发失败查询：可查询派发失败原因和重试次数（复用 [[9.dispatch-and-acceptance]] 的 `dispatch_attempts`）。
 4. [F-004] 超时处理：可查询并处理超时任务（复用 [[11.execution-tracking-and-delivery]] 的超时状态）。
@@ -50,7 +51,9 @@
 ## 依赖
 
 - [[2.agent-registration]]：复用共享 `audit_logs` 表。
-- [[3.agent-health-lifecycle]]：Agent 审核操作已在该 feature 实现 API，本 feature 只补充统一的运营后台入口整合。
+- [[3.agent-health-lifecycle]]、[[13.dispute-and-arbitration]]：复用已经承载审核员和仲裁员的
+  `platform_actor_roles`，本 feature 增加统一权限点映射和运营后台入口，不替换现有服务端
+  角色校验边界。
 - [[6.escrow-sync-and-wallet]]、[[9.dispatch-and-acceptance]]、[[11.execution-tracking-and-delivery]]、[[13.dispute-and-arbitration]]：作为运营查询与指标计算的数据来源。
 
 ## 开放问题

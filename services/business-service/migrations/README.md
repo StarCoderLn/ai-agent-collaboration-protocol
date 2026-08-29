@@ -51,7 +51,7 @@ migrate -path services/business-service/migrations \
 - `0013_agent_health_probe_schedule`：健康检查的持久化调度时间与 worker 租约。
 - `0014_agent_reviewer_role`：在统一平台角色表中增加 Agent 审核员角色。
 - `0015_product_workflow_categories`：PRD、产品界面设计、软件开发三类稳定工作流分类。
-- `0016_native_eth_money_contract`：统一新任务、平台费率和内置工作流 Agent 的原生 ETH/wei 契约。
+- `0016_native_eth_money_contract`：历史迁移；曾统一原生 ETH/wei 契约。不得删除或改写，当前新业务金额语义已由 `0024` 迁移为 USDC。
 - `0017_execution_failure_state`：记录 Agent 脱敏失败回调，并把任务转入可争议、资金仍托管的失败状态。
 - `0018_execution_attention_state`：记录执行中的补充信息请求与预计完成时间。
 - `0019_scoring_snapshot_evidence`：固化每个评分快照实际使用的评分、任务、分配与仲裁事实 ID。
@@ -59,3 +59,8 @@ migrate -path services/business-service/migrations \
 - `0021_agent_sandbox_admission`：版本化沙箱模板、三次调用轮次、技术指标与清单判定留痕。
 - `0022_agent_payout_wallet`：将 Agent 所有者钱包与结算收款钱包拆分；旧数据保持原收款地址。
 - `0023_expand_platform_tags`：增加开发、内容、设计与 Web3 常用推荐标签；自定义标签无需入表即可精确匹配。
+- `0024_usdc_only_money_contract`：将任务、报价、费率与托管统一为 6 位精度 USDC，并拒绝静默重解释历史 ETH 金额。
+- `0025_execution_retry_transition`：允许执行失败任务取消旧分配并在保留托管的前提下重新匹配。
+- `0026_formal_multi_agent_workflows`：正式任务工作流、节点依赖、节点级候选/分配、
+  执行/制品/验收证据与 USDC 分阶段释放账本；旧任务继续使用 NULL 节点的单 Agent 路径。
+- `0027_workflow_milestone_settlement`：为工作流节点增加幂等里程碑结算意图、释放金额与最终余额退款记录。

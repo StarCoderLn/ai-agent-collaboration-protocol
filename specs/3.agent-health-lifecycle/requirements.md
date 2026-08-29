@@ -19,6 +19,7 @@
 | 2026-08-20 | v4   | 新增 F-008 自动恢复机制；确定阈值/间隔/恢复所需成功次数的 MVP 默认值（用户已拍板，不再是纯开放问题） |
 | 2026-08-20 | v5   | F-006 从「试运行 Agent 风险上限」改为「受控上线期风险上限」，修正与 [[15.agent-sandbox-admission]] 沙箱准入设计的矛盾（试运行/待审核状态不进入候选列表，无需风险上限；风险上限应作用于刚转正、评分样本尚不足的 Agent） |
 | 2026-08-23 | v6   | 对齐 PLAN：Feature 15 延后期间由授权审核员填写理由并直接作出通过/驳回决定，未来再由沙箱判定替换通过触发源 |
+| 2026-08-30 | v7   | 同步 Feature 15 已完成 T-001/T-002、剩余判定入口等待 Feature 14 RBAC 的当前状态 |
 
 ## 用户故事
 
@@ -58,7 +59,7 @@
 
 - [[1.agent-protocol-contract]]：健康检查请求复用其签名与错误码。
 - [[2.agent-registration]]：状态机基于已注册的 Agent 档案运作。
-- `[v6 更新]` [[15.agent-sandbox-admission]]：已延后至 P5；启用后由 15 调用本 feature 暴露的 `TransitionAgentStatus`，本 feature 不反向读取 15 的内部表。
+- `[v7 更新]` [[15.agent-sandbox-admission]]：属于 P5 且已完成 T-001/T-002；后续清单判定完成后由 15 调用本 feature 暴露的 `TransitionAgentStatus`，本 feature 不反向读取 15 的内部表。15 的剩余任务等待 [[14.ops-backend-and-metrics]] T-001 权限边界，不影响本 feature 已完成状态。
 - `[v5 新增]` [[12.scoring-system]]：**概念依赖，非代码依赖**——受控上线期的判定标准引用其 `prior_weight` 定义，但实际查询代码实现并入 [[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()`，本 feature 不直接调用 12（避免和 12 的开发进度产生阻塞关系，见该 feature 设计模块 4 说明）。
 
 ## 开放问题

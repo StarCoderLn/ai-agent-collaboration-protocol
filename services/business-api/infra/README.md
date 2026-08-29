@@ -10,6 +10,12 @@ AWS Lambda + Function URL。方案选型见 `specs/2.agent-registration/tasks.md
 管理的 secret 中，不进入定时事件正文。仓储优先选择从未计算或最久未更新的 Agent，
 因此超过单批 100 个时会分轮覆盖，而不是永远只刷新 ID 最小的一批。
 
+> **生产资金执行阻塞项：** 当前仓库只实现非生产 `local-unlocked` Escrow operator。
+> `createProductionEscrowExecutionDeps()` 在生产环境会主动拒绝该模式，CDK 也没有注入
+> operator 私钥。上线前必须实现 KMS/HSM `EscrowOperatorClient`、授予最小签名权限并在
+> 目标网络验证 raw transaction、重试和轮换；Agent 凭证加密使用的 KMS key 不能代替
+> 链上资金签名 key。
+
 ## 前置条件
 
 - Node.js 22+、pnpm（与项目其余部分一致）。
@@ -19,7 +25,7 @@ AWS Lambda + Function URL。方案选型见 `specs/2.agent-registration/tasks.md
 
 ## 必需的运行时配置（环境变量）
 
-以下 7 个值部署前必须在 shell 里提供，缺失会在 `cdk synth`/`cdk deploy` 阶段直接
+以下配置部署前必须在 shell 里提供，缺失会在 `cdk synth`/`cdk deploy` 阶段直接
 报错（不会部署出一个环境变量为空、运行时才报错的 Lambda，见
 `lib/business-api-stack.ts` 的 `requireEnv`）：
 
@@ -32,6 +38,16 @@ AWS Lambda + Function URL。方案选型见 `specs/2.agent-registration/tasks.md
 | `SIWE_EXPECTED_CHAIN_ID` | SIWE 消息校验的链 ID |
 | `DISPATCH_ENGINE_URL` | Go 分发引擎的内部服务地址，只供 Lambda 服务端调用 |
 | `DISPATCH_INTERNAL_TOKEN_SECRET_ARN` | 保存内部高熵 token 原文的 AWS Secrets Manager secret ARN；CDK 通过动态引用把它注入 Lambda 和 EventBridge Connection，真实 token 不进入 synth 模板 |
+| `ETHEREUM_RPC_URL` | 目标 EVM 网络的服务端 RPC 地址 |
+| `ESCROW_CHAIN_ID` | 与 RPC、Escrow 和 USDC 地址共同核对的链 ID |
+| `ESCROW_CONTRACT_ADDRESS` | 当前网络部署的 USDC Escrow 地址 |
+| `ESCROW_PAYMENT_TOKEN_ADDRESS` | 当前网络核对过的官方 USDC 地址 |
+| `ESCROW_START_BLOCK` | Escrow 部署区块；同步器从该区块开始扫描 |
+| `ESCROW_REQUIRED_CONFIRMATIONS` | 生产环境明确选择的确认阈值 |
+
+YD 不属于资金结算配置：Business API 内置了经 Sepolia RPC 核验的公开部署元数据，
+只把它作为余额目录返回。将来 YD 重新部署时，才需要同时提供 `YD_TOKEN_CHAIN_ID`、
+`YD_TOKEN_ADDRESS` 和 `YD_TOKEN_DECIMALS` 覆盖默认值。
 
 该 secret 的 **SecretString 必须就是 token 原文**（不是 JSON，也不要包含 `Bearer ` 前缀），
 并与分发引擎配置使用同一个值。`DISPATCH_INTERNAL_TOKEN` 仍是本地运行 Business API 时的
