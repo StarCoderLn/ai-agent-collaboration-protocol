@@ -3,8 +3,8 @@
  *
  * 框架无关（不依赖 Next.js/AWS Lambda 具体类型），与 T-002 `EnvelopeEncryptor` 同一模式：
  * 依赖通过构造参数注入，供任意 HTTP 入口（Next.js Route Handler / Lambda handler）调用，
- * 也便于单元测试不依赖真实数据库、KMS 或幂等存储；目标 Next.js + AWS Lambda
- * 路由尚未装配，本模块保持可移植。
+ * 也便于单元测试不依赖真实数据库、KMS 或幂等存储。正式 Next.js Route Handler 已装配
+ * 本模块；框架无关边界仍然保留，避免领域规则泄漏进 HTTP 与 Lambda 运行时。
  *
  * 处理顺序（design.md「模块 3」+「接口契约」+ 跨 feature 依赖 1.T-006）：
  * 1. 服务端字段校验（不信任前端）——校验失败直接返回字段级错误，不触碰幂等存储。

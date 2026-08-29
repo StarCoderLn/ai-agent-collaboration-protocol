@@ -5,13 +5,13 @@ import { Input } from "@web/ui/components/input";
 import { Label } from "@web/ui/components/label";
 import { Textarea } from "@web/ui/components/textarea";
 import {
-	ArrowRight,
 	CalendarClock,
 	Check,
 	CheckCircle2,
 	ChevronDown,
 	Loader2,
 	LockKeyhole,
+	Send,
 	SlidersHorizontal,
 	Sparkles,
 	type Tags,
@@ -40,8 +40,10 @@ import type { MessageId } from "@/lib/i18n/messages";
 import { localDateToDeadlineIso } from "@/lib/platform/deadline";
 import {
 	formatMinorAmount,
+	MAX_TASK_BUDGET_MINOR,
+	MIN_USDC_BUSINESS_AMOUNT_MINOR,
 	MVP_CURRENCY,
-	parseEthToWei,
+	parseUsdcToMinor,
 } from "@/lib/platform/money";
 
 type SubmitState =
@@ -85,12 +87,6 @@ export default function NewTaskForm() {
 	const [budget, setBudget] = useState("");
 	const [deadline, setDeadline] = useState("");
 	const [visibility, setVisibility] = useState<"public" | "private">("public");
-	const [assignmentMode, setAssignmentMode] = useState<"manual" | "automatic">(
-		"manual",
-	);
-	const [acceptanceMode, setAcceptanceMode] = useState<"manual" | "automatic">(
-		"manual",
-	);
 	const [advancedOpen, setAdvancedOpen] = useState(false);
 	const [state, setState] = useState<SubmitState>({ kind: "idle" });
 	const [validationError, setValidationError] = useState<Readonly<{
@@ -102,7 +98,7 @@ export default function NewTaskForm() {
 	const updateKey = useRef(crypto.randomUUID());
 	const submitKey = useRef(crypto.randomUUID());
 
-	const budgetMinor = useMemo(() => parseEthToWei(budget), [budget]);
+	const budgetMinor = useMemo(() => parseUsdcToMinor(budget), [budget]);
 	const selectedCategory =
 		taxonomy.kind === "loaded"
 			? findCapabilityCategory(taxonomy.categories, categoryId)
@@ -151,11 +147,7 @@ export default function NewTaskForm() {
 			countCharacters(normalizedTitle) < 6 ||
 			countCharacters(normalizedTitle) > 72
 		) {
-			rejectSubmit(
-				submittedForm,
-				"title",
-				t("请输入 6–72 个字符的任务标题"),
-			);
+			rejectSubmit(submittedForm, "title", t("请输入 6–72 个字符的任务标题"));
 			return;
 		}
 		// 用户只负责描述真实需求，不能为了满足服务端最小长度而由前端虚构正文。
@@ -180,11 +172,15 @@ export default function NewTaskForm() {
 			rejectSubmit(submittedForm, "tags", t("请至少选择一个技能标签"));
 			return;
 		}
-		if (budgetMinor === null) {
+		if (
+			budgetMinor === null ||
+			BigInt(budgetMinor) < MIN_USDC_BUSINESS_AMOUNT_MINOR ||
+			BigInt(budgetMinor) > MAX_TASK_BUDGET_MINOR
+		) {
 			rejectSubmit(
 				submittedForm,
 				"budget",
-				t("预算必须是大于 0、最多 18 位小数的 ETH 金额"),
+				t("任务预算须在 1–100,000 USDC 之间，最多保留 6 位小数"),
 			);
 			return;
 		}
@@ -209,23 +205,17 @@ export default function NewTaskForm() {
 			requiredCapability: structuredFields.requiredCapability,
 			attachments: [],
 			visibility,
-			assignmentMode:
-				assignmentMode === "manual"
-					? { mode: "manual" }
-					: {
-							mode: "automatic",
-							priceCapMinor: budgetMinor,
-							rankingBasis: "active-ranking-rule",
-							fallbackOnFail: "manual",
-						},
-			acceptanceMode:
-				acceptanceMode === "manual"
-					? { mode: "manual" }
-					: {
-							mode: "automatic",
-							acceptorId: "platform-default-acceptor",
-							ruleVersion: "acceptance-v1",
-						},
+			// 正式工作流统一由平台自动选择每个阶段的 Agent；没有合格候选时服务端暂停，
+			// 而不是把匹配算法和恢复策略暴露成发布表单里的额外决策。
+			assignmentMode: {
+				mode: "automatic",
+				priceCapMinor: budgetMinor,
+				rankingBasis: "active-ranking-rule",
+				fallbackOnFail: "manual",
+			},
+			// 中间节点由工作流契约自动验收，最终节点仍由发布者人工验收；任务级模式因此
+			// 保留 manual，避免终端 Coding 产物被旧的通用自动验收语义直接结算。
+			acceptanceMode: { mode: "manual" },
 		};
 
 		let currentDraftId = draftId;
@@ -282,6 +272,21 @@ export default function NewTaskForm() {
 						<p className="mt-2 text-muted-foreground">
 							{t("告诉我们你想完成什么，平台会为你推荐合适的 Agent。")}
 						</p>
+						<ol className="mt-5 flex flex-wrap items-center gap-2 text-xs">
+							{[t("填写需求"), t("托管预算"), t("选择 Agent")].map(
+								(step, index) => (
+									<li
+										key={step}
+										className="flex items-center gap-2 rounded-full border border-primary/20 bg-card/70 px-3 py-2 text-foreground backdrop-blur"
+									>
+										<span className="font-mono text-secondary">
+											0{index + 1}
+										</span>
+										{step}
+									</li>
+								),
+							)}
+						</ol>
 					</div>
 				</div>
 			</section>
@@ -293,7 +298,9 @@ export default function NewTaskForm() {
 					<FormSection
 						number="01"
 						title={t("描述你的需求")}
-						description={t("填写标题、详细需求、分类、标签、预算和截止时间即可开始")}
+						description={t(
+							"填写标题、详细需求、分类、标签、预算和截止时间即可开始",
+						)}
 						icon={Sparkles}
 					>
 						<Field
@@ -380,7 +387,9 @@ export default function NewTaskForm() {
 							<Field
 								label={t("固定预算")}
 								htmlFor="task-budget"
-								hint={t("预算将通过托管保护，验收完成后才支付给 Agent。")}
+								hint={t(
+									"这是你愿意托管的最高金额，已包含平台服务费，不会额外加收。",
+								)}
 								error={
 									validationError?.field === "budget"
 										? validationError.message
@@ -391,7 +400,7 @@ export default function NewTaskForm() {
 									<Input
 										id="task-budget"
 										inputMode="decimal"
-										placeholder="0.01"
+										placeholder={t("例如：50")}
 										value={budget}
 										aria-invalid={validationError?.field === "budget"}
 										aria-describedby={
@@ -406,7 +415,7 @@ export default function NewTaskForm() {
 										className="pr-16"
 									/>
 									<span className="absolute top-3 right-3 text-muted-foreground text-sm">
-										ETH
+										USDC
 									</span>
 								</div>
 							</Field>
@@ -442,58 +451,16 @@ export default function NewTaskForm() {
 						</div>
 					</FormSection>
 
-					<DisclosureSection
-						icon={SlidersHorizontal}
-						title={t("高级设置")}
-						description={t("默认采用人工选择、人工验收和公开任务")}
+						<DisclosureSection
+							icon={SlidersHorizontal}
+							title={t("高级设置")}
+							description={t("平台自动执行完整流程，最终交付由你验收")}
 						open={advancedOpen}
 						onToggle={() => setAdvancedOpen((current) => !current)}
 						openLabel={t("收起高级设置")}
 						closedLabel={t("展开高级设置")}
 					>
-						<Choice
-							label={t("候选选择")}
-							value={assignmentMode}
-							onChange={(value) => {
-								setAssignmentMode(value);
-								markDirty();
-							}}
-							options={[
-								[
-									"manual",
-									t("我来选择"),
-									t("查看候选的质量、成本和时长后确认"),
-								],
-								[
-									"automatic",
-									t("平台自动分配"),
-									t(
-										"平台会在预算内选择最合适的候选；没有合适结果时再由你选择。",
-									),
-								],
-							]}
-						/>
-						<Choice
-							label={t("结果验收")}
-							value={acceptanceMode}
-							onChange={(value) => {
-								setAcceptanceMode(value);
-								markDirty();
-							}}
-							options={[
-								[
-									"manual",
-									t("人工验收"),
-									t("确认交付后才进入结算，适合大多数任务"),
-								],
-								[
-									"automatic",
-									t("规则自动验收"),
-									t("仅适用于已经配置机器验收规则的任务"),
-								],
-							]}
-						/>
-						<Choice
+							<Choice
 							label={t("可见范围")}
 							value={visibility}
 							onChange={(value) => {
@@ -564,31 +531,24 @@ export default function NewTaskForm() {
 								strong
 							/>
 							<PreviewRow
-								label={t("平台手续费")}
-								value={t("发布时自动计算，并在付款前展示")}
+								label={t("平台服务费")}
+								value={t("成功结算时从 Agent 收入中扣除")}
 							/>
-							<PreviewRow
-								label={t("分配方式")}
-								value={
-									assignmentMode === "manual"
-										? t("手动选择候选")
-										: t("平台自动分配")
-								}
-							/>
-							<PreviewRow
-								label={t("验收方式")}
-								value={
-									acceptanceMode === "manual"
-										? t("发布者人工验收")
-										: t("规则自动验收")
-								}
-							/>
+							<PreviewRow label={t("预算外平台费用")} value="0 USDC" />
+								<PreviewRow
+									label={t("分配方式")}
+									value={t("平台自动分配")}
+								/>
+								<PreviewRow
+									label={t("验收方式")}
+									value={t("中间阶段自动推进，最终交付由你验收")}
+								/>
 						</dl>
 						<div className="mt-5 flex gap-2 rounded-lg border border-tertiary/20 bg-tertiary-container p-3">
 							<LockKeyhole className="mt-0.5 size-4 shrink-0 text-tertiary" />
 							<p className="text-tertiary-container-foreground text-xs leading-5">
 								{t(
-									"发布需求不会立即付款。确认预算后，平台才会开始匹配 Agent。",
+									"发布需求后，在任务详情页确认 USDC 托管。资金进入托管合约并完成链上确认后才开始匹配，验收前不会支付给 Agent。",
 								)}
 							</p>
 						</div>
@@ -606,14 +566,13 @@ export default function NewTaskForm() {
 								{state.kind === "saving" || state.kind === "submitting" ? (
 									<Loader2 className="size-4 animate-spin" />
 								) : (
-									<CheckCircle2 className="size-4" />
+									<Send className="size-4" />
 								)}
 								{state.kind === "saving"
 									? t("正在准备任务")
 									: state.kind === "submitting"
 										? t("正在发布需求")
-										: t("发布需求")}
-								<ArrowRight className="size-4" />
+										: t("发布并继续托管")}
 							</Button>
 						) : (
 							<Button

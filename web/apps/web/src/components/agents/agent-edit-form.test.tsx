@@ -17,7 +17,7 @@ const baseAgent: Agent = {
 	capabilityDesc: "中英互译",
 	tags: ["翻译"],
 	pricingType: "per_task",
-	priceAmount: "1000",
+	priceAmount: "1000000",
 	priceCurrency: "USDC",
 	serviceEndpoint: "https://agent.example.com/run",
 	email: "provider@example.com",
@@ -42,6 +42,31 @@ describe("AgentEditForm", () => {
 		const walletInput = screen.getByLabelText("钱包地址");
 		expect(walletInput).toBeDisabled();
 		expect(walletInput).toHaveValue(baseAgent.providerWalletAddress);
+		expect(screen.getByLabelText("单次服务报价（USDC）")).toHaveValue("1");
+		expect(screen.getByLabelText("币种")).toBeDisabled();
+	});
+
+	it("以可读 USDC 编辑报价，并在 PATCH 时无损转换为最小单位", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			new Response(JSON.stringify({ ...baseAgent, priceAmount: "25500000" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+		render(<AgentEditForm agent={baseAgent} onSaved={vi.fn()} />);
+
+		fireEvent.change(screen.getByLabelText("单次服务报价（USDC）"), {
+			target: { value: "25.5" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+
+		await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+		expect(fetch).toHaveBeenCalledWith(
+			"https://business-api.test/api/agents/agent-123",
+			expect.objectContaining({
+				body: JSON.stringify({ priceAmount: "25500000" }),
+			}),
+		);
 	});
 
 	it("提交非法邮箱格式时展示字段级错误，且不发起请求", async () => {

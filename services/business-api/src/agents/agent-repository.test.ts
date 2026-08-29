@@ -15,7 +15,7 @@ function createInput(): CreateAgentInput {
     capabilityDesc: "does things",
     tags: ["agent"],
     pricingType: "fixed",
-    price: { amount: "1000", currency: "USDC" },
+    price: { amount: "1000000", currency: "USDC" },
     walletAddress: OWNER_WALLET,
     payoutWalletAddress: PAYOUT_WALLET,
     serviceEndpoint: "https://agent.example.com/v1/agents/demo",

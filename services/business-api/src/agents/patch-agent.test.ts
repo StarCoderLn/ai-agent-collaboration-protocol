@@ -149,10 +149,24 @@ describe("patchAgent", () => {
     await patchAgent(deps, {
       agentId: agent.id,
       actorId: agent.providerWalletAddress,
-      rawBody: { priceAmount: "5000" },
-    });
+        rawBody: { priceAmount: "5000000" },
+      });
 
-    expect(applyPatch).toHaveBeenCalledWith(agent.id, { priceAmount: 5000n });
+    expect(applyPatch).toHaveBeenCalledWith(agent.id, { priceAmount: 5000000n });
+  });
+
+  it("rejects a quote below one USDC", async () => {
+    const agent = makeAgent();
+    const { deps, applyPatch } = makeDeps(agent);
+
+    await expect(
+      patchAgent(deps, {
+        agentId: agent.id,
+        actorId: agent.providerWalletAddress,
+        rawBody: { priceAmount: "999999" },
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(applyPatch).not.toHaveBeenCalled();
   });
 
   it("rejects a priceAmount string beyond the PostgreSQL BIGINT range (would otherwise 500 at the DB layer)", async () => {

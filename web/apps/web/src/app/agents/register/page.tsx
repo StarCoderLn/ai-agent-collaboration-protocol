@@ -19,7 +19,7 @@ export default function AgentRegistrationPage() {
 					</h1>
 					<p className="mt-2 max-w-2xl text-muted-foreground leading-7">
 						{t(
-							"填写服务地址、访问密钥、能力与报价，提交后平台会完成服务检查和上架审核。",
+							"填写服务地址、访问密钥、能力与报价，提交后平台会验证服务和接入要求。",
 						)}
 					</p>
 				</header>

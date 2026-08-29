@@ -6,17 +6,17 @@
  *   （design.md 模块 2：「接口层面直接不存在'读明文'这个操作」）。本模块依赖
  *   `crypto/envelope-encryption.ts` 的 `EnvelopeEncryptor`（无 decrypt 导出，见该文件契约注释），
  *   自身也不新增任何解密能力。
- * - 凭证覆盖写与审计日志写入委托给 `AgentCredentialStore.replace()` 的实现方保证原子提交
- *   （PostgreSQL 适配器尚未实现，接口层面用同一个 `replace()` 调用把
- *   「覆盖密文 + 递增 key_version」表达为单一操作，方便具体实现用一个事务包住两条写入）。
+ * - 凭证覆盖写与审计日志写入委托给 `AgentCredentialStore.replace()` 的实现方保证原子提交；
+ *   PostgreSQL 适配器在同一事务中完成「覆盖密文 + 递增 key_version + 审计」，调用方
+ *   不需要也不允许拆开这些写入。
  * - 响应只回显 `key_version` 与 `configured: true`（design.md「接口契约」），不回显任何
  *   密钥相关字段；审计摘要同样只记录 `configured`/`keyVersion`，不写入密文或密文片段
  *   （AGENTS.md 第 9 条 / security.md 规则 12-13：显式排除而非事后脱敏）。
  *
  * 与 `patch-agent.ts`（T-004）一致地与具体 HTTP 框架解耦（不导入 Next.js 类型），只依赖
- * `agent.ts` 中已定义的 `AgentRepository`/`AuditLogWriter` 仓储接口——业务服务的
- * 项目已选定 Next.js App Router Route Handlers + AWS Lambda；真实路由尚未装配，
- * HTTP 层适配留给后续 Route Handler，不能将实现缺口解释为承载技术栈未定。
+ * `agent.ts` 中已定义的 `AgentRepository`/`AuditLogWriter` 仓储接口。正式
+ * `PUT /api/agents/:id/credentials` Route Handler 只负责会话解析、请求转换和错误映射，
+ * 不复制本模块的凭证与审计规则。
  */
 
 import { z } from "zod";

@@ -19,10 +19,11 @@ import {
   MAX_MATCHING_TAG_LENGTH,
   normalizeMatchingTags,
 } from "../platform/matching-tags";
+import { MVP_CURRENCY } from "../platform/mvp-money";
 
-// category_id 的存在性校验依赖 [[4.task-creation-and-preview]] 的 categories 表，
-// 该 feature 尚未建表（见 specs/PLAN.md 排期），本 task 范围内只能做 UUID 结构校验；
-// 存在性校验待 4.T-001 交付后由后续 task 补上（不属于本 task 的回归缺口）。
+// 请求解析层只验证 UUID 结构，不把前端下拉选项当成可信的“分类存在”证据。分类表已经
+// 由 Feature 4 提供；存在性应在创建事务的数据库边界校验，不能在这里额外发起查询并
+// 把纯解析函数变成隐式 I/O。当前注册仓储尚未建立该外键，这是独立的既有校验缺口。
 const categoryIdSchema = z.string().uuid({ message: "categoryId 必须是合法的 UUID" });
 
 function ethereumWalletSchema(field: "walletAddress" | "payoutWalletAddress") {
@@ -41,7 +42,9 @@ const serviceEndpointSchema = z
 // 传字符串形式的非负整数，服务端不做隐式数字转换。
 const priceSchema = z.object({
   amount: z.string().refine(isValidPriceAmount, { message: PRICE_AMOUNT_INVALID_MESSAGE }),
-  currency: z.string().trim().min(1, { message: "price.currency 不能为空" }),
+  // 业务结算只有 USDC 一套；在注册边界收窄为字面量，避免其他币种报价进入目录后
+  // 永远无法与任务匹配，或在结算阶段才暴露不可执行状态。
+  currency: z.literal(MVP_CURRENCY),
 });
 
 export const createAgentInputSchema = z.object({

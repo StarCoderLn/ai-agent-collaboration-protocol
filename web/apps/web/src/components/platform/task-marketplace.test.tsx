@@ -104,4 +104,38 @@ describe("Task marketplace filters", () => {
 		expect(screen.getByText("待处理 / 争议")).toBeInTheDocument();
 		expect(screen.getByText("2")).toBeInTheDocument();
 	});
+
+	it("makes the whole task card a single accessible detail link", async () => {
+		vi.mocked(listPublicTasks).mockResolvedValue([
+			{
+				access: "public",
+				id: "e0b8258a-208e-4e22-978c-eb1aecc43506",
+				title: "开发 USDC 托管任务工作台",
+				description: "验证任务列表卡片可以从任意非交互区域进入详情页。",
+				categoryId: "40000000-0000-4000-8000-000000000023",
+				tags: ["react", "testing"],
+				budgetMinMinor: "32000000",
+				budgetMaxMinor: "32000000",
+				currency: "USDC",
+				deadline: "2026-09-04T15:59:59.999Z",
+				requiredCapability: "react, testing",
+				status: "execution_failed",
+				createdAt: "2026-08-28T07:19:29.473Z",
+			},
+		]);
+		render(<TaskMarketplace />);
+		const cardLink = await screen.findByRole("link", {
+			name: "查看任务：开发 USDC 托管任务工作台",
+		});
+		expect(cardLink).toHaveAttribute(
+			"href",
+			"/tasks/e0b8258a-208e-4e22-978c-eb1aecc43506",
+		);
+		expect(cardLink).toHaveClass("cursor-pointer");
+		expect(cardLink.querySelector("article")).not.toBeNull();
+		expect(cardLink.querySelector("a")).toBeNull();
+		expect(screen.queryByText("查看任务")).not.toBeInTheDocument();
+		expect(screen.getByText("任务周期")).toBeInTheDocument();
+		expect(screen.getByText("约 8 天")).toBeInTheDocument();
+	});
 });

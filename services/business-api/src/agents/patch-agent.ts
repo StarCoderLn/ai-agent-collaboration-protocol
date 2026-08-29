@@ -17,8 +17,8 @@
  * 本函数刻意与具体 HTTP 框架解耦（不导入 Next.js 类型），只依赖 agent.ts 中定义的
  * 仓储/审计接口。HTTP 层适配见 `../http/patch-agent-handler.ts`（沿用 T-003
  * `create-agent-handler.ts` 已确立的 Web 标准 Request/Response 模式：design.md
- * 已选定 Next.js + AWS Lambda 作为承载服务，Next.js App Router Route Handler 与
- * AWS Lambda Web Adapter 均直接支持该签名，无需等待具体脚手架目录落地）。
+ * 已选定 Next.js + AWS Lambda 作为承载服务，正式 App Router Route Handler 与
+ * AWS Lambda Web Adapter 均直接复用该签名）。
  */
 
 import { z } from "zod";
@@ -39,6 +39,7 @@ import {
   MAX_MATCHING_TAG_LENGTH,
   normalizeMatchingTags,
 } from "../platform/matching-tags";
+import { MVP_CURRENCY } from "../platform/mvp-money";
 
 /** 与 T-001 migration 的 `service_endpoint` CHECK 约束保持一致（`^https?://`）。 */
 /** 与 T-001 migration 的 `email` CHECK 约束保持一致（基础结构校验，不做真实性校验）。 */
@@ -68,7 +69,7 @@ const patchAgentBodySchema = z
       .string()
       .refine(isValidPriceAmount, PRICE_AMOUNT_INVALID_MESSAGE)
       .optional(),
-    priceCurrency: z.string().trim().min(1, "币种不能为空").optional(),
+    priceCurrency: z.literal(MVP_CURRENCY).optional(),
     serviceEndpoint: z
       .string()
       .url("服务地址必须是合法 URL")

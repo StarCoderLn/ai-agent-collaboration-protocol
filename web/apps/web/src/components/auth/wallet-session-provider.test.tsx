@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useWalletSession, WalletSessionProvider } from "./wallet-session-provider";
+import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
 
 const mocks = vi.hoisted(() => ({
 	connection: {
@@ -53,6 +54,16 @@ describe("WalletSessionProvider", () => {
 
 		expect(await screen.findByText("disconnected")).toBeInTheDocument();
 		expect(mocks.logoutWalletSession).toHaveBeenCalledTimes(1);
+	});
+
+	it("受保护接口报告会话过期后立即撤下已认证钱包状态", async () => {
+		render(<WalletSessionProvider><SessionProbe /></WalletSessionProvider>);
+		expect(await screen.findByText("connected")).toBeInTheDocument();
+
+		notifyAuthSessionExpired();
+
+		expect(await screen.findByText("error")).toBeInTheDocument();
+		expect(screen.getByText("登录已过期，请重新签名登录")).toBeInTheDocument();
 	});
 });
 

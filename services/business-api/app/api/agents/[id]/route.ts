@@ -11,9 +11,9 @@
  * `DATABASE_URL`/`SIWE_EXPECTED_*` 等运行时环境变量，AWS Lambda 场景下这些变量
  * 只在运行时注入，`next build` 收集路由配置阶段不一定存在。
  */
-import { createGetAgentHttpHandler, type GetAgentRouteContext } from "../../../../src/http/get-agent-handler";
+import { createGetAgentHttpHandler } from "../../../../src/http/get-agent-handler";
 import { createProductionGetAgentDeps } from "../../../../src/http/get-agent-production-deps";
-import { createPatchAgentHttpHandler, type PatchAgentRouteContext } from "../../../../src/http/patch-agent-handler";
+import { createPatchAgentHttpHandler } from "../../../../src/http/patch-agent-handler";
 import { createProductionPatchAgentDeps } from "../../../../src/http/patch-agent-production-deps";
 import { createProductionResolveActorId } from "../../../../src/http/auth-production-deps";
 import { corsOriginFromSiweConfig, loadSiweConfigFromEnv } from "../../../../src/auth/siwe-config";
@@ -22,14 +22,17 @@ import { handleCorsPreflight } from "../../../../src/http/cors";
 let getHandler: ReturnType<typeof createGetAgentHttpHandler> | undefined;
 let patchHandler: ReturnType<typeof createPatchAgentHttpHandler> | undefined;
 
-export async function GET(request: Request, context: GetAgentRouteContext): Promise<Response> {
+/** Next.js 16 的动态 Route Handler 明确要求 params 为 Promise；宽松测试形状留在内部 handler。 */
+type NextAgentRouteContext = Readonly<{ params: Promise<{ id: string }> }>;
+
+export async function GET(request: Request, context: NextAgentRouteContext): Promise<Response> {
   if (!getHandler) {
     getHandler = createGetAgentHttpHandler(createProductionGetAgentDeps());
   }
   return getHandler(request, context);
 }
 
-export async function PATCH(request: Request, context: PatchAgentRouteContext): Promise<Response> {
+export async function PATCH(request: Request, context: NextAgentRouteContext): Promise<Response> {
   if (!patchHandler) {
     patchHandler = createPatchAgentHttpHandler({
       ...createProductionPatchAgentDeps(),

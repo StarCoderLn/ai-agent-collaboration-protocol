@@ -16,7 +16,7 @@ const agent = {
 	categoryName: "产品与开发 / 软件开发",
 	description: "来自正式 Agent 目录 API",
 	tags: ["TypeScript", "测试"],
-	pricing: { type: "per_task", amountMinor: "2500", currency: "USDC" },
+	pricing: { type: "fixed", amountMinor: "25000000", currency: "USDC" },
 	status: "active",
 	score: null,
 	sampleSize: 0,
@@ -91,7 +91,20 @@ describe("AgentMarketplace", () => {
 		).toBeInTheDocument();
 		expect(screen.getByText("来自正式 Agent 目录 API")).toBeInTheDocument();
 		expect(screen.getAllByText("暂无").length).toBeGreaterThanOrEqual(1);
-		expect(screen.getByText("25.00 USDC")).toBeInTheDocument();
+		expect(screen.getByText("25 USDC")).toBeInTheDocument();
+		const cardLink = screen.getByRole("link", {
+			name: "查看详情：真实目录 Coding Agent",
+		});
+		expect(cardLink).toHaveAttribute(
+			"href",
+			"/agents/83100000-0000-4000-8000-000000000001",
+		);
+		expect(cardLink).toHaveClass("cursor-pointer");
+		expect(cardLink.querySelector("article")).not.toBeNull();
+		expect(cardLink.querySelector("a")).toBeNull();
+		expect(screen.queryByText("查看详情")).not.toBeInTheDocument();
+		expect(screen.getByText("计费方式")).toBeInTheDocument();
+		expect(screen.getByText("按任务计费")).toBeInTheDocument();
 		expect(screen.getByLabelText("按能力分类筛选")).toHaveTextContent(
 			"全部分类",
 		);

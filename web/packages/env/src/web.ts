@@ -6,8 +6,8 @@ export const env = createEnv({
 		/**
 		 * business-api（2.agent-registration）的基础 URL，用于浏览器端直接调用
 		 * `PATCH /api/agents/:id`、`PUT /api/agents/:id/credentials` 等接口。
-		 * 项目已选定 Next.js Route Handlers + AWS Lambda，但真实路由尚未装配；前端按
-		 * design.md 的接口契约先行对接，路由就绪后无需改动调用方代码。
+		 * Agent、任务、工作流、钱包和争议等正式 Route Handler 共用同一个服务根地址；
+		 * 浏览器客户端不得各自拼接不同环境地址，否则跨源 Cookie 与 CORS 配置会漂移。
 		 */
 		NEXT_PUBLIC_BUSINESS_API_URL: z.string().url(),
 	},

@@ -11,7 +11,7 @@ const agent = {
 	categoryName: "代码开发",
 	description: "交付可验证的 TypeScript 代码",
 	tags: ["TypeScript"],
-	pricing: { type: "per_task", amountMinor: "2500000000000000", currency: "ETH" },
+	pricing: { type: "per_task", amountMinor: "2500000000000000", currency: "USDC" },
 	status: "active",
 	score: 4.1,
 	sampleSize: 1,

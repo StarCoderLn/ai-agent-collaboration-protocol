@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { BUSINESS_API_BASE_URL } from "./base-url";
+import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
 
 /**
  * business-api（2.agent-registration）Agent 档案接口的前端客户端。
@@ -113,12 +114,7 @@ export async function fetchAgent(agentId: string): Promise<Agent> {
 		// 被发送，所有请求都会得到 401（codex review T-007 P1 修复）。
 		credentials: "include",
 	});
-	if (!response.ok) {
-		throw new AgentApiRequestError(
-			response.status,
-			await parseErrorBody(response),
-		);
-	}
+	await assertAuthenticatedAgentResponse(response);
 	return parseAgentBody(response);
 }
 
@@ -132,12 +128,7 @@ export async function patchAgent(
 		body: JSON.stringify(patch),
 		credentials: "include",
 	});
-	if (!response.ok) {
-		throw new AgentApiRequestError(
-			response.status,
-			await parseErrorBody(response),
-		);
-	}
+	await assertAuthenticatedAgentResponse(response);
 	return parseAgentBody(response);
 }
 
@@ -163,12 +154,7 @@ export async function replaceAgentCredentials(
 			credentials: "include",
 		},
 	);
-	if (!response.ok) {
-		throw new AgentApiRequestError(
-			response.status,
-			await parseErrorBody(response),
-		);
-	}
+	await assertAuthenticatedAgentResponse(response);
 	const raw: unknown = await response.json();
 	const parsed = replaceCredentialsResultSchema.safeParse(raw);
 	if (!parsed.success) {
@@ -179,4 +165,15 @@ export async function replaceAgentCredentials(
 		});
 	}
 	return parsed.data;
+}
+
+/** Agent 私有接口统一处理认证失效，避免读取、编辑和换密钥三条路径产生不同表现。 */
+async function assertAuthenticatedAgentResponse(response: Response): Promise<void> {
+	if (response.status === 401) notifyAuthSessionExpired();
+	if (!response.ok) {
+		throw new AgentApiRequestError(
+			response.status,
+			await parseErrorBody(response),
+		);
+	}
 }

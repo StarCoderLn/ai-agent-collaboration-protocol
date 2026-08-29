@@ -41,7 +41,7 @@ export interface AgentApiErrorResponse {
 }
 
 /**
- * Agent 档案 API 的业务错误。调用方（未来的 HTTP handler）捕获后经
+ * Agent 档案 API 的业务错误。各正式 HTTP Handler 捕获后经
  * `toResponse()` 转换为对外 JSON 响应，不得在多处各自拼装错误结构
  * （AGENTS.md 第 9 条：单一权威位置）。
  */

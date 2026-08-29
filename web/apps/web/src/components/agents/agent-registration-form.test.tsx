@@ -13,13 +13,24 @@ const CATEGORY_GROUP_ID = "40000000-0000-4000-8000-000000000001";
 const CONNECTED_WALLET = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
 const PAYOUT_WALLET = "0x000000000000000000000000000000000000dEaD";
 const writeText = vi.fn(async (_value: string) => {});
+const walletMock = vi.hoisted(() => ({
+	address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+	status: "connected" as
+		| "checking"
+		| "disconnected"
+		| "connecting"
+		| "connected"
+		| "error",
+	connect: vi.fn(async () => {}),
+}));
 
 vi.mock("@/components/auth/wallet-session-provider", () => ({
 	useWalletSession: () => ({
-		status: "connected",
-		walletAddress: CONNECTED_WALLET,
+		status: walletMock.status,
+		walletAddress:
+			walletMock.status === "connected" ? walletMock.address : null,
 		error: null,
-		connect: vi.fn(),
+		connect: walletMock.connect,
 		logout: vi.fn(),
 	}),
 }));
@@ -87,8 +98,8 @@ async function fillValidForm() {
 	fireEvent.change(screen.getByLabelText("联系邮箱"), {
 		target: { value: "provider@example.com" },
 	});
-	fireEvent.change(screen.getByLabelText("每个任务报价（ETH）"), {
-		target: { value: "0.0012" },
+	fireEvent.change(screen.getByLabelText("单次服务报价（USDC）"), {
+		target: { value: "12" },
 	});
 	fireEvent.change(screen.getByLabelText("收款钱包"), {
 		target: { value: PAYOUT_WALLET },
@@ -105,6 +116,8 @@ async function fillValidForm() {
 
 describe("AgentRegistrationForm", () => {
 	beforeEach(() => {
+		walletMock.status = "connected";
+		walletMock.connect.mockClear();
 		vi.stubGlobal("fetch", vi.fn());
 		Object.defineProperty(navigator, "clipboard", {
 			configurable: true,
@@ -121,10 +134,10 @@ describe("AgentRegistrationForm", () => {
 	it("拒绝空表单并展示字段级错误", async () => {
 		mockTaxonomyResponses();
 		render(<AgentRegistrationForm />);
-		const submit = screen.getByRole("button", { name: "提交审核" });
+		const submit = screen.getByRole("button", { name: "提交上架" });
 		await waitFor(() => expect(submit).toBeEnabled());
 		expect(submit).toHaveAttribute("form", "agent-registration-form");
-		expect(screen.getAllByRole("button", { name: "提交审核" })).toHaveLength(1);
+		expect(screen.getAllByRole("button", { name: "提交上架" })).toHaveLength(1);
 		fireEvent.click(submit);
 
 		expect(await screen.findAllByRole("alert")).not.toHaveLength(0);
@@ -134,15 +147,28 @@ describe("AgentRegistrationForm", () => {
 		expect(fetch).toHaveBeenCalledTimes(2);
 	});
 
+	it("未连接钱包时先触发连接，不提交空表单", async () => {
+		walletMock.status = "disconnected";
+		mockTaxonomyResponses();
+		render(<AgentRegistrationForm />);
+
+		const connect = await screen.findByRole("button", {
+			name: "连接钱包后提交",
+		});
+		await waitFor(() => expect(connect).toBeEnabled());
+		fireEvent.click(connect);
+
+		expect(walletMock.connect).toHaveBeenCalledOnce();
+		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(screen.queryByText("请检查输入内容")).not.toBeInTheDocument();
+	});
+
 	it("在一个页面完成上架，默认填入登录钱包并允许修改收款地址", async () => {
 		mockTaxonomyResponses();
 		render(<AgentRegistrationForm />);
 
 		expect(await screen.findByLabelText("Agent 名称")).toBeInTheDocument();
 		expect(screen.queryByText("第 1 步，共 2 步")).not.toBeInTheDocument();
-		expect(
-			screen.queryByText("填写一次，即可提交审核"),
-		).not.toBeInTheDocument();
 		expect(screen.getByText("市场资料")).toBeInTheDocument();
 		expect(
 			await screen.findByRole("combobox", { name: "服务分类" }),
@@ -153,6 +179,11 @@ describe("AgentRegistrationForm", () => {
 			"输入自定义标签，按回车添加",
 		);
 		expect(screen.getByLabelText("收款钱包")).toHaveValue(CONNECTED_WALLET);
+		expect(screen.getByLabelText("单次服务报价（USDC）")).toHaveValue("");
+		expect(screen.getByLabelText("单次服务报价（USDC）")).toHaveAttribute(
+			"placeholder",
+			"例如：25",
+		);
 		expect(screen.queryByText("AICP v1")).not.toBeInTheDocument();
 		expect(
 			screen.getByText("提交后，平台将自动检查服务连通性和接入要求。"),
@@ -218,10 +249,12 @@ describe("AgentRegistrationForm", () => {
 
 		render(<AgentRegistrationForm />);
 		await fillValidForm();
-		fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
+		fireEvent.click(screen.getByRole("button", { name: "提交上架" }));
 
 		await waitFor(() =>
-			expect(screen.getByRole("status")).toHaveTextContent("创建成功"),
+			expect(screen.getByRole("status")).toHaveTextContent(
+				"提交成功，等待平台验证",
+			),
 		);
 		expect(fetch).toHaveBeenLastCalledWith(
 			"https://business-api.test/api/agents",
@@ -232,7 +265,7 @@ describe("AgentRegistrationForm", () => {
 		);
 		const request = vi.mocked(fetch).mock.calls.at(-1)?.[1];
 		expect(request?.body).toEqual(
-			expect.stringContaining('"amount":"1200000000000000"'),
+			expect.stringContaining('"amount":"12000000"'),
 		);
 		expect(request?.body).toEqual(
 			expect.stringContaining(`"walletAddress":"${CONNECTED_WALLET}"`),
@@ -263,7 +296,7 @@ describe("AgentRegistrationForm", () => {
 
 		render(<AgentRegistrationForm />);
 		await fillValidForm();
-		fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
+		fireEvent.click(screen.getByRole("button", { name: "提交上架" }));
 
 		expect(await screen.findByText("报价超出允许范围")).toBeInTheDocument();
 	});

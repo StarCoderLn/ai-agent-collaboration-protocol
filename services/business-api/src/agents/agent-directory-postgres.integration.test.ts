@@ -56,9 +56,9 @@ async function seed(pool: Pool): Promise<void> {
        price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
      ) VALUES
        ($1,$3,$4,'公开健康 Agent','40000000-0000-4000-8000-000000000001','可公开验证的产品工作流 Agent',
-        ARRAY['agent','prd'],'fixed',1200,'USDC','http://127.0.0.1:9202/v1/workflow/execute','active-directory@example.com','active',600,1),
+        ARRAY['agent','prd'],'fixed',1200000,'USDC','http://127.0.0.1:9202/v1/workflow/execute','active-directory@example.com','active',600,1),
        ($2,$3,$4,'等待准入 Agent','40000000-0000-4000-8000-000000000002','仅审核员和所有者可见',
-        ARRAY['agent','research'],'fixed',1000,'USDC','http://127.0.0.1:9203/v1/research','pending-directory@example.com','pending_review',600,1)`,
+        ARRAY['agent','research'],'fixed',1000000,'USDC','http://127.0.0.1:9203/v1/research','pending-directory@example.com','pending_review',600,1)`,
     [ACTIVE_AGENT, PENDING_AGENT, OWNER, PAYOUT],
   );
   await pool.query(

@@ -6,7 +6,6 @@ import { SelectField } from "@web/ui/components/select";
 import { Skeleton } from "@web/ui/components/skeleton";
 import {
 	AlertTriangle,
-	ArrowRight,
 	CalendarClock,
 	CirclePlus,
 	Clock3,
@@ -321,66 +320,89 @@ function TaskCard({
 	categoryName: string;
 }) {
 	const { locale, t } = useLocale();
+	const deliveryWindowDays = calculateDeliveryWindowDays(
+		task.createdAt,
+		task.deadline,
+	);
 	return (
-		<article className="cyber-panel cyber-corner interactive-card rounded-2xl border p-5 transition-[transform,border-color,box-shadow] hover:-translate-y-1 hover:border-primary/40 hover:shadow-[0_0_32px_var(--brand-glow)]">
-			<div className="flex flex-wrap items-center gap-2">
-				<StatusBadge status={task.status} />
-				<span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground text-xs">
-					{categoryName}
-				</span>
-			</div>
-			<h3 className="mt-4 font-semibold text-lg leading-6">
-				<Link href={`/tasks/${task.id}`} className="hover:text-primary">
-					{task.title}
-				</Link>
-			</h3>
-			<p className="mt-2 line-clamp-2 min-h-11 text-muted-foreground text-sm leading-[22px]">
-				{task.description}
-			</p>
-			<div className="mt-4 flex flex-wrap gap-2">
-				{task.tags.slice(0, 4).map((item) => (
-					<span
-						key={item}
-						className="inline-flex items-center gap-1 rounded-full border border-primary/10 bg-accent px-2.5 py-1 text-muted-foreground text-xs"
-					>
-						<Tag className="size-3 text-primary" />
-						{item}
+		<Link
+			href={`/tasks/${task.id}`}
+			aria-label={`${t("查看任务")}：${task.title}`}
+			className="group/card block cursor-pointer rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+		>
+			<article className="cyber-panel cyber-corner interactive-card h-full rounded-2xl border p-5 transition-[transform,border-color,box-shadow] group-hover/card:-translate-y-1 group-hover/card:border-primary/40 group-hover/card:shadow-[0_0_32px_var(--brand-glow)]">
+				<div className="flex flex-wrap items-center gap-2">
+					<StatusBadge status={task.status} />
+					<span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground text-xs">
+						{categoryName}
 					</span>
-				))}
-			</div>
-			<div className="mt-5 grid grid-cols-2 gap-3 border-primary/15 border-y bg-background/20 py-4 sm:grid-cols-3">
-				<TaskFact
-					icon={WalletCards}
-					label={t("预算上限")}
-					value={formatMinorAmount(task.budgetMaxMinor, task.currency)}
-				/>
-				<TaskFact
-					icon={CalendarClock}
-					label={t("截止时间")}
-					value={formatDate(task.deadline, locale)}
-				/>
-				<TaskFact
-					icon={ShieldCheck}
-					label={t("所需能力")}
-					value={task.requiredCapability}
-					className="col-span-2 sm:col-span-1"
-				/>
-			</div>
-			<div className="mt-4 flex items-center justify-between gap-3">
-				<span className="text-muted-foreground text-xs">
-					{t("发布于 {date}", { date: formatDate(task.createdAt, locale) })}
-				</span>
-				<Button
-					variant="outline"
-					size="lg"
-					className="rounded-full"
-					render={<Link href={`/tasks/${task.id}`} />}
-				>
-					{t("查看任务")}
-					<ArrowRight className="size-4" />
-				</Button>
-			</div>
-		</article>
+				</div>
+				<h3 className="mt-4 font-semibold text-lg leading-6 transition-colors group-hover/card:text-primary">
+					{task.title}
+				</h3>
+				<p className="mt-2 line-clamp-2 min-h-11 text-muted-foreground text-sm leading-[22px]">
+					{task.description}
+				</p>
+				<div className="mt-4 flex flex-wrap gap-2">
+					{task.tags.slice(0, 4).map((item) => (
+						<span
+							key={item}
+							className="inline-flex items-center gap-1 rounded-full border border-primary/10 bg-accent px-2.5 py-1 text-muted-foreground text-xs"
+						>
+							<Tag className="size-3 text-primary" />
+							{item}
+						</span>
+					))}
+				</div>
+				<div className="mt-5 grid grid-cols-2 gap-3 border-primary/15 border-y bg-background/20 py-4 sm:grid-cols-3">
+					<TaskFact
+						icon={WalletCards}
+						label={t("预算上限")}
+						value={formatMinorAmount(task.budgetMaxMinor, task.currency)}
+					/>
+					<TaskFact
+						icon={CalendarClock}
+						label={t("截止时间")}
+						value={formatDate(task.deadline, locale)}
+					/>
+					<TaskFact
+						icon={ShieldCheck}
+						label={t("所需能力")}
+						value={task.requiredCapability}
+						className="col-span-2 sm:col-span-1"
+					/>
+				</div>
+				<div className="mt-4 flex items-center justify-between gap-3">
+					<span className="text-muted-foreground text-xs">
+						{t("发布于 {date}", { date: formatDate(task.createdAt, locale) })}
+					</span>
+					<div className="text-right">
+						<p className="text-muted-foreground text-xs">{t("任务周期")}</p>
+						<p className="mt-1 font-semibold text-primary text-sm">
+							{t("约 {count} 天", { count: deliveryWindowDays })}
+						</p>
+					</div>
+				</div>
+			</article>
+		</Link>
+	);
+}
+
+/**
+ * 市场卡片只展示从发布到截止的近似自然周期，帮助用户快速比较任务规模。
+ * 这里使用向上取整，避免不足一天的合法任务被显示成“0 天”；精确截止日期仍由卡片
+ * 上方的截止时间字段提供，因此该摘要不承担倒计时或超时判断职责。
+ */
+function calculateDeliveryWindowDays(
+	createdAt: string,
+	deadline: string,
+): number {
+	const millisecondsPerDay = 24 * 60 * 60 * 1000;
+	return Math.max(
+		1,
+		Math.ceil(
+			(Date.parse(deadline) - Date.parse(createdAt)) / millisecondsPerDay,
+		),
 	);
 }
 

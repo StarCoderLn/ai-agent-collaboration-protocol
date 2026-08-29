@@ -13,12 +13,16 @@ import {
 	MAX_MATCHING_TAG_LENGTH,
 	normalizeMatchingTag,
 } from "@/lib/platform/matching-tags";
+import {
+	MIN_USDC_BUSINESS_AMOUNT_MINOR,
+	MVP_CURRENCY,
+	parseUsdcToMinor,
+} from "@/lib/platform/money";
 
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const SERVICE_ENDPOINT_PATTERN = /^https?:\/\//;
 const UUID_PATTERN =
 	/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-const NON_NEGATIVE_INTEGER_STRING_PATTERN = /^\d+$/;
 
 export interface AgentEditFormValues {
 	name: string;
@@ -69,11 +73,15 @@ export function validateAgentEditForm(
 	if (values.pricingType.trim().length === 0) {
 		errors.pricingType = "计价方式不能为空";
 	}
-	if (!NON_NEGATIVE_INTEGER_STRING_PATTERN.test(values.priceAmount)) {
-		errors.priceAmount = "报价必须是非负整数字符串（最小单位）";
+	const priceAmountMinor = parseUsdcToMinor(values.priceAmount);
+	if (
+		priceAmountMinor === null ||
+		BigInt(priceAmountMinor) < MIN_USDC_BUSINESS_AMOUNT_MINOR
+	) {
+		errors.priceAmount = "单次服务报价至少为 1 USDC";
 	}
-	if (values.priceCurrency.trim().length === 0) {
-		errors.priceCurrency = "币种不能为空";
+	if (values.priceCurrency !== MVP_CURRENCY) {
+		errors.priceCurrency = "报价币种必须是 USDC";
 	}
 	if (!SERVICE_ENDPOINT_PATTERN.test(values.serviceEndpoint)) {
 		errors.serviceEndpoint = "服务地址必须是合法的 http(s) URL";

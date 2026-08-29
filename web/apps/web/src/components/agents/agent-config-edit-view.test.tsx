@@ -17,7 +17,7 @@ const baseAgentBody = {
 	capabilityDesc: "中英互译",
 	tags: ["翻译"],
 	pricingType: "per_task",
-	priceAmount: "1000",
+	priceAmount: "1000000",
 	priceCurrency: "USDC",
 	serviceEndpoint: "https://agent.example.com/run",
 	email: "provider@example.com",

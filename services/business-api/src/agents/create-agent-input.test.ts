@@ -9,7 +9,7 @@ function validInput() {
     capabilityDesc: "根据私有知识库回答问题并提供引用",
     tags: ["next.js"],
     pricingType: "fixed",
-    price: { amount: "1000", currency: "ETH" },
+    price: { amount: "1000000", currency: "USDC" },
     walletAddress: "0x1111111111111111111111111111111111111111",
     payoutWalletAddress: "0x1111111111111111111111111111111111111111",
     serviceEndpoint: "https://agent.example.com/run",
@@ -42,6 +42,26 @@ describe("parseCreateAgentInput matching tags", () => {
     })).toMatchObject({
       success: false,
       fieldErrors: [expect.objectContaining({ field: "tags" })],
+    });
+  });
+
+  it("rejects non-USDC quotes at the registration boundary", () => {
+    expect(parseCreateAgentInput({
+      ...validInput(),
+      price: { amount: "1000000", currency: "ETH" },
+    })).toMatchObject({
+      success: false,
+      fieldErrors: [expect.objectContaining({ field: "price.currency" })],
+    });
+  });
+
+  it("rejects quotes below the one USDC business minimum", () => {
+    expect(parseCreateAgentInput({
+      ...validInput(),
+      price: { amount: "999999", currency: "USDC" },
+    })).toMatchObject({
+      success: false,
+      fieldErrors: [expect.objectContaining({ field: "price.amount" })],
     });
   });
 });

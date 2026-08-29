@@ -5,6 +5,7 @@ import { useConnection } from "wagmi";
 
 import { useLocale } from "@/components/i18n/locale-provider";
 import { connectWalletSession, logoutWalletSession, restoreWalletSession } from "@/lib/wallet/wallet-session";
+import { subscribeAuthSessionExpired } from "@/lib/wallet/session-expiry";
 
 type WalletSessionState =
 	| Readonly<{ status: "checking" | "disconnected" | "connecting"; walletAddress: null; error: null }>
@@ -32,6 +33,17 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
 		});
 		return () => { active = false; };
 	}, []);
+	useEffect(() => {
+		// 受保护接口返回 401 时，服务端会话已经不再可信。必须立即撤下旧钱包身份，
+		// 不能继续用 wagmi 的扩展连接状态冒充已经完成 SIWE 登录。
+		return subscribeAuthSessionExpired(() => {
+			setState({
+				status: "error",
+				walletAddress: null,
+				error: t("登录已过期，请重新签名登录"),
+			});
+		});
+	}, [t]);
 	useEffect(() => {
 		if (connection.status === "connected") {
 			hadWalletConnection.current = true;

@@ -1,14 +1,20 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { listOwnedAgents } from "@/lib/api/agent-directory";
 import AgentManagement from "./agent-management";
 
 vi.mock("@/components/auth/wallet-session-provider", () => ({
-	useWalletSession: () => ({ status: "connected", walletAddress: "0x1111111111111111111111111111111111111111", error: null, connect: vi.fn() }),
+	useWalletSession: () => ({
+		status: "connected",
+		walletAddress: "0x1111111111111111111111111111111111111111",
+		error: null,
+		connect: vi.fn(),
+	}),
 }));
 vi.mock("@/lib/api/agent-directory", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@/lib/api/agent-directory")>();
+	const actual =
+		await importOriginal<typeof import("@/lib/api/agent-directory")>();
 	return { ...actual, listOwnedAgents: vi.fn(), transitionOwnedAgent: vi.fn() };
 });
 
@@ -20,7 +26,7 @@ function managedAgent(id: string, overrides: Record<string, unknown> = {}) {
 		categoryName: "代码开发",
 		description: "根据需求生成代码",
 		tags: ["coding"],
-		pricing: { type: "per_task", amountMinor: "1000", currency: "ETH" },
+		pricing: { type: "per_task", amountMinor: "1000", currency: "USDC" },
 		status: "active" as const,
 		score: null,
 		sampleSize: 0,
@@ -34,31 +40,69 @@ function managedAgent(id: string, overrides: Record<string, unknown> = {}) {
 		serviceEndpoint: "https://agent.example/v1/tasks",
 		email: "provider@example.com",
 		pauseReason: null,
-		health: { status: "healthy" as const, checkedAt: "2026-08-23T00:00:00.000Z", consecutiveFailureCount: 0, consecutiveSuccessCount: 0, intervalSeconds: 300 },
+		health: {
+			status: "healthy" as const,
+			checkedAt: "2026-08-23T00:00:00.000Z",
+			consecutiveFailureCount: 0,
+			consecutiveSuccessCount: 0,
+			intervalSeconds: 300,
+		},
 		...overrides,
 	};
 }
 
 describe("Agent provider management", () => {
-	beforeEach(() => vi.mocked(listOwnedAgents).mockResolvedValue([
-		managedAgent("83100000-0000-4000-8000-000000000001"),
-		managedAgent("83100000-0000-4000-8000-000000000002", {
-			name: "健康恢复中的 Agent",
-			status: "paused",
-			pauseReason: "health_check",
-			isNew: false,
-			health: { status: "degraded", checkedAt: "2026-08-23T00:00:00.000Z", consecutiveFailureCount: 0, consecutiveSuccessCount: 1, intervalSeconds: 300 },
-		}),
-	]));
-	afterEach(() => { cleanup(); vi.clearAllMocks(); });
+	beforeEach(() =>
+		vi.mocked(listOwnedAgents).mockResolvedValue([
+			managedAgent("83100000-0000-4000-8000-000000000001"),
+			managedAgent("83100000-0000-4000-8000-000000000002", {
+				name: "健康恢复中的 Agent",
+				status: "paused",
+				pauseReason: "health_check",
+				isNew: false,
+				health: {
+					status: "degraded",
+					checkedAt: "2026-08-23T00:00:00.000Z",
+					consecutiveFailureCount: 0,
+					consecutiveSuccessCount: 1,
+					intervalSeconds: 300,
+				},
+			}),
+		]),
+	);
+	afterEach(() => {
+		cleanup();
+		vi.clearAllMocks();
+	});
 
 	it("explains controlled onboarding and prevents provider bypass of health recovery", async () => {
-		render(<AgentManagement />);
+		const onInventoryChange = vi.fn();
+		render(<AgentManagement onInventoryChange={onInventoryChange} />);
 
 		expect(await screen.findByText("新入驻 · 受控上线")).toBeInTheDocument();
 		expect(screen.getByText(/历史任务第 30 百分位/)).toBeInTheDocument();
 		expect(screen.getByText("平台健康检查已自动暂停接单")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "恢复接单" })).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "暂停接单" })).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "恢复接单" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "暂停接单" }),
+		).toBeInTheDocument();
+		await waitFor(() =>
+			expect(onInventoryChange).toHaveBeenLastCalledWith(true),
+		);
+	});
+
+	it("reports an empty inventory so the page header does not duplicate the empty-state action", async () => {
+		vi.mocked(listOwnedAgents).mockResolvedValue([]);
+		const onInventoryChange = vi.fn();
+		render(<AgentManagement onInventoryChange={onInventoryChange} />);
+
+		expect(
+			await screen.findByRole("button", { name: "上架第一个 Agent" }),
+		).toHaveAttribute("href", "/agents/register");
+		await waitFor(() =>
+			expect(onInventoryChange).toHaveBeenLastCalledWith(false),
+		);
 	});
 });

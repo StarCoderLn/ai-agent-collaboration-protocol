@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { BUSINESS_API_BASE_URL } from "./base-url";
+import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
 
 /**
  * Agent 市场与生命周期操作的浏览器客户端。
@@ -247,6 +248,9 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
 			retryable: true,
 		});
 	}
+	// Agent 管理、审核与生命周期接口和任务接口共享同一个 SIWE 会话；这里必须同步
+	// 传播 401，否则用户从工作台或“我的 Agent”进入时仍会看到过期的钱包地址。
+	if (response.status === 401) notifyAuthSessionExpired();
 	if (!response.ok) throw await parseError(response);
 	return response;
 }

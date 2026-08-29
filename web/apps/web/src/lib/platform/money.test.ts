@@ -1,21 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import { formatMinorAmount, parseEthToWei } from "./money";
+import { formatMinorAmount, parseUsdcToMinor } from "./money";
 
-describe("native ETH money boundary", () => {
-	it("converts decimal ETH to wei without Number precision loss", () => {
-		expect(parseEthToWei("0.0128")).toBe("12800000000000000");
-		expect(parseEthToWei("1.000000000000000001")).toBe("1000000000000000001");
+describe("USDC money boundary", () => {
+	it("converts decimal USDC to six-decimal minor units without Number precision loss", () => {
+		expect(parseUsdcToMinor("12.80")).toBe("12800000");
+		expect(parseUsdcToMinor("100000.000001")).toBe("100000000001");
 	});
 
-	it("rejects zero, negative and values with more than 18 decimals", () => {
-		expect(parseEthToWei("0")).toBeNull();
-		expect(parseEthToWei("-1")).toBeNull();
-		expect(parseEthToWei("0.0000000000000000001")).toBeNull();
+	it("rejects zero, negative and values with more than six decimals", () => {
+		expect(parseUsdcToMinor("0")).toBeNull();
+		expect(parseUsdcToMinor("-1")).toBeNull();
+		expect(parseUsdcToMinor("0.0000001")).toBeNull();
 	});
 
-	it("formats wei as an exact ETH amount", () => {
-		expect(formatMinorAmount("12800000000000000", "ETH")).toBe("0.0128 ETH");
-		expect(formatMinorAmount("1000000000000000001", "ETH")).toBe("1.000000000000000001 ETH");
+	it("formats USDC minor units exactly and never guesses another currency precision", () => {
+		expect(formatMinorAmount("12800000", "USDC")).toBe("12.8 USDC");
+		expect(formatMinorAmount("100000000001", "USDC")).toBe(
+			"100,000.000001 USDC",
+		);
+		expect(formatMinorAmount("42", "UNKNOWN")).toBe("42 UNKNOWN");
 	});
 });

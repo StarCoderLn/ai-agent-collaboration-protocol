@@ -11,18 +11,25 @@ import {
 	resumeEscrowSubmission,
 	startEscrowDeposit,
 } from "./escrow-deposit-flow";
-import { sendEscrowTransaction } from "./wallet-session";
+import {
+	ensureEscrowAllowance,
+	sendEscrowTransaction,
+} from "./wallet-session";
 
 vi.mock("../api/tasks", () => ({
 	prepareTaskEscrow: vi.fn(),
 	retryTaskEscrow: vi.fn(),
 	submitTaskEscrowTransaction: vi.fn(),
 }));
-vi.mock("./wallet-session", () => ({ sendEscrowTransaction: vi.fn() }));
+vi.mock("./wallet-session", () => ({
+	ensureEscrowAllowance: vi.fn(),
+	sendEscrowTransaction: vi.fn(),
+}));
 
 const TASK_ID = "11111111-1111-4111-8111-111111111111";
 const WALLET = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const CONTRACT = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+const USDC = "0x1111111111111111111111111111111111111111";
 const TX_HASH = repeatedHex("ab", 32);
 
 const PREPARED = {
@@ -30,9 +37,13 @@ const PREPARED = {
 	status: "prepared" as const,
 	chainId: "31337",
 	contractAddress: CONTRACT,
+	paymentTokenAddress: USDC,
 	taskKey: repeatedHex("cd", 32),
-	transaction: { to: CONTRACT, data: "0x1234", value: "0x10" },
-	amountWei: "16",
+	transactions: {
+		approve: { to: USDC, data: "0x1111", value: "0x0" },
+		deposit: { to: CONTRACT, data: "0x2222", value: "0x0" },
+	},
+	amountMinor: "16000000",
 };
 
 const STATUS = {
@@ -41,7 +52,7 @@ const STATUS = {
 	chainId: "31337",
 	contractAddress: CONTRACT,
 	taskKey: repeatedHex("cd", 32),
-	amountWei: "16",
+	amountMinor: "16000000",
 	txHash: TX_HASH,
 	confirmations: "0",
 	requiredConfirmations: "2",
@@ -58,9 +69,11 @@ describe("escrow deposit flow", () => {
 		vi.mocked(retryTaskEscrow).mockResolvedValue({
 			...STATUS,
 			status: "prepared",
-			transaction: PREPARED.transaction,
+			paymentTokenAddress: USDC,
+			transactions: PREPARED.transactions,
 		});
 		vi.mocked(sendEscrowTransaction).mockResolvedValue(TX_HASH);
+		vi.mocked(ensureEscrowAllowance).mockResolvedValue();
 		vi.mocked(submitTaskEscrowTransaction).mockResolvedValue(STATUS);
 	});
 
@@ -70,13 +83,21 @@ describe("escrow deposit flow", () => {
 		vi.clearAllMocks();
 	});
 
-	it("prepares, broadcasts and records one transaction before clearing recovery state", async () => {
+	it("authorizes exact USDC, deposits it, and records only the deposit transaction", async () => {
 		await expect(startEscrowDeposit(input())).resolves.toBeUndefined();
 
+		expect(ensureEscrowAllowance).toHaveBeenCalledWith({
+			walletAddress: WALLET,
+			chainId: 31_337,
+			paymentTokenAddress: USDC,
+			escrowContractAddress: CONTRACT,
+			amountMinor: PREPARED.amountMinor,
+			approveTransaction: PREPARED.transactions.approve,
+		});
 		expect(sendEscrowTransaction).toHaveBeenCalledWith({
 			walletAddress: WALLET,
 			chainId: 31_337,
-			transaction: PREPARED.transaction,
+			transaction: PREPARED.transactions.deposit,
 		});
 		expect(submitTaskEscrowTransaction).toHaveBeenCalledWith(
 			TASK_ID,
@@ -86,8 +107,8 @@ describe("escrow deposit flow", () => {
 		expect(readPendingEscrowSubmission(TASK_ID)).toBeNull();
 	});
 
-	it("marks only a pre-hash wallet rejection as failed", async () => {
-		vi.mocked(sendEscrowTransaction).mockRejectedValue(
+	it("marks an approval rejection as failed before any deposit is sent", async () => {
+		vi.mocked(ensureEscrowAllowance).mockRejectedValue(
 			new Error("User rejected request"),
 		);
 
@@ -102,6 +123,25 @@ describe("escrow deposit flow", () => {
 			"failure-key",
 		);
 		expect(readPendingEscrowSubmission(TASK_ID)).toBeNull();
+		expect(sendEscrowTransaction).not.toHaveBeenCalled();
+	});
+
+	it("marks a deposit rejection as failed after approval succeeds", async () => {
+		vi.mocked(sendEscrowTransaction).mockRejectedValue(
+			new Error("User rejected request"),
+		);
+
+		await expect(startEscrowDeposit(input())).rejects.toMatchObject({
+			name: "EscrowDepositFlowError",
+			stage: "wallet",
+			pendingSubmission: null,
+		});
+		expect(ensureEscrowAllowance).toHaveBeenCalledTimes(1);
+		expect(submitTaskEscrowTransaction).toHaveBeenCalledWith(
+			TASK_ID,
+			{ status: "failed", failureReason: "用户已取消钱包交易" },
+			"failure-key",
+		);
 	});
 
 	it("does not persist provider internals for an unknown wallet failure", async () => {
@@ -149,6 +189,8 @@ describe("escrow deposit flow", () => {
 			idempotencyKey: "resume-key",
 		});
 
+		// 恢复只补登记已经广播的 deposit，不会重发授权或托管交易。
+		expect(ensureEscrowAllowance).toHaveBeenCalledTimes(1);
 		expect(sendEscrowTransaction).toHaveBeenCalledTimes(1);
 		expect(submitTaskEscrowTransaction).toHaveBeenLastCalledWith(
 			TASK_ID,

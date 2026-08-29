@@ -3,11 +3,13 @@ import {
 	AgentDirectoryRequestError,
 	getAgentScore,
 	getPublicAgent,
+	listOwnedAgents,
 	listPublicAgents,
 	reviewAgent,
 	transitionOwnedAgent,
 } from "./agent-directory";
 import { formatMinorAmount } from "../platform/money";
+import { subscribeAuthSessionExpired } from "@/lib/wallet/session-expiry";
 
 const agentId = "83100000-0000-4000-8000-000000000001";
 
@@ -114,6 +116,21 @@ describe("Agent directory API client", () => {
 		);
 	});
 
+	it("Agent 私有接口返回 401 时同步撤下过期会话", async () => {
+		const expired = vi.fn();
+		const unsubscribe = subscribeAuthSessionExpired(expired);
+		vi.mocked(fetch).mockResolvedValueOnce(
+			Response.json(
+				{ error_code: "UNAUTHENTICATED", message: "登录会话已过期", retryable: false },
+				{ status: 401 },
+			),
+		);
+
+		await expect(listOwnedAgents()).rejects.toMatchObject({ status: 401 });
+		expect(expired).toHaveBeenCalledTimes(1);
+		unsubscribe();
+	});
+
 	it("submits a simple, auditable approve or reject decision without asking for a fake sandbox UUID", async () => {
 		vi.mocked(fetch).mockImplementation(async () => Response.json({
 			agentId,
@@ -140,6 +157,6 @@ describe("Agent directory API client", () => {
 	});
 
 	it("formats values above the JavaScript safe integer limit without losing minor units", () => {
-		expect(formatMinorAmount("900719925474099301", "USDC")).toBe("9,007,199,254,740,993.01 USDC");
+		expect(formatMinorAmount("900719925474099301", "USDC")).toBe("900,719,925,474.099301 USDC");
 	});
 });

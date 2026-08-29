@@ -16,6 +16,7 @@ import {
 import type { Agent, AgentPatchInput } from "@/lib/api/agents";
 import { AgentApiRequestError, patchAgent } from "@/lib/api/agents";
 import { revealFormError } from "@/lib/forms/reveal-form-error";
+import { formatUsdcInputAmount, parseUsdcToMinor } from "@/lib/platform/money";
 
 interface AgentEditFormProps {
 	agent: Agent;
@@ -29,7 +30,7 @@ function toFormValues(agent: Agent): AgentEditFormValues {
 		capabilityDesc: agent.capabilityDesc,
 		tags: agent.tags,
 		pricingType: agent.pricingType,
-		priceAmount: agent.priceAmount,
+		priceAmount: formatUsdcInputAmount(agent.priceAmount),
 		priceCurrency: agent.priceCurrency,
 		serviceEndpoint: agent.serviceEndpoint,
 		email: agent.email,
@@ -45,7 +46,15 @@ function toPatchInput(
 	const patch: AgentPatchInput = {};
 	for (const key of Object.keys(values) as (keyof AgentEditFormValues)[]) {
 		if (JSON.stringify(values[key]) !== JSON.stringify(baseline[key])) {
-			(patch as Record<string, unknown>)[key] = values[key];
+			// 页面让用户编辑可读的 USDC 十进制值，API 仍只接收无损最小单位整数。
+			// 校验已先保证转换成功；这里保留防御分支，避免未来调用顺序变化后发错金额。
+			if (key === "priceAmount") {
+				const amountMinor = parseUsdcToMinor(values.priceAmount);
+				if (amountMinor === null) throw new Error("INVALID_USDC_PRICE_AMOUNT");
+				patch.priceAmount = amountMinor;
+			} else {
+				(patch as Record<string, unknown>)[key] = values[key];
+			}
 		}
 	}
 	return patch;
@@ -284,23 +293,29 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 					</Field>
 
 					<Field
-						label={t("报价（最小单位整数）")}
+						label={t("单次服务报价（USDC）")}
 						htmlFor="priceAmount"
 						error={errors.priceAmount}
 					>
-						<Input
-							id="priceAmount"
-							inputMode="numeric"
-							value={values.priceAmount}
-							onChange={(event) =>
-								updateField("priceAmount", event.target.value)
-							}
-							aria-invalid={Boolean(errors.priceAmount)}
-							aria-describedby={
-								errors.priceAmount ? "priceAmount-error" : undefined
-							}
-							className="font-mono"
-						/>
+						<div className="relative">
+							<Input
+								id="priceAmount"
+								inputMode="decimal"
+								value={values.priceAmount}
+								onChange={(event) =>
+									updateField("priceAmount", event.target.value)
+								}
+								aria-invalid={Boolean(errors.priceAmount)}
+								aria-describedby={
+									errors.priceAmount ? "priceAmount-error" : undefined
+								}
+								className="pr-16 font-mono"
+								placeholder={t("例如：25")}
+							/>
+							<span className="absolute top-3 right-3 text-muted-foreground text-sm">
+								USDC
+							</span>
+						</div>
 					</Field>
 
 					<Field
@@ -311,9 +326,7 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 						<Input
 							id="priceCurrency"
 							value={values.priceCurrency}
-							onChange={(event) =>
-								updateField("priceCurrency", event.target.value)
-							}
+							disabled
 							aria-invalid={Boolean(errors.priceCurrency)}
 							aria-describedby={
 								errors.priceCurrency ? "priceCurrency-error" : undefined

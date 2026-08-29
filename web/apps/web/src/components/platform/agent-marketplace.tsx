@@ -6,7 +6,6 @@ import { SelectField } from "@web/ui/components/select";
 import { Skeleton } from "@web/ui/components/skeleton";
 import {
 	AlertTriangle,
-	ArrowRight,
 	Bot,
 	CheckCircle2,
 	CirclePlus,
@@ -212,88 +211,95 @@ export default function AgentMarketplace() {
 function AgentCard({ agent }: { agent: PublicDirectoryAgent }) {
 	const { t } = useLocale();
 	return (
-		<article className="cyber-panel cyber-corner interactive-card rounded-2xl border p-5 transition-[transform,border-color,box-shadow] hover:-translate-y-1 hover:border-primary/40 hover:shadow-[0_0_32px_var(--brand-glow)]">
-			<div className="flex items-start gap-3">
-				<span className="brand-logo flex size-12 shrink-0 items-center justify-center rounded-xl font-bold text-white text-xs">
-					{initials(agent.name)}
-				</span>
-				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-1.5">
-						<h3 className="truncate font-semibold">{agent.name}</h3>
-						<ShieldCheck
-							className="size-4 shrink-0 text-primary"
-							aria-label={t("已通过平台审核")}
-						/>
+		<Link
+			href={`/agents/${agent.id}`}
+			aria-label={`${t("查看详情")}：${agent.name}`}
+			className="group/card block cursor-pointer rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+		>
+			<article className="cyber-panel cyber-corner interactive-card h-full rounded-2xl border p-5 transition-[transform,border-color,box-shadow] group-hover/card:-translate-y-1 group-hover/card:border-primary/40 group-hover/card:shadow-[0_0_32px_var(--brand-glow)]">
+				<div className="flex items-start gap-3">
+					<span className="brand-logo flex size-12 shrink-0 items-center justify-center rounded-xl font-bold text-white text-xs">
+						{initials(agent.name)}
+					</span>
+					<div className="min-w-0 flex-1">
+						<div className="flex items-center gap-1.5">
+							<h3 className="truncate font-semibold transition-colors group-hover/card:text-primary">
+								{agent.name}
+							</h3>
+							<ShieldCheck
+								className="size-4 shrink-0 text-primary"
+								aria-label={t("已通过平台审核")}
+							/>
+						</div>
+						<p className="mt-1 flex items-center gap-2 text-muted-foreground text-xs">
+							<span className="signal-dot size-1.5 rounded-full bg-secondary" />
+							{agent.categoryName ?? t("未分类")} ·{" "}
+							{healthLabel(agent.health.status, t)}
+						</p>
 					</div>
-					<p className="mt-1 flex items-center gap-2 text-muted-foreground text-xs">
-						<span className="signal-dot size-1.5 rounded-full bg-secondary" />
-						{agent.categoryName ?? t("未分类")} ·{" "}
-						{healthLabel(agent.health.status, t)}
-					</p>
+					{agent.isNew && (
+						<span className="shrink-0 rounded-full bg-warning/10 px-2 py-1 font-medium text-[11px] text-warning">
+							{t("受控上线")}
+						</span>
+					)}
 				</div>
-				{agent.isNew && (
-					<span className="shrink-0 rounded-full bg-warning/10 px-2 py-1 font-medium text-[11px] text-warning">
-						{t("受控上线")}
-					</span>
-				)}
-			</div>
-			<p className="mt-4 line-clamp-2 min-h-11 text-muted-foreground text-sm leading-[22px]">
-				{agent.description}
-			</p>
-			<div className="mt-4 flex min-h-6 flex-wrap gap-2">
-				{agent.tags.slice(0, 4).map((tag) => (
-					<span
-						key={tag}
-						className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground text-xs"
-					>
-						{tag}
-					</span>
-				))}
-			</div>
-			<div className="mt-5 grid grid-cols-3 border-primary/15 border-y bg-background/25 py-4 text-center">
-				<AgentMetric
-					icon={Star}
-					value={agent.score === null ? t("暂无") : agent.score.toFixed(1)}
-					label={t("{count} 份评分", { count: agent.sampleSize })}
-				/>
-				<AgentMetric
-					icon={CheckCircle2}
-					value={formatPercent(agent.successRate)}
-					label={t("{count} 次完成", { count: agent.completedCount })}
-				/>
-				<AgentMetric
-					icon={HeartPulse}
-					value={
-						agent.health.status === "healthy"
-							? t("正常")
-							: agent.health.status === "degraded"
-								? t("异常")
-								: t("待探测")
-					}
-					label={t("最近健康状态")}
-				/>
-			</div>
-			<div className="mt-4 flex items-end justify-between gap-3">
-				<div className="min-w-0">
-					<p className="text-muted-foreground text-xs">{t("参考报价")}</p>
-					<p className="mt-1 truncate font-semibold">
-						{formatMinorAmount(
-							agent.pricing.amountMinor,
-							agent.pricing.currency,
-						)}
-					</p>
+				<p className="mt-4 line-clamp-2 min-h-11 text-muted-foreground text-sm leading-[22px]">
+					{agent.description}
+				</p>
+				<div className="mt-4 flex min-h-6 flex-wrap gap-2">
+					{agent.tags.slice(0, 4).map((tag) => (
+						<span
+							key={tag}
+							className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground text-xs"
+						>
+							{tag}
+						</span>
+					))}
 				</div>
-				<Button
-					variant="outline"
-					size="lg"
-					className="shrink-0"
-					render={<Link href={`/agents/${agent.id}`} />}
-				>
-					{t("查看详情")}
-					<ArrowRight className="size-4" />
-				</Button>
-			</div>
-		</article>
+				<div className="mt-5 grid grid-cols-3 border-primary/15 border-y bg-background/25 py-4 text-center">
+					<AgentMetric
+						icon={Star}
+						value={agent.score === null ? t("暂无") : agent.score.toFixed(1)}
+						label={t("{count} 份评分", { count: agent.sampleSize })}
+					/>
+					<AgentMetric
+						icon={CheckCircle2}
+						value={formatPercent(agent.successRate)}
+						label={t("{count} 次完成", { count: agent.completedCount })}
+					/>
+					<AgentMetric
+						icon={HeartPulse}
+						value={
+							agent.health.status === "healthy"
+								? t("正常")
+								: agent.health.status === "degraded"
+									? t("异常")
+									: t("待探测")
+						}
+						label={t("最近健康状态")}
+					/>
+				</div>
+				<div className="mt-4 flex items-end justify-between gap-3">
+					<div className="min-w-0">
+						<p className="text-muted-foreground text-xs">{t("参考报价")}</p>
+						<p className="mt-1 truncate font-semibold">
+							{formatMinorAmount(
+								agent.pricing.amountMinor,
+								agent.pricing.currency,
+							)}
+						</p>
+					</div>
+					<div className="shrink-0 text-right">
+						<p className="text-muted-foreground text-xs">{t("计费方式")}</p>
+						<p className="mt-1 font-semibold text-primary text-sm">
+							{agent.pricing.type === "fixed"
+								? t("按任务计费")
+								: t("自定义计费")}
+						</p>
+					</div>
+				</div>
+			</article>
+		</Link>
 	);
 }
 

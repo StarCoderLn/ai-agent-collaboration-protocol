@@ -51,6 +51,12 @@ const REQUIRED_ENV_KEYS = [
 	"SIWE_EXPECTED_CHAIN_ID",
 	"DISPATCH_ENGINE_URL",
 	"DISPATCH_INTERNAL_TOKEN_SECRET_ARN",
+	"ETHEREUM_RPC_URL",
+	"ESCROW_CHAIN_ID",
+	"ESCROW_CONTRACT_ADDRESS",
+	"ESCROW_PAYMENT_TOKEN_ADDRESS",
+	"ESCROW_START_BLOCK",
+	"ESCROW_REQUIRED_CONFIRMATIONS",
 ] as const;
 
 function requireEnv(key: string): string {
@@ -78,6 +84,14 @@ export class BusinessApiStack extends Stack {
 			SIWE_EXPECTED_URI: requireEnv("SIWE_EXPECTED_URI"),
 			SIWE_EXPECTED_CHAIN_ID: requireEnv("SIWE_EXPECTED_CHAIN_ID"),
 			DISPATCH_ENGINE_URL: requireEnv("DISPATCH_ENGINE_URL"),
+			// Escrow 与 USDC 地址必须来自同一份网络部署产物。把两者都设为部署必填，
+			// 避免 Lambda 连接正确链却把交易编码给另一网络的 Token 或合约。
+			ETHEREUM_RPC_URL: requireEnv("ETHEREUM_RPC_URL"),
+			ESCROW_CHAIN_ID: requireEnv("ESCROW_CHAIN_ID"),
+			ESCROW_CONTRACT_ADDRESS: requireEnv("ESCROW_CONTRACT_ADDRESS"),
+			ESCROW_PAYMENT_TOKEN_ADDRESS: requireEnv("ESCROW_PAYMENT_TOKEN_ADDRESS"),
+			ESCROW_START_BLOCK: requireEnv("ESCROW_START_BLOCK"),
+			ESCROW_REQUIRED_CONFIRMATIONS: requireEnv("ESCROW_REQUIRED_CONFIRMATIONS"),
 			// CloudFormation 在部署时解析 Secrets Manager 动态引用；真实 token 不进入
 			// synth 模板或 cdk.out。应用运行时仍读取同一个 DISPATCH_INTERNAL_TOKEN 名称。
 			DISPATCH_INTERNAL_TOKEN: internalTokenSecret.unsafeUnwrap(),

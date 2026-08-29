@@ -20,7 +20,7 @@ const pendingAgent = {
 	categoryName: "代码开发",
 	description: "根据设计稿生成可运行代码",
 	tags: ["coding"],
-	pricing: { type: "per_task", amountMinor: "1000", currency: "ETH" },
+	pricing: { type: "per_task", amountMinor: "1000", currency: "USDC" },
 	status: "pending_review" as const,
 	score: null,
 	sampleSize: 0,

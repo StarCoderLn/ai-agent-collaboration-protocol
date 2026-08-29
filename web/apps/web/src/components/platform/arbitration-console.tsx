@@ -200,7 +200,7 @@ export default function ArbitrationConsole({
 			<section className="border-b bg-card">
 				<div className="mx-auto max-w-[1180px] px-4 py-8 sm:px-6 lg:px-10">
 					<Link
-						href="/admin/disputes"
+						href="/workspace/disputes"
 						className="inline-flex items-center gap-1.5 text-muted-foreground text-sm hover:text-foreground"
 					>
 						<ArrowLeft className="size-4" />
@@ -321,11 +321,13 @@ export default function ArbitrationConsole({
 								/>
 								<div className="mt-4 grid grid-cols-2 gap-3">
 									<MoneyInput
+										id="arbitration-release-amount"
 										label={t("释放给 Agent（最小单位）")}
 										value={releaseAmount}
 										onChange={setReleaseAmount}
 									/>
 									<MoneyInput
+										id="arbitration-refund-amount"
 										label={t("退给发布者（最小单位）")}
 										value={refundAmount}
 										onChange={setRefundAmount}
@@ -412,24 +414,27 @@ export default function ArbitrationConsole({
 }
 
 function MoneyInput({
+	id,
 	label,
 	value,
 	onChange,
 }: {
+	id: string;
 	label: string;
 	value: string;
 	onChange(value: string): void;
 }) {
 	return (
-		<label className="text-xs">
-			{label}
+		<div className="text-xs">
+			<label htmlFor={id}>{label}</label>
 			<Input
+				id={id}
 				className="mt-2 font-mono"
 				inputMode="numeric"
 				value={value}
 				onChange={(event) => onChange(event.target.value.replace(/\D/g, ""))}
 			/>
-		</label>
+		</div>
 	);
 }
 function Fact({ label, value }: { label: string; value: string }) {

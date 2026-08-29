@@ -1,19 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { connect, getConnection, sendTransaction, signMessage, switchChain } from "wagmi/actions";
+import {
+	connect,
+	getConnection,
+	readContract,
+	sendTransaction,
+	signMessage,
+	switchChain,
+	waitForTransactionReceipt,
+} from "wagmi/actions";
 
-import { connectWalletSession, logoutWalletSession, sendEscrowTransaction } from "./wallet-session";
+import {
+	connectWalletSession,
+	ensureEscrowAllowance,
+	logoutWalletSession,
+	sendEscrowTransaction,
+} from "./wallet-session";
 import { wagmiConfig } from "./wagmi-config";
 
 vi.mock("wagmi/actions", () => ({
 	connect: vi.fn(),
 	getConnection: vi.fn(),
+	readContract: vi.fn(),
 	sendTransaction: vi.fn(),
 	signMessage: vi.fn(),
 	switchChain: vi.fn(),
+	waitForTransactionReceipt: vi.fn(),
 }));
 
 const CHECKSUM_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const CONTRACT = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+const USDC = "0x1111111111111111111111111111111111111111";
 const TX_HASH = repeatedHex("ab", 32);
 const SIGNATURE = repeatedHex("11", 65);
 
@@ -24,6 +40,9 @@ describe("wagmi wallet session", () => {
 		vi.mocked(signMessage).mockResolvedValue(SIGNATURE);
 		vi.mocked(sendTransaction).mockResolvedValue(TX_HASH);
 		vi.mocked(switchChain).mockResolvedValue(wagmiConfig.chains[2]);
+		vi.mocked(waitForTransactionReceipt).mockResolvedValue(
+			transactionReceipt("success"),
+		);
 	});
 	afterEach(() => {
 		vi.unstubAllGlobals();
@@ -84,7 +103,7 @@ describe("wagmi wallet session", () => {
 		await expect(sendEscrowTransaction({
 			walletAddress: CHECKSUM_ADDRESS,
 			chainId: 31_337,
-			transaction: { to: CONTRACT, data: "0x1234", value: "0x10" },
+			transaction: { to: CONTRACT, data: "0x1234", value: "0x0" },
 		})).rejects.toThrow("当前 MetaMask 账户与登录钱包不一致");
 		expect(sendTransaction).not.toHaveBeenCalled();
 	});
@@ -93,7 +112,7 @@ describe("wagmi wallet session", () => {
 		await expect(sendEscrowTransaction({
 			walletAddress: CHECKSUM_ADDRESS,
 			chainId: 31_337,
-			transaction: { to: CONTRACT, data: "0x1234", value: "0x10" },
+			transaction: { to: CONTRACT, data: "0x1234", value: "0x0" },
 		})).resolves.toBe(TX_HASH);
 
 		expect(sendTransaction).toHaveBeenCalledWith(wagmiConfig, expect.objectContaining({
@@ -101,19 +120,81 @@ describe("wagmi wallet session", () => {
 			chainId: 31_337,
 			to: CONTRACT,
 			data: "0x1234",
-			value: BigInt(16),
+			value: BigInt(0),
 		}));
+	});
+
+	it("rejects any native-token value before opening an escrow wallet request", async () => {
+		await expect(sendEscrowTransaction({
+			walletAddress: CHECKSUM_ADDRESS,
+			chainId: 31_337,
+			transaction: { to: CONTRACT, data: "0x1234", value: "0x1" },
+		})).rejects.toThrow("USDC 托管交易不能携带原生代币");
+		expect(connect).not.toHaveBeenCalled();
 	});
 
 	it("rejects an unconfigured chain before opening a wallet request", async () => {
 		await expect(sendEscrowTransaction({
 			walletAddress: CHECKSUM_ADDRESS,
 			chainId: 99_999,
-			transaction: { to: CONTRACT, data: "0x1234", value: "0x10" },
+			transaction: { to: CONTRACT, data: "0x1234", value: "0x0" },
 		})).rejects.toThrow("尚未配置 Chain ID 99999");
 		expect(connect).not.toHaveBeenCalled();
 	});
+
+	it("reuses an already confirmed exact USDC allowance without another wallet request", async () => {
+		vi.mocked(readContract).mockResolvedValue(BigInt(32_000_000));
+
+		await expect(ensureEscrowAllowance(allowanceInput())).resolves.toBeUndefined();
+
+		expect(readContract).toHaveBeenCalledTimes(1);
+		expect(sendTransaction).not.toHaveBeenCalled();
+		expect(waitForTransactionReceipt).not.toHaveBeenCalled();
+	});
+
+	it("waits for exact USDC approval confirmation before allowing deposit", async () => {
+		vi.mocked(readContract)
+			.mockResolvedValueOnce(BigInt(0))
+			.mockResolvedValueOnce(BigInt(32_000_000));
+
+		await expect(ensureEscrowAllowance(allowanceInput())).resolves.toBeUndefined();
+
+		expect(sendTransaction).toHaveBeenCalledTimes(1);
+		expect(waitForTransactionReceipt).toHaveBeenCalledWith(
+			wagmiConfig,
+			expect.objectContaining({ chainId: 31_337, hash: TX_HASH }),
+		);
+		expect(readContract).toHaveBeenCalledTimes(2);
+	});
+
+	it("stops before deposit when a successful receipt does not produce the exact allowance", async () => {
+		vi.mocked(readContract)
+			.mockResolvedValueOnce(BigInt(0))
+			.mockResolvedValueOnce(BigInt(31_999_999));
+
+		await expect(ensureEscrowAllowance(allowanceInput())).rejects.toThrow(
+			"授权额度未正确生效",
+		);
+	});
 });
+
+function allowanceInput() {
+	return {
+		walletAddress: CHECKSUM_ADDRESS,
+		chainId: 31_337,
+		paymentTokenAddress: USDC,
+		escrowContractAddress: CONTRACT,
+		amountMinor: "32000000",
+		approveTransaction: { to: USDC, data: "0x1234", value: "0x0" },
+	} as const;
+}
+
+function transactionReceipt(
+	status: "success" | "reverted",
+): Awaited<ReturnType<typeof waitForTransactionReceipt>> {
+	// 单元测试只依赖回执终态；其余 RPC 字段属于 wagmi 的外部边界，不影响本模块契约。
+	return { status } as Awaited<ReturnType<typeof waitForTransactionReceipt>>;
+}
 
 function disconnected(): ReturnType<typeof getConnection> {
 	return {

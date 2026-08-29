@@ -6,7 +6,10 @@ import {
 	retryTaskEscrow,
 	submitTaskEscrowTransaction,
 } from "../api/tasks";
-import { sendEscrowTransaction } from "./wallet-session";
+import {
+	ensureEscrowAllowance,
+	sendEscrowTransaction,
+} from "./wallet-session";
 
 const pendingSubmissionSchema = z
 	.object({
@@ -64,10 +67,21 @@ export async function startEscrowDeposit(
 
 	let txHash: string;
 	try {
+		// Escrow 固定绑定一个 USDC 合约。先做“仅当前任务金额”的精确授权，再执行
+		// deposit；不使用无限授权，避免 Escrow 合约失陷时暴露钱包中的其他 USDC。
+		// 授权交易即使成功也不代表资金已托管，平台只登记随后 deposit 的 txHash。
+		await ensureEscrowAllowance({
+			walletAddress: input.walletAddress,
+			chainId: safeChainId(prepared.chainId),
+			paymentTokenAddress: prepared.paymentTokenAddress,
+			escrowContractAddress: prepared.contractAddress,
+			amountMinor: prepared.amountMinor,
+			approveTransaction: prepared.transactions.approve,
+		});
 		txHash = await sendEscrowTransaction({
 			walletAddress: input.walletAddress,
 			chainId: safeChainId(prepared.chainId),
-			transaction: prepared.transaction,
+			transaction: prepared.transactions.deposit,
 		});
 	} catch (cause) {
 		// 只有尚未取得交易哈希时才允许标记为 failed。后续 retry 会重新准备交易，

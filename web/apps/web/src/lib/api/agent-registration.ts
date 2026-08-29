@@ -5,7 +5,12 @@ import {
 	MAX_MATCHING_TAG_LENGTH,
 	normalizeMatchingTag,
 } from "@/lib/platform/matching-tags";
+import {
+	isAtLeastMinimumUsdcAmountMinor,
+	MVP_CURRENCY,
+} from "@/lib/platform/money";
 import { BUSINESS_API_BASE_URL } from "./base-url";
+import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
 
 const ETHEREUM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 
@@ -28,8 +33,11 @@ export const agentRegistrationSchema = z.object({
 			...new Set(tags.map(normalizeMatchingTag).filter(Boolean)),
 		]),
 	pricingType: z.string().trim().min(1, "计价方式不能为空"),
-	priceAmount: z.string().trim().regex(/^\d+$/, "报价必须是非负整数"),
-	priceCurrency: z.string().trim().min(1, "币种不能为空"),
+	priceAmount: z
+		.string()
+		.trim()
+		.refine(isAtLeastMinimumUsdcAmountMinor, "单次服务报价至少为 1 USDC"),
+	priceCurrency: z.literal(MVP_CURRENCY, "报价币种必须是 USDC"),
 	walletAddress: z
 		.string()
 		.trim()
@@ -133,6 +141,8 @@ export async function registerAgent(
 			},
 		};
 	}
+	// 上架 Agent 也是受保护写入；过期会话必须撤下页头旧身份并引导重新签名。
+	if (response.status === 401) notifyAuthSessionExpired();
 
 	let body: unknown;
 	try {

@@ -5,7 +5,6 @@ import { Input } from "@web/ui/components/input";
 import { Label } from "@web/ui/components/label";
 import { Textarea } from "@web/ui/components/textarea";
 import {
-	ArrowRight,
 	Bot,
 	Braces,
 	Check,
@@ -15,6 +14,7 @@ import {
 	KeyRound,
 	Loader2,
 	LockKeyhole,
+	Send,
 	Wallet,
 	X,
 } from "lucide-react";
@@ -36,7 +36,10 @@ import {
 	validateAgentRegistration,
 } from "@/lib/api/agent-registration";
 import { revealFormError } from "@/lib/forms/reveal-form-error";
-import { parseEthToWei } from "@/lib/platform/money";
+import {
+	MIN_USDC_BUSINESS_AMOUNT_MINOR,
+	parseUsdcToMinor,
+} from "@/lib/platform/money";
 import { AICP_TYPESCRIPT_TEMPLATE } from "./aicp-typescript-template";
 
 /**
@@ -63,8 +66,8 @@ const INITIAL_STATE: FormState = {
 	capabilityDesc: "",
 	tags: [],
 	pricingType: "fixed",
-	priceAmount: "0.001",
-	priceCurrency: "ETH",
+	priceAmount: "",
+	priceCurrency: "USDC",
 	payoutWalletAddress: "",
 	serviceEndpoint: "",
 	credentialSecret: "",
@@ -194,18 +197,23 @@ export default function AgentRegistrationForm() {
 			return;
 		}
 
-		const priceAmount = parseEthToWei(form.priceAmount);
+		const priceAmount = parseUsdcToMinor(form.priceAmount);
+		const priceBelowMinimum =
+			priceAmount !== null &&
+			BigInt(priceAmount) < MIN_USDC_BUSINESS_AMOUNT_MINOR;
 		const validation = validateAgentRegistration({
 			...form,
 			// 所有者地址只信任当前会话；可编辑的 payoutWalletAddress 不影响所有权权限。
 			walletAddress: wallet.walletAddress,
 			priceAmount: priceAmount ?? "",
 		});
-		if (!validation.success) {
+		if (!validation.success || priceBelowMinimum) {
 			const nextErrors: AgentRegistrationFieldErrors = {
-				...validation.fieldErrors,
-				...(priceAmount === null
-					? { priceAmount: t("请输入大于 0、最多 18 位小数的 ETH 金额") }
+				...(validation.success ? {} : validation.fieldErrors),
+				...(priceAmount === null || priceBelowMinimum
+					? {
+							priceAmount: t("单次服务报价至少为 1 USDC，最多保留 6 位小数"),
+						}
 					: {}),
 			};
 			setFieldErrors(nextErrors);
@@ -310,7 +318,7 @@ export default function AgentRegistrationForm() {
 								label={t("联系邮箱")}
 								htmlFor="email"
 								error={fieldErrors.email}
-								hint={t("仅用于审核与异常通知，不会在市场公开。")}
+								hint={t("仅用于服务验证与异常通知，不会在市场公开。")}
 							>
 								<Input
 									id="email"
@@ -451,10 +459,12 @@ export default function AgentRegistrationForm() {
 						/>
 						<div className="grid gap-4 sm:grid-cols-2">
 							<Field
-								label={t("每个任务报价（ETH）")}
+								label={t("单次服务报价（USDC）")}
 								htmlFor="priceAmount"
 								error={fieldErrors.priceAmount}
-								hint={t("平台会无损转换为 wei；当前默认固定按任务计价。")}
+								hint={t(
+									"Agent 每完成一次匹配需求的基础报价；成功结算时平台服务费从该收入中扣除。",
+								)}
 							>
 								<div className="relative">
 									<Input
@@ -467,13 +477,14 @@ export default function AgentRegistrationForm() {
 										}
 										inputMode="decimal"
 										className="pr-16 font-mono"
+										placeholder={t("例如：25")}
 										value={form.priceAmount}
 										onChange={(event) =>
 											updateField("priceAmount", event.target.value)
 										}
 									/>
 									<span className="absolute top-3 right-3 text-muted-foreground text-sm">
-										ETH
+										USDC
 									</span>
 								</div>
 							</Field>
@@ -509,7 +520,6 @@ export default function AgentRegistrationForm() {
 							</Field>
 						</div>
 					</section>
-
 				</div>
 			</form>
 
@@ -519,6 +529,8 @@ export default function AgentRegistrationForm() {
 					categoryName={selectedCategory?.name ?? "—"}
 					state={state}
 					taxonomyReady={taxonomy.kind === "loaded"}
+					walletStatus={wallet.status}
+					onConnect={() => wallet.connect()}
 				/>
 				<section className="cyber-panel rounded-2xl border p-5">
 					<p className="font-mono text-secondary text-xs">LISTING CHECKLIST</p>
@@ -577,41 +589,66 @@ function AgentSubmitCard({
 	categoryName,
 	state,
 	taxonomyReady,
+	walletStatus,
+	onConnect,
 }: {
 	form: FormState;
 	categoryName: string;
 	state: SubmitState;
 	taxonomyReady: boolean;
+	walletStatus:
+		| "checking"
+		| "disconnected"
+		| "connecting"
+		| "connected"
+		| "error";
+	onConnect(): Promise<void>;
 }) {
 	const { t } = useLocale();
+	const walletBusy =
+		walletStatus === "checking" || walletStatus === "connecting";
+	const walletConnected = walletStatus === "connected";
 	return (
 		<section className="cyber-panel cyber-corner rounded-2xl border p-5">
-			<h2 className="font-semibold text-lg">{t("提交审核")}</h2>
+			<h2 className="font-semibold text-lg">{t("上架确认")}</h2>
 			<dl className="mt-5 space-y-3 text-sm">
 				<AgentPreviewRow label={t("Agent 名称")} value={form.name || "—"} />
 				<AgentPreviewRow label={t("服务分类")} value={categoryName} />
 				<AgentPreviewRow
-					label={t("每个任务报价（ETH）")}
-					value={`${form.priceAmount || "—"} ETH`}
+					label={t("单次服务报价（USDC）")}
+					value={form.priceAmount === "" ? "—" : `${form.priceAmount} USDC`}
 				/>
 			</dl>
-			<div className="mt-5 rounded-lg border border-tertiary/20 bg-tertiary-container p-3 text-tertiary-container-foreground text-xs leading-5">
-				{t("提交后，平台将自动检查服务连通性和接入要求。")}
+			<div className="mt-5 space-y-2 rounded-lg border border-tertiary/20 bg-tertiary-container p-3 text-tertiary-container-foreground text-xs leading-5">
+				<p>{t("提交后，平台将自动检查服务连通性和接入要求。")}</p>
+				<p>
+					{t(
+						"你的报价是发布者看到的成交金额；平台服务费仅在成功结算时从 Agent 收入中扣除，最终明细会在验收前展示。",
+					)}
+				</p>
 			</div>
 			<Button
 				form={AGENT_REGISTRATION_FORM_ID}
-				type="submit"
+				type={walletConnected ? "submit" : "button"}
 				size="lg"
 				className="mt-5 w-full rounded-full shadow-[0_0_24px_var(--brand-glow)]"
-				disabled={state.kind === "submitting" || !taxonomyReady}
+				disabled={state.kind === "submitting" || walletBusy || !taxonomyReady}
+				onClick={walletConnected ? undefined : onConnect}
 			>
-				{state.kind === "submitting" ? (
+				{state.kind === "submitting" || walletBusy ? (
 					<Loader2 className="size-4 animate-spin" aria-hidden />
+				) : walletConnected ? (
+					<Send className="size-4" aria-hidden />
 				) : (
-					<Check className="size-4" aria-hidden />
+					<Wallet className="size-4" aria-hidden />
 				)}
-				{state.kind === "submitting" ? t("提交中…") : t("提交审核")}
-				<ArrowRight className="size-4" aria-hidden />
+				{state.kind === "submitting"
+					? t("提交中…")
+					: walletBusy
+						? t("正在连接钱包")
+						: walletConnected
+							? t("提交上架")
+							: t("连接钱包后提交")}
 			</Button>
 			{state.kind === "success" && (
 				<p
@@ -620,7 +657,7 @@ function AgentSubmitCard({
 				>
 					<CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
 					<span>
-						{t("创建成功并进入待审核，")}
+						{t("提交成功，等待平台验证，")}
 						<Link
 							className="font-medium underline"
 							href={`/agents/${state.agentId}/edit`}

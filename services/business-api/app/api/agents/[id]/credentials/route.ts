@@ -12,7 +12,6 @@
  */
 import {
   createReplaceCredentialsHttpHandler,
-  type ReplaceCredentialsRouteContext,
 } from "../../../../../src/http/replace-credentials-handler";
 import { createProductionReplaceCredentialsDeps } from "../../../../../src/http/replace-credentials-production-deps";
 import { createProductionResolveActorId } from "../../../../../src/http/auth-production-deps";
@@ -21,7 +20,10 @@ import { handleCorsPreflight } from "../../../../../src/http/cors";
 
 let handler: ReturnType<typeof createReplaceCredentialsHttpHandler> | undefined;
 
-export async function PUT(request: Request, context: ReplaceCredentialsRouteContext): Promise<Response> {
+/** 框架导出使用 Next.js 16 的严格形状；内部 handler 仍接受同步对象以便独立测试。 */
+type NextCredentialsRouteContext = Readonly<{ params: Promise<{ id: string }> }>;
+
+export async function PUT(request: Request, context: NextCredentialsRouteContext): Promise<Response> {
   if (!handler) {
     handler = createReplaceCredentialsHttpHandler({
       ...createProductionReplaceCredentialsDeps(),

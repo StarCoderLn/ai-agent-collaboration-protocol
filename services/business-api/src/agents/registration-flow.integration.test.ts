@@ -124,7 +124,7 @@ function validCreateBody(overrides?: Partial<Record<string, unknown>>): Record<s
     capabilityDesc: "does things",
     tags: ["tag-a"],
     pricingType: "fixed",
-    price: { amount: "1000", currency: "USDC" },
+    price: { amount: "1000000", currency: "USDC" },
     walletAddress: WALLET_ADDRESS,
     payoutWalletAddress: PAYOUT_WALLET_ADDRESS,
     serviceEndpoint: "https://agent.example.com",

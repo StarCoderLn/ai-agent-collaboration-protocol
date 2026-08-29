@@ -80,6 +80,15 @@ describe("New task assignment mode", () => {
 			taskId: "50000000-0000-4000-8000-000000000001",
 			status: "awaiting_escrow",
 			statusVersion: "2",
+			preview: {
+				escrowAmountMinor: "12800000",
+				platformFeeMinor: "51200",
+				agentReceivesMinor: "12748800",
+				feeBasisPoints: "40",
+				minimumPlatformFeeMinor: "50000",
+				feeRuleVersion: "fee-v3-usdc",
+				irreversibleWarning: "链上托管确认后只能按状态机释放资金",
+			},
 		});
 		// 返回真实接口形状的受控标签，用来确认页面只采用正文中明确出现的标签。
 		mocks.suggestTaskTags.mockResolvedValue([
@@ -107,6 +116,12 @@ describe("New task assignment mode", () => {
 		expect(screen.getByLabelText("任务标题")).toHaveValue("");
 		expect(screen.getByLabelText("详细需求")).toHaveValue("");
 		expect(screen.getByLabelText("固定预算")).toHaveValue("");
+		expect(screen.getByLabelText("固定预算")).toHaveAttribute(
+			"placeholder",
+			"例如：50",
+		);
+		expect(screen.getByText("预算外平台费用")).toBeInTheDocument();
+		expect(screen.getByText("0 USDC")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "截止时间" })).toHaveTextContent(
 			"请选择截止日期",
 		);
@@ -151,7 +166,7 @@ describe("New task assignment mode", () => {
 
 	it("提交空表单时立即定位到第一个错误字段", async () => {
 		render(<NewTaskForm />);
-		const publish = screen.getByRole("button", { name: /发布需求/ });
+		const publish = screen.getByRole("button", { name: /发布并继续托管/ });
 		await waitFor(() => expect(publish).toBeEnabled());
 		fireEvent.click(publish);
 
@@ -176,13 +191,13 @@ describe("New task assignment mode", () => {
 			target: { value: request },
 		});
 		fireEvent.change(screen.getByLabelText("固定预算"), {
-			target: { value: "0.0128" },
+			target: { value: "12.8" },
 		});
 		selectFutureDeadline();
 		await selectProductCategory();
 		fireEvent.click(await screen.findByRole("button", { name: "next.js" }));
 
-		const publish = screen.getByRole("button", { name: /发布需求/ });
+		const publish = screen.getByRole("button", { name: /发布并继续托管/ });
 		await waitFor(() => expect(publish).toBeEnabled());
 		fireEvent.click(publish);
 
@@ -193,8 +208,8 @@ describe("New task assignment mode", () => {
 			description: request,
 			categoryId: "40000000-0000-4000-8000-000000000023",
 			tags: ["next.js"],
-			pricing: { type: "fixed", amountMinor: "12800000000000000" },
-			currency: "ETH",
+			pricing: { type: "fixed", amountMinor: "12800000" },
+			currency: "USDC",
 		});
 		// 未直接展示的字段仍从正文、分类和标签可追溯地整理，不要求用户二次填写。
 		expect(input.acceptanceCriteria.length).toBeGreaterThanOrEqual(10);
@@ -223,13 +238,41 @@ describe("New task assignment mode", () => {
 		selectFutureDeadline();
 		await selectProductCategory();
 
-		const publish = screen.getByRole("button", { name: /发布需求/ });
+		const publish = screen.getByRole("button", { name: /发布并继续托管/ });
 		await waitFor(() => expect(publish).toBeEnabled());
 		fireEvent.click(publish);
 
 		expect(
 			await screen.findByText(
 				"请至少用 30 个字符描述目标、使用场景和必须满足的限制",
+			),
+		).toBeInTheDocument();
+		expect(mocks.createTaskDraft).not.toHaveBeenCalled();
+	});
+
+	it("在请求服务端前拒绝低于 1 USDC 的任务预算", async () => {
+		render(<NewTaskForm />);
+		fireEvent.change(screen.getByLabelText("任务标题"), {
+			target: { value: "开发团队运营数据后台" },
+		});
+		fireEvent.change(screen.getByLabelText("详细需求"), {
+			target: {
+				value:
+					"开发团队运营数据后台，支持成员权限、任务统计和交付验收，并提供自动化测试与使用说明。",
+			},
+		});
+		fireEvent.change(screen.getByLabelText("固定预算"), {
+			target: { value: "0.99" },
+		});
+		selectFutureDeadline();
+		await selectProductCategory();
+		fireEvent.click(await screen.findByRole("button", { name: "next.js" }));
+
+		fireEvent.click(screen.getByRole("button", { name: /发布并继续托管/ }));
+
+		expect(
+			await screen.findByText(
+				"任务预算须在 1–100,000 USDC 之间，最多保留 6 位小数",
 			),
 		).toBeInTheDocument();
 		expect(mocks.createTaskDraft).not.toHaveBeenCalled();
@@ -248,7 +291,7 @@ describe("New task assignment mode", () => {
 			},
 		});
 		fireEvent.change(screen.getByLabelText("固定预算"), {
-			target: { value: "0.01" },
+			target: { value: "50" },
 		});
 		selectFutureDeadline();
 		await selectProductCategory();
@@ -261,7 +304,7 @@ describe("New task assignment mode", () => {
 			screen.getByRole("button", { name: "移除标签 rag workflow" }),
 		).toBeInTheDocument();
 
-		const publish = screen.getByRole("button", { name: /发布需求/ });
+		const publish = screen.getByRole("button", { name: /发布并继续托管/ });
 		await waitFor(() => expect(publish).toBeEnabled());
 		fireEvent.click(publish);
 
@@ -283,24 +326,20 @@ describe("New task assignment mode", () => {
 		expect(overflow).toHaveTextContent("+1");
 	});
 
-	it("keeps automatic assignment simple and hides internal ranking configuration", () => {
+	it("keeps automatic execution as the product default without exposing workflow internals", () => {
 		render(<NewTaskForm />);
 
 		fireEvent.click(screen.getByRole("button", { name: "展开高级设置" }));
-		fireEvent.click(screen.getByRole("radio", { name: /平台自动分配/ }));
 
 		expect(screen.queryByText("自动分配规则")).not.toBeInTheDocument();
 		expect(screen.queryByText("排序依据")).not.toBeInTheDocument();
 		expect(screen.queryByText("价格上限")).not.toBeInTheDocument();
 		expect(screen.queryByText("失败回退")).not.toBeInTheDocument();
-		expect(
-			screen.getByText(
-				"平台会在预算内选择最合适的候选；没有合适结果时再由你选择。",
-			),
-		).toBeInTheDocument();
+		expect(screen.queryByRole("radio", { name: /平台自动分配/ })).not.toBeInTheDocument();
+		expect(screen.getByText("平台自动执行完整流程，最终交付由你验收")).toBeInTheDocument();
 	});
 
-	it("preserves the automatic assignment contract without exposing it in the interface", async () => {
+	it("always submits the automatic assignment contract without another user choice", async () => {
 		render(<NewTaskForm />);
 		fireEvent.change(screen.getByLabelText("任务标题"), {
 			target: { value: "开发团队项目管理后台" },
@@ -312,38 +351,30 @@ describe("New task assignment mode", () => {
 			},
 		});
 		fireEvent.change(screen.getByLabelText("固定预算"), {
-			target: { value: "0.0128" },
+			target: { value: "12.8" },
 		});
 		selectFutureDeadline();
 		await selectProductCategory();
 		fireEvent.click(await screen.findByRole("button", { name: "next.js" }));
-		fireEvent.click(screen.getByRole("button", { name: "展开高级设置" }));
-		fireEvent.click(screen.getByRole("radio", { name: /平台自动分配/ }));
 
-		fireEvent.click(screen.getByRole("button", { name: /发布需求/ }));
+		fireEvent.click(screen.getByRole("button", { name: /发布并继续托管/ }));
 		await waitFor(() => expect(mocks.createTaskDraft).toHaveBeenCalledOnce());
 		expect(mocks.createTaskDraft.mock.calls[0]?.[0]).toMatchObject({
 			assignmentMode: {
 				mode: "automatic",
-				priceCapMinor: "12800000000000000",
+				priceCapMinor: "12800000",
 				rankingBasis: "active-ranking-rule",
 				fallbackOnFail: "manual",
 			},
+			acceptanceMode: { mode: "manual" },
 		});
 	});
 
-	it("marks rule-based acceptance distinctly from the default publisher review", () => {
+	it("explains that only the final delivery requires publisher acceptance", () => {
 		render(<NewTaskForm />);
 
-		fireEvent.click(screen.getByRole("button", { name: "展开高级设置" }));
-		expect(screen.getByText("发布者人工验收")).toBeInTheDocument();
-		fireEvent.click(screen.getByRole("radio", { name: /规则自动验收/ }));
-
-		expect(screen.queryByText("发布者人工验收")).not.toBeInTheDocument();
-		expect(screen.getAllByText("规则自动验收")).toHaveLength(2);
-		expect(
-			screen.getByText("仅适用于已经配置机器验收规则的任务"),
-		).toBeInTheDocument();
+		expect(screen.getByText("中间阶段自动推进，最终交付由你验收")).toBeInTheDocument();
+		expect(screen.queryByRole("radio", { name: /规则自动验收/ })).not.toBeInTheDocument();
 	});
 });
 
