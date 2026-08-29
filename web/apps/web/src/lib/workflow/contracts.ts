@@ -43,42 +43,42 @@ export const WORKFLOW_AGENT_CATALOG = [
 		step: "design",
 		strategy: "DeepSeek 直连",
 		name: "快速界面设计 Agent",
-		description: "一次生成设计 token、页面、组件与交互规范。",
+		description: "直接生成设计决策与可运行高保真原型。",
 	},
 	{
 		id: "design-mastra",
 		step: "design",
 		strategy: "Mastra 编排",
 		name: "Mastra 产品设计 Agent",
-		description: "先规划需求覆盖，再生成结构化设计稿。",
+		description: "先规划需求覆盖，再生成可运行设计原型。",
 	},
 	{
 		id: "design-state-machine",
 		step: "design",
 		strategy: "自研状态机",
 		name: "设计评审与完善 Agent",
-		description: "显式校验交互、响应式、无障碍和素材覆盖。",
+		description: "评审设计后生成并校验可运行高保真原型。",
 	},
 	{
 		id: "code-direct",
 		step: "code",
 		strategy: "DeepSeek 直连",
 		name: "快速代码生成 Agent",
-		description: "直接生成文件树、代码、运行说明和测试计划。",
+		description: "直接继承设计原型并补充交互实现。",
 	},
 	{
 		id: "code-mastra",
 		step: "code",
 		strategy: "Mastra 编排",
 		name: "Mastra 编程 Agent",
-		description: "先规划实现范围，再生成可运行代码制品。",
+		description: "先规划实现范围，再增量完善设计原型。",
 	},
 	{
 		id: "code-state-machine",
 		step: "code",
 		strategy: "自研状态机",
 		name: "规划测试修复 Coding Agent",
-		description: "规划、编码、静态评审并最多修复一次。",
+		description: "规划、增量编码、设计继承校验并最多修复一次。",
 	},
 ] as const satisfies readonly {
 	id: WorkflowAgentId;
@@ -135,21 +135,20 @@ export const RequirementsArtifactSchema = z
 	.strict();
 export type RequirementsArtifact = z.infer<typeof RequirementsArtifactSchema>;
 
-export const DesignArtifactSchema = z
+const DesignBaseSchema = z
 	.object({
-		schemaVersion: z.literal("design.artifact.v0.1"),
 		taskId: Text,
 		title: Text,
 		direction: Text,
 		tokens: z
 			.object({
-				primaryColor: Text,
-				secondaryColor: Text,
-				backgroundColor: Text,
-				textColor: Text,
-				borderRadius: Text,
-				spacingBase: Text,
-				fontFamily: Text,
+				primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+				secondaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+				backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+				textColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+				borderRadius: z.enum(["0", "4px", "8px", "12px", "16px", "999px"]),
+				spacingBase: z.enum(["4px", "6px", "8px"]),
+				fontFamily: z.string().trim().min(1).max(500),
 			})
 			.strict(),
 		pages: z.array(
@@ -177,11 +176,70 @@ export const DesignArtifactSchema = z
 		responsiveRules: z.array(Text),
 		accessibilityRules: z.array(Text),
 		assetPlan: z.array(Text),
-		svgPreview: Text,
 		generatedBy: GeneratedBySchema,
 		generatedAt: z.string().datetime(),
 	})
 	.strict();
+
+export const DesignPreviewSchema = z
+	.object({
+		navigation: z
+			.object({
+				brand: Text,
+				items: z.array(z.object({ label: Text, active: z.boolean() }).strict()),
+				action: Text.nullable(),
+			})
+			.strict()
+			.nullable(),
+		hero: z
+			.object({
+				eyebrow: Text,
+				title: Text,
+				description: Text,
+				primaryAction: Text,
+				secondaryAction: Text.nullable(),
+			})
+			.strict(),
+		metrics: z.array(
+			z.object({
+				label: Text,
+				value: Text,
+				detail: Text,
+				tone: z.enum(["neutral", "primary", "success", "warning", "danger"]),
+			}).strict(),
+		),
+		sections: z.array(
+			z.object({
+				id: Text,
+				kind: z.enum(["cards", "list", "progress", "table", "chart", "form", "timeline"]),
+				layout: z.enum(["full", "split", "grid-2", "grid-3", "grid-4"]),
+				title: Text,
+				description: Text.nullable(),
+				items: z.array(
+					z.object({
+						title: Text,
+						description: Text.nullable(),
+						value: Text.nullable(),
+						status: Text.nullable(),
+						progress: z.number().int().min(0).max(100).nullable(),
+						action: Text.nullable(),
+						tone: z.enum(["neutral", "primary", "success", "warning", "danger"]),
+					}).strict(),
+				),
+			}).strict(),
+		),
+	})
+	.strict();
+export type DesignPreview = z.infer<typeof DesignPreviewSchema>;
+
+export const DesignArtifactSchema = DesignBaseSchema.extend({
+	schemaVersion: z.literal("design.artifact.v0.3"),
+	preview: DesignPreviewSchema,
+	prototype: z.object({
+		pageTsx: z.string().trim().min(300).max(30_000),
+		globalsCss: z.string().trim().min(300).max(30_000),
+	}).strict(),
+}).strict();
 export type DesignArtifact = z.infer<typeof DesignArtifactSchema>;
 
 export const CodeArtifactSchema = z
@@ -211,6 +269,13 @@ export const WorkflowArtifactSchema = z.discriminatedUnion("schemaVersion", [
 	CodeArtifactSchema,
 ]);
 export type WorkflowArtifact = z.infer<typeof WorkflowArtifactSchema>;
+
+/** 统一识别当前唯一的可运行设计制品，调用方无需理解协议版本细节。 */
+export function isDesignArtifact(
+	artifact: WorkflowArtifact,
+): artifact is DesignArtifact {
+	return artifact.schemaVersion === "design.artifact.v0.3";
+}
 
 const BaseExecutionRequestSchema = z.object({
 	schemaVersion: z.literal("workflow.execute.v0.1"),

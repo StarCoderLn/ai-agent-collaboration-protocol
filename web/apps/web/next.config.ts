@@ -11,12 +11,17 @@ if (
 	(!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(localDistDir) ||
 		localDistDir.split("/").includes(".."))
 ) {
-	throw new Error("AICP_NEXT_DIST_DIR must be a relative path inside the Web project");
+	throw new Error(
+		"AICP_NEXT_DIST_DIR must be a relative path inside the Web project",
+	);
 }
 
 const nextConfig: NextConfig = {
 	typedRoutes: true,
 	reactCompiler: true,
+	// esbuild 会在运行时选择当前平台的原生二进制。若让 Turbopack 继续遍历它的可选平台
+	// 包，会把包内 README 等资源误当成模块；Route Handler 只需通过 Node 原生加载它。
+	serverExternalPackages: ["esbuild"],
 	// 本地完整体验是用户可见的产品界面，隐藏 Next.js 左下角开发工具浮标；编译与
 	// 运行时错误仍会正常显示，不影响开发诊断。
 	devIndicators: false,

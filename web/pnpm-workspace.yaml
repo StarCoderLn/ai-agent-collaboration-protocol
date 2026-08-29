@@ -2,6 +2,7 @@ packages:
   - apps/*
   - packages/*
 allowBuilds:
+  esbuild: true
   sharp: true
 catalog:
   dotenv: ^17.4.2

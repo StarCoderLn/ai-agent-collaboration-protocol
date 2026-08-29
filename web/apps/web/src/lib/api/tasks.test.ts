@@ -5,6 +5,8 @@ import {
 	createTaskDraft,
 	getTaskAcceptancePreview,
 	getTaskCandidates,
+	getTaskPreview,
+	getTaskWorkflow,
 	listOwnedTasks,
 	listPublicTasks,
 	listTaskCategories,
@@ -12,6 +14,7 @@ import {
 	subscribeTaskEvents,
 	TaskApiRequestError,
 } from "./tasks";
+import { subscribeAuthSessionExpired } from "@/lib/wallet/session-expiry";
 
 const taskId = "11111111-1111-4111-8111-111111111111";
 const categoryId = "40000000-0000-4000-8000-000000000001";
@@ -66,7 +69,7 @@ describe("formal task API client", () => {
 				categoryId,
 				tags: ["agent"],
 				pricing: { type: "fixed", amountMinor: "12800000000000000" },
-				currency: "ETH",
+				currency: "USDC",
 				deadline: "2026-09-30T10:00:00.000Z",
 				requiredCapability: "TypeScript",
 				attachments: [],
@@ -120,6 +123,114 @@ describe("formal task API client", () => {
 			pricing: null,
 			visibility: "private",
 		});
+	});
+
+	it("受保护任务接口返回 401 时通知钱包会话立即失效", async () => {
+		const expired = vi.fn();
+		const unsubscribe = subscribeAuthSessionExpired(expired);
+		vi.mocked(fetch).mockResolvedValueOnce(
+			Response.json(
+				{ error_code: "UNAUTHENTICATED", message: "登录会话已过期", retryable: false },
+				{ status: 401 },
+			),
+		);
+
+		await expect(listOwnedTasks()).rejects.toMatchObject({ status: 401 });
+		expect(expired).toHaveBeenCalledTimes(1);
+		unsubscribe();
+	});
+
+	it("parses the server-authoritative fee rule used before escrow", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			Response.json({
+				taskId,
+				status: "awaiting_escrow",
+				summary: {
+					title: "开发可信任务平台",
+					description:
+						"展示托管前的完整费用明细，并确保发布者不会在预算外被额外收费。",
+					acceptanceCriteria: "费用明细来自服务端权威规则。",
+					deliverableFormat: "源码与测试",
+					categoryId,
+					tags: ["agent"],
+					pricing: { type: "fixed", amountMinor: "100000000" },
+					currency: "USDC",
+					deadline: "2026-09-30T10:00:00.000Z",
+					requiredCapability: "TypeScript",
+					attachments: [],
+				},
+				valid: true,
+				issues: [],
+				amountMinor: "100000000",
+				platformFeeMinor: "400000",
+				agentReceivesMinor: "99600000",
+				feeBasisPoints: "40",
+				minimumPlatformFeeMinor: "50000",
+				feeRuleVersion: "fee-v3-usdc",
+				irreversibleWarning: "链上托管确认后只能按状态机释放资金",
+			}),
+		);
+
+		await expect(getTaskPreview(taskId)).resolves.toMatchObject({
+			feeBasisPoints: "40",
+			minimumPlatformFeeMinor: "50000",
+			platformFeeMinor: "400000",
+		});
+	});
+
+	it("validates the persisted multi-Agent workflow before exposing it to the page", async () => {
+		const workflowNodeId = "66666666-6666-4666-8666-666666666666";
+		vi.mocked(fetch).mockResolvedValueOnce(
+			Response.json({
+				run: {
+					id: "77777777-7777-4777-8777-777777777777",
+					taskId,
+					status: "running",
+					version: "3",
+					currency: "USDC",
+					totalBudgetMinor: "100000000",
+					releasedAmountMinor: "20000000",
+					refundableAmountMinor: "80000000",
+					createdAt: "2026-08-23T00:00:00.000Z",
+					updatedAt: "2026-08-23T00:10:00.000Z",
+				},
+				nodes: [
+					{
+						id: workflowNodeId,
+						key: "requirements",
+						kind: "prd",
+						title: "需求拆解",
+						description: "把用户需求拆成可验收任务。",
+						categoryId,
+						tags: ["prd"],
+						requiredCapability: "需求分析",
+						inputContract: "task.v1",
+						outputContract: "prd.v1",
+						budgetCapMinor: "20000000",
+						positionIndex: 0,
+						status: "accepted",
+						version: "4",
+						acceptedAt: "2026-08-23T00:09:00.000Z",
+						assignment: null,
+						execution: null,
+						candidateRecord: null,
+						latestResultBatch: null,
+						acceptance: null,
+						latestRework: null,
+					},
+				],
+				edges: [],
+			}),
+		);
+
+		await expect(getTaskWorkflow(taskId)).resolves.toMatchObject({
+			run: { currency: "USDC", releasedAmountMinor: "20000000" },
+			nodes: [{ id: workflowNodeId, status: "accepted" }],
+		});
+		expect(fetch).toHaveBeenCalledWith(
+			`https://business-api.test/api/tasks/${taskId}/workflow`,
+			expect.objectContaining({ credentials: "include" }),
+		);
 	});
 
 	it("rejects public amounts encoded as JSON numbers", async () => {
@@ -287,13 +398,21 @@ describe("formal task API client", () => {
 				status: "prepared",
 				chainId: "31337",
 				contractAddress: "0x1111111111111111111111111111111111111111",
+				paymentTokenAddress: "0x2222222222222222222222222222222222222222",
 				taskKey: `0x${"ab".repeat(32)}`,
-				transaction: {
-					to: "0x1111111111111111111111111111111111111111",
-					data: `0x${"cd".repeat(36)}`,
-					value: "0x2386f26fc10000",
+				transactions: {
+					approve: {
+						to: "0x2222222222222222222222222222222222222222",
+						data: `0x${"cd".repeat(36)}`,
+						value: "0x0",
+					},
+					deposit: {
+						to: "0x1111111111111111111111111111111111111111",
+						data: `0x${"ef".repeat(36)}`,
+						value: "0x0",
+					},
 				},
-				amountWei: "10000000000000000",
+				amountMinor: "10000000",
 			}),
 		);
 
@@ -302,8 +421,9 @@ describe("formal task API client", () => {
 			"prepare-escrow-contract-test",
 		);
 
-		expect(prepared.amountWei).toBe("10000000000000000");
-		expect(prepared.transaction.value).toBe("0x2386f26fc10000");
+		expect(prepared.amountMinor).toBe("10000000");
+		expect(prepared.transactions.approve.value).toBe("0x0");
+		expect(prepared.transactions.deposit.value).toBe("0x0");
 	});
 
 	it("confirms the exact server preview instead of accepting an unpriced result", async () => {
@@ -314,10 +434,10 @@ describe("formal task API client", () => {
 			status: "awaiting_review" as const,
 			statusVersion: "9",
 			settlement: {
-				grossAmountMinor: "2400000000000000",
-				platformFeeMinor: "50000000000000",
-				agentAmountMinor: "2350000000000000",
-				feeRuleVersion: "fee-v2-native-eth",
+				grossAmountMinor: "24000000",
+				platformFeeMinor: "50000",
+				agentAmountMinor: "23950000",
+				feeRuleVersion: "fee-v3-usdc",
 			},
 		};
 		vi.mocked(fetch)

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { BUSINESS_API_BASE_URL } from "./base-url";
+import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
 
 /**
  * 正式任务 API 的浏览器边界。页面不保存任务主状态，所有金额、版本和状态都以服务端
@@ -130,6 +131,8 @@ const taskSubmittedSchema = z.object({
 		escrowAmountMinor: integerStringSchema,
 		platformFeeMinor: integerStringSchema,
 		agentReceivesMinor: integerStringSchema,
+		feeBasisPoints: integerStringSchema,
+		minimumPlatformFeeMinor: integerStringSchema,
 		feeRuleVersion: z.string(),
 		irreversibleWarning: z.string(),
 	}),
@@ -221,6 +224,8 @@ const taskPreviewSchema = z.object({
 	amountMinor: integerStringSchema.nullable(),
 	platformFeeMinor: integerStringSchema.nullable(),
 	agentReceivesMinor: integerStringSchema.nullable(),
+	feeBasisPoints: integerStringSchema.nullable(),
+	minimumPlatformFeeMinor: integerStringSchema.nullable(),
 	feeRuleVersion: z.string().nullable(),
 	irreversibleWarning: z.string(),
 });
@@ -228,11 +233,17 @@ const taskPreviewSchema = z.object({
 const ethereumAddressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const hexDataSchema = z.string().regex(/^0x[0-9a-fA-F]*$/);
 const transactionHashSchema = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
+const walletTransactionSchema = z.object({
+	to: ethereumAddressSchema,
+	data: hexDataSchema,
+	value: hexDataSchema,
+});
 const escrowIntentStatusSchema = z.enum([
 	"prepared",
 	"submitted",
 	"pending_confirmation",
 	"confirmed",
+	"partially_released",
 	"released",
 	"refunded",
 	"failed",
@@ -243,13 +254,13 @@ const escrowPreparedSchema = z.object({
 	status: escrowIntentStatusSchema,
 	chainId: integerStringSchema,
 	contractAddress: ethereumAddressSchema,
+	paymentTokenAddress: ethereumAddressSchema,
 	taskKey: hexDataSchema,
-	transaction: z.object({
-		to: ethereumAddressSchema,
-		data: hexDataSchema,
-		value: hexDataSchema,
+	transactions: z.object({
+		approve: walletTransactionSchema,
+		deposit: walletTransactionSchema,
 	}),
-	amountWei: integerStringSchema,
+	amountMinor: integerStringSchema,
 });
 const escrowStatusSchema = z.object({
 	taskId: uuidSchema,
@@ -257,7 +268,7 @@ const escrowStatusSchema = z.object({
 	chainId: integerStringSchema,
 	contractAddress: ethereumAddressSchema,
 	taskKey: hexDataSchema,
-	amountWei: integerStringSchema,
+	amountMinor: integerStringSchema,
 	txHash: transactionHashSchema.nullable(),
 	confirmations: integerStringSchema,
 	requiredConfirmations: integerStringSchema,
@@ -275,10 +286,10 @@ const escrowStatusSchema = z.object({
 		.optional(),
 });
 const escrowRetrySchema = escrowStatusSchema.extend({
-	transaction: z.object({
-		to: ethereumAddressSchema,
-		data: hexDataSchema,
-		value: hexDataSchema,
+	paymentTokenAddress: ethereumAddressSchema,
+	transactions: z.object({
+		approve: walletTransactionSchema,
+		deposit: walletTransactionSchema,
 	}),
 });
 
@@ -337,6 +348,12 @@ const dispatchAttemptSchema = z.object({
 const assignmentResultSchema = z.object({
 	assignment: assignmentSchema,
 	dispatchAttempt: dispatchAttemptSchema,
+	replayed: z.boolean(),
+});
+const executionRetrySchema = z.object({
+	taskId: uuidSchema,
+	assignmentId: uuidSchema,
+	transitionEventId: uuidSchema,
 	replayed: z.boolean(),
 });
 
@@ -499,6 +516,165 @@ const taskEventDataSchema = z.object({
 	createdAt: isoDateTimeSchema,
 });
 
+const workflowRunStatusSchema = z.enum([
+	"planning",
+	"running",
+	"awaiting_review",
+	"completed",
+	"failed",
+	"disputed",
+	"cancelled",
+]);
+const workflowNodeStatusSchema = z.enum([
+	"blocked",
+	"matching",
+	"awaiting_agent_acceptance",
+	"executing",
+	"execution_failed",
+	"awaiting_review",
+	"rework",
+	"accepted",
+	"disputed",
+	"cancelled",
+]);
+const workflowArtifactSchema = z.object({
+	id: uuidSchema,
+	index: z.number().int().positive(),
+	summary: z.string(),
+	kind: z.enum(["inline", "file"]),
+	contentOrFileRef: z.string(),
+	mimeType: z.string(),
+	sizeBytes: integerStringSchema,
+	generatedAt: isoDateTimeSchema,
+	note: z.string().nullable(),
+});
+const workflowNodeSchema = z.object({
+	id: uuidSchema,
+	key: z.string(),
+	kind: z.string(),
+	title: z.string(),
+	description: z.string(),
+	categoryId: uuidSchema,
+	tags: z.array(z.string()),
+	requiredCapability: z.string(),
+	inputContract: z.string(),
+	outputContract: z.string(),
+	budgetCapMinor: integerStringSchema,
+	positionIndex: z.number().int().nonnegative(),
+	status: workflowNodeStatusSchema,
+	version: integerStringSchema,
+	acceptedAt: isoDateTimeSchema.nullable(),
+	assignment: z
+		.object({
+			id: uuidSchema,
+			agentId: uuidSchema,
+			agentName: z.string(),
+			status: z.string(),
+			agreedAmountMinor: integerStringSchema,
+			acceptBy: isoDateTimeSchema,
+		})
+		.nullable(),
+	execution: z
+		.object({
+			progress: z.number().int().min(0).max(100),
+			state: z.string(),
+		})
+		.nullable(),
+	candidateRecord: z
+		.object({
+			id: uuidSchema,
+			ruleVersion: z.string(),
+			// 候选来自 Go 分发引擎，但仍在浏览器边界逐项校验，不能让 unknown 渗入关系图。
+			candidates: z.array(candidateSchema),
+			finalSelectionAgentId: uuidSchema.nullable(),
+		})
+		.nullable(),
+	latestResultBatch: z
+		.object({
+			id: uuidSchema,
+			batchNo: z.number().int().positive(),
+			submittedAt: isoDateTimeSchema,
+			artifacts: z.array(workflowArtifactSchema),
+		})
+		.nullable(),
+	acceptance: z
+		.object({
+			id: uuidSchema,
+			resultId: uuidSchema,
+			grossAmountMinor: integerStringSchema,
+			platformFeeMinor: integerStringSchema,
+			agentAmountMinor: integerStringSchema,
+			feeRuleVersion: z.string(),
+			createdAt: isoDateTimeSchema,
+			release: z
+				.object({ status: z.string(), txHash: transactionHashSchema.nullable() })
+				.nullable(),
+		})
+		.nullable(),
+	latestRework: z
+		.object({
+			id: uuidSchema,
+			resultId: uuidSchema,
+			requestNo: z.number().int().positive(),
+			reason: z.string(),
+			createdAt: isoDateTimeSchema,
+		})
+		.nullable(),
+});
+const formalWorkflowSchema = z.object({
+	run: z.object({
+		id: uuidSchema,
+		taskId: uuidSchema,
+		status: workflowRunStatusSchema,
+		version: integerStringSchema,
+		currency: z.literal("USDC"),
+		totalBudgetMinor: integerStringSchema,
+		releasedAmountMinor: integerStringSchema,
+		refundableAmountMinor: integerStringSchema,
+		createdAt: isoDateTimeSchema,
+		updatedAt: isoDateTimeSchema,
+	}),
+	nodes: z.array(workflowNodeSchema).min(1),
+	edges: z.array(
+		z.object({
+			id: uuidSchema,
+			sourceNodeId: uuidSchema,
+			targetNodeId: uuidSchema,
+			artifactContract: z.string(),
+		}),
+	),
+});
+const workflowAcceptancePreviewSchema = z.object({
+	taskId: uuidSchema,
+	workflowNodeId: uuidSchema,
+	resultId: uuidSchema,
+	nodeStatus: workflowNodeStatusSchema,
+	nodeVersion: integerStringSchema,
+	settlement: settlementSchema,
+});
+const workflowAcceptanceResultSchema = z.object({
+	acceptanceId: uuidSchema,
+	taskId: uuidSchema,
+	workflowNodeId: uuidSchema,
+	resultId: uuidSchema,
+	nodeStatus: workflowNodeStatusSchema,
+	nodeVersion: integerStringSchema,
+	runStatus: workflowRunStatusSchema,
+	runVersion: integerStringSchema,
+	settlement: settlementSchema,
+});
+const workflowReworkResultSchema = z.object({
+	taskId: uuidSchema,
+	workflowNodeId: uuidSchema,
+	resultId: uuidSchema,
+	requestId: uuidSchema,
+	requestNo: z.number().int().positive(),
+	nodeStatus: workflowNodeStatusSchema,
+	nodeVersion: integerStringSchema,
+	runStatus: workflowRunStatusSchema,
+	runVersion: integerStringSchema,
+});
+
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
 export type PublicTask = z.infer<typeof publicTaskSchema>;
 export type OwnedTaskSummary = z.infer<typeof ownedTaskSummarySchema>;
@@ -513,6 +689,7 @@ export type EscrowStatus = z.infer<typeof escrowStatusSchema>;
 export type TaskCandidateRecord = z.infer<typeof candidateRecordSchema>;
 export type TaskCandidate = z.infer<typeof candidateSchema>;
 export type TaskAssignmentResult = z.infer<typeof assignmentResultSchema>;
+export type TaskExecutionRetry = z.infer<typeof executionRetrySchema>;
 export type TaskExecutionStatus = z.infer<typeof executionStatusSchema>;
 export type TaskResult = z.infer<typeof taskResultSchema>;
 export type TaskAcceptancePreview = z.infer<typeof acceptancePreviewSchema>;
@@ -520,6 +697,12 @@ export type AcceptedTaskResult = z.infer<typeof acceptedResultSchema>;
 export type TaskDispute = z.infer<typeof disputeSchema>;
 export type TaskEventData = z.infer<typeof taskEventDataSchema> &
 	Readonly<{ id: string; type: string }>;
+export type FormalWorkflow = z.infer<typeof formalWorkflowSchema>;
+export type FormalWorkflowNode = z.infer<typeof workflowNodeSchema>;
+export type WorkflowArtifact = z.infer<typeof workflowArtifactSchema>;
+export type WorkflowAcceptancePreview = z.infer<
+	typeof workflowAcceptancePreviewSchema
+>;
 export type TaskCategory = Readonly<{
 	id: string;
 	parentId: string | null;
@@ -537,7 +720,7 @@ export type TaskDraftInput = Readonly<{
 	categoryId: string;
 	tags: readonly string[];
 	pricing: Readonly<{ type: "fixed"; amountMinor: string }>;
-	currency: "ETH";
+	currency: "USDC";
 	deadline: string;
 	requiredCapability: string;
 	attachments: readonly [];
@@ -700,6 +883,97 @@ export async function getTaskPreview(
 	);
 }
 
+/**
+ * 读取发布者私有的正式多 Agent 工作流。不存在工作流仍作为明确的 404 返回，由页面决定
+ * 是否回退到旧任务视图；认证失败和服务故障不得在客户端静默吞掉。
+ */
+export async function getTaskWorkflow(
+	taskId: string,
+	signal?: AbortSignal,
+): Promise<FormalWorkflow> {
+	return credentialedGet(
+		`/tasks/${taskPathId(taskId)}/workflow`,
+		formalWorkflowSchema,
+		signal,
+	);
+}
+
+export async function getWorkflowNodeAcceptancePreview(
+	taskId: string,
+	nodeId: string,
+	resultId: string,
+	signal?: AbortSignal,
+): Promise<z.infer<typeof workflowAcceptancePreviewSchema>> {
+	const query = new URLSearchParams({ resultId: parseUuid(resultId) });
+	return credentialedGet(
+		`/tasks/${taskPathId(taskId)}/workflow-nodes/${taskPathId(nodeId)}/acceptance-preview?${query}`,
+		workflowAcceptancePreviewSchema,
+		signal,
+	);
+}
+
+export async function acceptWorkflowNodeResult(
+	taskId: string,
+	nodeId: string,
+	input: Readonly<{
+		resultId: string;
+		expectedNodeVersion: string;
+		expectedSettlement: z.infer<typeof settlementSchema>;
+	}>,
+	idempotencyKey: string,
+) {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow-nodes/${taskPathId(nodeId)}/accept`,
+		"POST",
+		input,
+		idempotencyKey,
+		workflowAcceptanceResultSchema,
+	);
+}
+
+export async function requestWorkflowNodeRework(
+	taskId: string,
+	nodeId: string,
+	input: Readonly<{ resultId: string; reason: string }>,
+	idempotencyKey: string,
+) {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow-nodes/${taskPathId(nodeId)}/rework`,
+		"POST",
+		input,
+		idempotencyKey,
+		workflowReworkResultSchema,
+	);
+}
+
+export async function rematchWorkflowNodeCandidates(
+	taskId: string,
+	nodeId: string,
+): Promise<TaskCandidateRecord> {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow-nodes/${taskPathId(nodeId)}/rematch`,
+		"POST",
+		{},
+		`workflow-rematch:${crypto.randomUUID()}`,
+		candidateRecordSchema,
+	);
+}
+
+export async function confirmWorkflowNodeCandidate(
+	taskId: string,
+	nodeId: string,
+	agentId: string,
+	idempotencyKey: string,
+): Promise<TaskAssignmentResult> {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow-nodes/${taskPathId(nodeId)}/assignments`,
+		"POST",
+		{ agentId: parseUuid(agentId) },
+		idempotencyKey,
+		assignmentResultSchema,
+	);
+}
+
 export async function prepareTaskEscrow(
 	taskId: string,
 	idempotencyKey: string,
@@ -817,6 +1091,23 @@ export async function getLatestTaskAssignment(
 		`/tasks/${taskPathId(taskId)}/assignments/latest`,
 		assignmentResultSchema,
 		signal,
+	);
+}
+
+/**
+ * 只请求取消失败执行对应的旧分配；服务端通过 outbox 把任务恢复到 matching，原 USDC
+ * 托管不会被重复创建。页面随后依靠 SSE 或状态补拉显示新的候选选择阶段。
+ */
+export async function retryFailedTaskExecution(
+	taskId: string,
+	idempotencyKey: string,
+): Promise<TaskExecutionRetry> {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/execution-retry`,
+		"POST",
+		{},
+		idempotencyKey,
+		executionRetrySchema,
 	);
 }
 
@@ -1087,6 +1378,9 @@ async function request(
 			retryable: true,
 		});
 	}
+	// Cookie 是否有效只能由服务端判断。任一正式任务接口返回 401，都必须让全局钱包
+	// 会话同步失效，避免页头继续显示地址而私有任务悄悄降级成公开视图。
+	if (response.status === 401) notifyAuthSessionExpired();
 	if (!response.ok) throw await parseError(response);
 	return response;
 }

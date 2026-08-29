@@ -26,13 +26,20 @@ import {
 	XCircle,
 } from "lucide-react";
 import Link from "next/link";
-import type { Route } from "next";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 
 import { useWalletSession } from "@/components/auth/wallet-session-provider";
+import ResultDeliverableWorkspace from "@/components/deliverables/result-deliverable-workspace";
 import { useLocale } from "@/components/i18n/locale-provider";
 import { DatePicker } from "@/components/platform/date-picker";
-import type { MessageId } from "@/lib/i18n/messages";
+import FormalWorkflowView from "@/components/platform/formal-workflow-view";
+import TaskAgentAllocationGraph from "@/components/platform/task-agent-allocation-graph";
 import {
 	acceptTaskResult,
 	confirmTaskCandidate,
@@ -45,6 +52,7 @@ import {
 	getTaskEscrowStatus,
 	getTaskExecutionStatus,
 	getTaskPreview,
+	getTaskWorkflow,
 	listOwnedTasks,
 	listTaskResults,
 	type OwnedTaskSummary,
@@ -52,6 +60,7 @@ import {
 	type PublicTask,
 	rematchTaskCandidates,
 	requestTaskRework,
+	retryFailedTaskExecution,
 	submitTaskDisputeEvidence,
 	submitTaskRating,
 	subscribeTaskEvents,
@@ -62,17 +71,19 @@ import {
 	type TaskDispute,
 	type TaskEventData,
 	type TaskExecutionStatus,
+	type FormalWorkflow,
 	type TaskPreview,
 	type TaskRatingInput,
 	type TaskResult,
 	type TaskStatus,
 	updateTaskMatchCriteria,
 } from "@/lib/api/tasks";
-import { formatDate, shortId } from "@/lib/platform/format";
+import type { MessageId } from "@/lib/i18n/messages";
 import {
 	deadlineIsoToLocalDate,
 	localDateToDeadlineIso,
 } from "@/lib/platform/deadline";
+import { formatDate, shortId } from "@/lib/platform/format";
 import { formatMinorAmount } from "@/lib/platform/money";
 import {
 	advanceLocalChainForDemo,
@@ -108,6 +119,7 @@ type LoadedTask = Readonly<{
 	assignment: TaskAssignmentResult | null;
 	execution: TaskExecutionStatus | null;
 	results: readonly TaskResult[];
+	workflow: FormalWorkflow | null;
 }>;
 
 type TaskDisplay = Readonly<{
@@ -142,12 +154,28 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 		useState<EventSyncMode>("connecting");
 	const [disputeId, setDisputeId] = useState<string | null>(null);
 	const [dispute, setDispute] = useState<TaskDispute | null>(null);
+	// 这里保存的是用户正在查看的阶段，不是任务的权威状态。两者分开后，用户可以查看
+	// 已完成阶段，同时仍由服务端状态决定哪些阶段已经发生、未来阶段是否允许打开。
+	const [selectedFlowStage, setSelectedFlowStage] = useState(0);
 	const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// httpOnly 会话只能通过异步接口恢复。checking/connecting 期间不能把尚未确定的身份
+	// 当成访客，否则私密任务会先命中公开 404，短暂渲染成“无权访问”。钱包地址纳入
+	// 身份键后，账户切换也会立即清除旧账户的私有任务数据，再按新身份重新读取。
+	const taskAccessIdentity =
+		wallet.status === "connected"
+			? `wallet:${wallet.walletAddress}`
+			: wallet.status === "checking" || wallet.status === "connecting"
+				? null
+				: "public";
 
 	const refresh = useCallback(
 		async (signal?: AbortSignal) => {
+			if (taskAccessIdentity === null) return;
 			try {
-				const owned = await findOwnedTask(taskId, signal);
+				const owned =
+					taskAccessIdentity === "public"
+						? null
+						: await findOwnedTask(taskId, signal);
 				if (owned === null) {
 					const publicTask = await getPublicTask(taskId, signal);
 					setData({
@@ -159,6 +187,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 						assignment: null,
 						execution: null,
 						results: [],
+						workflow: null,
 					});
 					setError(null);
 					return;
@@ -167,7 +196,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 				// executing 之后调用，否则匹配和接单阶段的 SSE 断线只能依赖列表接口碰巧刷新。
 				const execution = await getTaskExecutionStatus(taskId, signal);
 				const currentStatus = execution.status;
-				const [preview, escrow, candidates, assignment, results] =
+				const [preview, escrow, candidates, assignment, results, workflow] =
 					await Promise.all([
 						getTaskPreview(taskId, signal),
 						currentStatus === "draft"
@@ -185,6 +214,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 									[] as readonly TaskResult[],
 								)
 							: Promise.resolve([]),
+						optionalWorkflowRead(() => getTaskWorkflow(taskId, signal)),
 					]);
 				setData({
 					owned,
@@ -195,21 +225,33 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 					assignment,
 					execution,
 					results: results ?? [],
+					workflow,
 				});
 				setError(null);
 			} catch (caught) {
 				if (!(caught instanceof DOMException && caught.name === "AbortError"))
 					setError(messageOf(caught, t));
-			} finally {
-				setLoading(false);
 			}
 		},
-		[t, taskId],
+		[t, taskAccessIdentity, taskId],
 	);
 
 	useEffect(() => {
+		// 身份尚未确定或发生切换时先撤下旧数据。这里既消除错误页闪烁，也防止新钱包
+		// 在请求完成前短暂看到上一个钱包的候选、托管和交付信息。
+		setLoading(true);
+		setData(null);
+		setError(null);
+		setEvents([]);
+		setDisputeId(null);
+		setDispute(null);
+		if (taskAccessIdentity === null) return;
+
 		const controller = new AbortController();
-		void refresh(controller.signal);
+		void refresh(controller.signal).finally(() => {
+			// 旧身份请求被取消时不能结束新身份的加载态，否则仍可能短暂落入错误页。
+			if (!controller.signal.aborted) setLoading(false);
+		});
 		const interval = window.setInterval(() => {
 			void refresh();
 		}, 5_000);
@@ -217,7 +259,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 			controller.abort();
 			window.clearInterval(interval);
 		};
-	}, [refresh]);
+	}, [refresh, taskAccessIdentity]);
 
 	const ownsTask = data !== null && data.owned !== null;
 	useEffect(() => {
@@ -262,6 +304,20 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 		return () => controller.abort();
 	}, [disputeId, events.length, t]);
 
+	const hasTaskData = data !== null;
+	const currentFlowStage =
+		data === null
+			? 0
+			: data.workflow === null
+				? flowStageIndex(displayTask(data).status)
+				: formalFlowStageIndex(data.workflow, displayTask(data).status);
+	useLayoutEffect(() => {
+		if (!hasTaskData) return;
+		// 在浏览器绘制任务内容前同步权威阶段，避免异步数据首次返回时短暂闪现第一阶段。
+		// 依赖只包含阶段编号，因此同一阶段内的普通轮询不会打断用户正在查看的历史 Tab。
+		setSelectedFlowStage(currentFlowStage);
+	}, [currentFlowStage, hasTaskData, taskId]);
+
 	async function run(label: string, action: () => Promise<unknown>) {
 		setBusy(label);
 		setError(null);
@@ -277,7 +333,9 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 
 	if (loading && data === null) return <LoadingState />;
 	if (data === null)
-		return <NotFoundState message={error ?? t("任务不存在或当前钱包无权访问")} />;
+		return (
+			<NotFoundState message={error ?? t("任务不存在或当前钱包无权访问")} />
+		);
 	const task = displayTask(data);
 
 	return (
@@ -313,19 +371,21 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 										: formatMinorAmount(task.budgetMinor, task.currency)}
 								</p>
 							</div>
-							{data.owned !== null && task.status !== "draft" && (
-								<Button className="rounded-full shadow-[0_0_24px_var(--brand-glow)]" render={<Link href={`/tasks/${task.id}/plan` as Route} />}>
-									<GitBranch className="size-4" />{t("查看执行方案")}
-								</Button>
-							)}
 						</div>
 					</div>
-					<FlowProgress status={task.status} />
+					<FlowProgress
+						status={task.status}
+						active={currentFlowStage}
+						interactive={data.owned !== null}
+						selected={selectedFlowStage}
+						onSelect={setSelectedFlowStage}
+					/>
 				</div>
 			</section>
-			<div className="mx-auto grid max-w-[1280px] items-start gap-6 px-4 py-8 sm:px-6 lg:px-12 xl:grid-cols-[minmax(0,1fr)_340px]">
-				<div className="space-y-5">
-					{error && (
+			{/* 任务标题、阶段导航和阶段内容共用 1280px 内容轨道，避免上下模块左右边界跳动。 */}
+			<div className="mx-auto max-w-[1280px] px-4 py-8 sm:px-6 lg:px-12">
+				{error && (
+					<div className="mb-6">
 						<ErrorNotice
 							message={error}
 							onRetry={() => {
@@ -333,66 +393,139 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 								void refresh();
 							}}
 						/>
-					)}
-					{data.owned === null ? (
-						<ReadOnlyNotice />
-					) : (
-						<CurrentAction
-							task={task}
-							data={data}
-							wallet={wallet}
-							busy={busy !== null}
-							run={run}
-							dispute={dispute}
-						/>
-					)}
-					<TaskOverview task={task} />
-					{data.results.length > 0 && <ResultsHistory results={data.results} />}
-					{data.owned !== null && (
-						<EventTimeline
-							events={events}
-							statusVersion={task.statusVersion}
-							syncMode={eventSyncMode}
-						/>
-					)}
-				</div>
-				<aside className="space-y-4 xl:sticky xl:top-28">
-					<EscrowCard task={task} escrow={data.escrow} />
-					<AssignmentCard
-						assignment={data.assignment}
-						candidates={data.candidates}
-						currency={task.currency}
-					/>
-					<section className="rounded-xl border bg-card p-5">
-						<h2 className="font-semibold">{t("任务配置")}</h2>
-						<dl className="mt-4 space-y-3 text-sm">
-							<InfoRow
-								label={t("可见性")}
-								value={task.visibility === "public" ? t("公开（已脱敏）") : t("私密")}
-							/>
-							<InfoRow
-								label={t("分配方式")}
-								value={
-									task.assignmentMode === "manual" ? t("手动选择") : t("自动分配")
+					</div>
+				)}
+				{data.owned === null ? (
+					<div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+						<div className="space-y-5">
+							<ReadOnlyNotice wallet={wallet} />
+							<TaskOverview task={task} />
+						</div>
+						<TaskConfiguration task={task} />
+					</div>
+				) : data.workflow !== null ? (
+					<section
+						key={selectedFlowStage}
+						id="task-stage-panel"
+						role="tabpanel"
+						aria-labelledby={`task-stage-tab-${selectedFlowStage}`}
+						className="task-stage-panel"
+					>
+						{selectedFlowStage === 0 ? (
+							<div className="mx-auto grid max-w-[1280px] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+								<div className="space-y-5">
+									<TaskOverview task={task} />
+								</div>
+								<aside className="space-y-4 xl:sticky xl:top-28">
+									<EscrowCard task={task} escrow={data.escrow} />
+									<TaskConfiguration task={task} />
+								</aside>
+							</div>
+						) : (
+							<FormalWorkflowView
+								taskTitle={task.title}
+								workflow={data.workflow}
+								viewMode={
+									selectedFlowStage === 1
+										? "allocation"
+										: selectedFlowStage === 2
+											? "execution"
+											: selectedFlowStage === 3
+												? "review"
+												: "settlement"
 								}
+								busy={busy !== null}
+								run={run}
 							/>
-							<InfoRow
-								label={t("验收方式")}
-								value={
-									task.acceptanceMode === "manual" ? t("人工验收") : t("规则验收")
-								}
-							/>
-							<InfoRow
-								label={t("截止时间")}
-								value={
-									task.deadline === null
-										? t("尚未填写")
-										: formatDate(task.deadline, locale)
-								}
-							/>
-						</dl>
+						)}
 					</section>
-				</aside>
+				) : (
+					// 五个阶段共享一个内容区，避免把完整生命周期纵向堆叠成超长页面。
+					// key 让阶段切换动画只作用于新内容，不会重置页面外的钱包和任务数据。
+					<section
+						key={selectedFlowStage}
+						id="task-stage-panel"
+						role="tabpanel"
+						aria-labelledby={`task-stage-tab-${selectedFlowStage}`}
+						className="task-stage-panel"
+					>
+						{selectedFlowStage === 0 && (
+							<div className="mx-auto grid max-w-[1280px] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+								<div className="space-y-5">
+									{currentFlowStage === 0 && (
+										<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
+									)}
+									<TaskOverview task={task} />
+								</div>
+								<aside className="space-y-4 xl:sticky xl:top-28">
+									<EscrowCard task={task} escrow={data.escrow} />
+									<TaskConfiguration task={task} />
+								</aside>
+							</div>
+						)}
+
+						{selectedFlowStage === 1 && (
+							<div className="space-y-6">
+								<TaskAgentAllocationGraph
+									task={{ id: task.id, title: task.title, status: task.status }}
+									candidates={data.candidates}
+									assignment={data.assignment}
+									execution={data.execution}
+									currency={task.currency}
+								/>
+								{/* 只有任务仍处于匹配阶段时才展示可操作面板和本次派发状态。
+								    回看历史匹配结果时，关系图已经完整表达结果，不再堆叠失效操作。 */}
+								{currentFlowStage === 1 && (
+									<div className="mx-auto grid max-w-[1280px] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+										<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
+										<aside className="xl:sticky xl:top-28">
+											<AssignmentCard assignment={data.assignment} candidates={data.candidates} currency={task.currency} />
+										</aside>
+									</div>
+								)}
+							</div>
+						)}
+
+						{selectedFlowStage === 2 && (
+							<div className="mx-auto grid max-w-[1280px] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+								<div className="space-y-5">
+									{currentFlowStage === 2 ? (
+										<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
+									) : (
+										<ExecutionRecordPanel status={data.execution} />
+									)}
+									<EventTimeline events={events} statusVersion={task.statusVersion} syncMode={eventSyncMode} />
+								</div>
+								<AssignmentCard assignment={data.assignment} candidates={data.candidates} currency={task.currency} />
+							</div>
+						)}
+
+						{selectedFlowStage === 3 && (
+							<div className="space-y-5">
+								{currentFlowStage === 3 && (
+									<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
+								)}
+								{data.results.length > 0 ? (
+									<div className="mx-auto max-w-[1280px]">
+										<ResultsHistory results={data.results} />
+									</div>
+								) : currentFlowStage !== 3 ? (
+									<Panel icon={FileCheck2} eyebrow={t("交付记录")} title={t("尚未产生可验收交付")} description={t("任务进入交付验收阶段后，正式结果会显示在这里。")} />
+								) : null}
+							</div>
+						)}
+
+						{selectedFlowStage === 4 && (
+							<div className="mx-auto grid max-w-[1280px] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+								<div className="space-y-5">
+									<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
+									<EventTimeline events={events} statusVersion={task.statusVersion} syncMode={eventSyncMode} />
+								</div>
+								<EscrowCard task={task} escrow={data.escrow} />
+							</div>
+						)}
+					</section>
+				)}
 			</div>
 		</main>
 	);
@@ -420,7 +553,9 @@ function CurrentAction({
 				icon={FileCheck2}
 				eyebrow={t("任务尚未发布")}
 				title={t("先补全草稿并提交")}
-				description={t("草稿保存在正式数据库中，只有通过服务端完整性校验后才会进入托管。")}
+				description={t(
+					"草稿保存在正式数据库中，只有通过服务端完整性校验后才会进入托管。",
+				)}
 			>
 				<Button render={<Link href="/tasks/new" />} variant="outline">
 					{t("打开发布任务页")}
@@ -431,6 +566,7 @@ function CurrentAction({
 		return (
 			<EscrowAction
 				task={task}
+				preview={data.preview}
 				escrow={data.escrow}
 				wallet={wallet}
 				busy={busy}
@@ -452,7 +588,9 @@ function CurrentAction({
 				icon={Bot}
 				eyebrow={t("候选已锁定并派发")}
 				title={t("等待 Agent 签名确认接单")}
-				description={t("平台正在等待 Agent 安全确认接单，确认结果会自动同步到这里。")}
+				description={t(
+					"平台正在等待 Agent 安全确认接单，确认结果会自动同步到这里。",
+				)}
 				tone="ai"
 			>
 				<RefreshButton
@@ -476,9 +614,24 @@ function CurrentAction({
 				icon={XCircle}
 				eyebrow={t("Agent 执行未完成")}
 				title={t("本次没有生成可验收的交付")}
-				description={t("平台已收到经过签名的脱敏失败回调。任务费用仍在资金托管中，不会自动支付给 Agent；你可以发起争议，由仲裁流程决定退款或结算。")}
+				description={t(
+					"平台已收到经过签名的脱敏失败回调。任务费用仍在资金托管中，不会自动支付给 Agent；你可以保留托管并重新选择 Agent，也可以发起争议。",
+				)}
 			>
-				<OpenDisputeForm taskId={task.id} busy={busy} run={run} />
+				<div className="space-y-4">
+					<Button
+						disabled={busy}
+						onClick={() =>
+							run("retry-execution", () =>
+								retryFailedTaskExecution(task.id, key("retry-execution")),
+							)
+						}
+					>
+						<RefreshCw className="size-4" />
+						{t("保留托管并重新选择 Agent")}
+					</Button>
+					<OpenDisputeForm taskId={task.id} busy={busy} run={run} />
+				</div>
 			</Panel>
 		);
 	if (task.status === "awaiting_review")
@@ -497,7 +650,9 @@ function CurrentAction({
 				icon={WalletCards}
 				eyebrow={t("交付已验收")}
 				title={t("等待链上结算确认")}
-				description={t("结算金额已经按成交价和费率快照写入执行队列，发布者不能重复触发资金操作。")}
+				description={t(
+					"结算金额已经按成交价和费率快照写入执行队列，发布者不能重复触发资金操作。",
+				)}
 				tone="escrow"
 			>
 				<OpenDisputeForm taskId={task.id} busy={busy} run={run} />
@@ -513,7 +668,9 @@ function CurrentAction({
 				icon={CheckCircle2}
 				eyebrow={t("资金路径已完成")}
 				title={t("托管资金已退还发布者")}
-				description={t("退款终态来自已确认的链上事件，争议证据仍保留在审计记录中。")}
+				description={t(
+					"退款终态来自已确认的链上事件，争议证据仍保留在审计记录中。",
+				)}
 				tone="success"
 			/>
 		);
@@ -523,7 +680,9 @@ function CurrentAction({
 				icon={XCircle}
 				eyebrow={t("任务已停止")}
 				title={t("Agent 执行超时")}
-				description={t("任务不再接受进度或交付回调，资金由退款或争议状态机继续处理。")}
+				description={t(
+					"任务不再接受进度或交付回调，资金由退款或争议状态机继续处理。",
+				)}
 			/>
 		);
 	return (
@@ -538,12 +697,14 @@ function CurrentAction({
 
 function EscrowAction({
 	task,
+	preview,
 	escrow,
 	wallet,
 	busy,
 	run,
 }: {
 	task: TaskDisplay;
+	preview: TaskPreview | null;
 	escrow: EscrowStatus | null;
 	wallet: ReturnType<typeof useWalletSession>;
 	busy: boolean;
@@ -570,7 +731,9 @@ function EscrowAction({
 				icon={LockKeyhole}
 				eyebrow={t("托管交易已提交")}
 				title={t("资金正在链上确认")}
-				description={t("确认完成后将自动开始匹配；链重组会触发回退或人工复核。")}
+				description={t(
+					"确认完成后将自动开始匹配；链重组会触发回退或人工复核。",
+				)}
 				tone="escrow"
 			>
 				<RefreshButton
@@ -600,7 +763,10 @@ function EscrowAction({
 				icon={WalletCards}
 				eyebrow={t("交易已广播 · 等待平台登记")}
 				title={t("不要再次发送托管交易")}
-				description={t("MetaMask 已返回交易 {hash}。继续操作只会补登记同一个交易哈希，不会再次调用钱包或发送资金。", { hash: shortId(pendingSubmission.txHash) })}
+				description={t(
+					"MetaMask 已返回交易 {hash}。继续操作只会补登记同一个交易哈希，不会再次调用钱包或发送资金。",
+					{ hash: shortId(pendingSubmission.txHash) },
+				)}
 				tone="escrow"
 			>
 				<Button
@@ -630,10 +796,62 @@ function EscrowAction({
 		<Panel
 			icon={LockKeyhole}
 			eyebrow={t("下一步 · 钱包托管")}
-			title={failed ? t("上次交易未完成，可以安全重试") : t("在钱包中确认托管交易")}
-			description={t("平台会准备好交易内容，只有你在钱包中确认后才会提交到链上。")}
+			title={
+				failed ? t("上次交易未完成，可以安全重试") : t("在钱包中完成两次确认")
+			}
+			description={t(
+				"MetaMask 将依次请求两次确认：先精确授权本任务的 USDC，再存入托管合约。授权不会转走资金，只有第二笔交易成功后才算完成托管。",
+			)}
 			tone="escrow"
 		>
+			{preview !== null &&
+				preview.amountMinor !== null &&
+				preview.platformFeeMinor !== null &&
+				preview.agentReceivesMinor !== null &&
+				preview.feeBasisPoints !== null &&
+				preview.minimumPlatformFeeMinor !== null && (
+					<section
+						className="mb-5 rounded-xl border border-tertiary/20 bg-background/35 p-4"
+						aria-label={t("托管与费用明细")}
+					>
+						<h3 className="mb-3 font-semibold text-sm">
+							{t("托管与费用明细")}
+						</h3>
+						<dl className="grid gap-3 sm:grid-cols-2">
+							<InfoRow
+								label={t("本次托管预算")}
+								value={formatMinorAmount(preview.amountMinor, task.currency)}
+							/>
+							<InfoRow label={t("预算外平台费用")} value="0 USDC" />
+							<InfoRow
+								label={t("预计平台服务费")}
+								value={formatMinorAmount(
+									preview.platformFeeMinor,
+									task.currency,
+								)}
+							/>
+							<InfoRow
+								label={t("Agent 预计最高实收")}
+								value={formatMinorAmount(
+									preview.agentReceivesMinor,
+									task.currency,
+								)}
+							/>
+						</dl>
+						<p className="mt-3 text-muted-foreground text-xs leading-5">
+							{t(
+								"平台服务费按当前 {rate} 费率计算，最低 {minimum}；该费用已包含在成交金额中，并在成功结算时从 Agent 收入中扣除。",
+								{
+									rate: formatBasisPoints(preview.feeBasisPoints),
+									minimum: formatMinorAmount(
+										preview.minimumPlatformFeeMinor,
+										task.currency,
+									),
+								},
+							)}
+						</p>
+					</section>
+				)}
 			{wallet.status !== "connected" ? (
 				<Button
 					size="lg"
@@ -671,8 +889,13 @@ function EscrowAction({
 						<WalletCards className="size-4" />
 					)}
 					{failed
-						? t("重新准备并发送交易")
-						: t("托管 {amount}", { amount: task.budgetMinor === null ? t("任务预算") : formatMinorAmount(task.budgetMinor, task.currency) })}
+						? t("重新授权并托管")
+						: t("授权并托管 {amount}", {
+								amount:
+									task.budgetMinor === null
+										? t("任务预算")
+										: formatMinorAmount(task.budgetMinor, task.currency),
+							})}
 				</Button>
 			)}
 		</Panel>
@@ -739,7 +962,9 @@ function CandidateSelection({
 	const { locale, t } = useLocale();
 	const [editing, setEditing] = useState(false);
 	const [tags, setTags] = useState(task.tags.join(", "));
-	const [deadline, setDeadline] = useState(deadlineIsoToLocalDate(task.deadline));
+	const [deadline, setDeadline] = useState(
+		deadlineIsoToLocalDate(task.deadline),
+	);
 	if (record === null)
 		return (
 			<Panel
@@ -770,7 +995,10 @@ function CandidateSelection({
 						<h2 className="font-semibold text-lg">{t("选择最合适的 Agent")}</h2>
 					</div>
 					<p className="mt-1 text-muted-foreground text-sm">
-						{t("规则 {rule} · 指纹 {fingerprint}", { rule: record.ruleVersion, fingerprint: shortId(record.inputFingerprint) })}
+						{t("规则 {rule} · 指纹 {fingerprint}", {
+							rule: record.ruleVersion,
+							fingerprint: shortId(record.inputFingerprint),
+						})}
 					</p>
 				</div>
 				<div className="flex flex-wrap gap-2">
@@ -840,27 +1068,38 @@ function CandidateSelection({
 										<h3 className="font-semibold">{candidate.name}</h3>
 										{index === 0 && (
 											<span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] text-secondary-foreground">
-											{t("排序第一")}
+												{t("排序第一")}
 											</span>
 										)}
 										{candidate.isNew && (
 											<span className="rounded-full bg-warning/10 px-2 py-0.5 text-[10px] text-warning">
-											{t("低样本")}
+												{t("低样本")}
 											</span>
 										)}
 									</div>
 									<p className="mt-1 text-muted-foreground text-xs">
-									{candidate.matchedTags.join(" · ") || t("未命中软标签")}
+										{candidate.matchedTags.join(" · ") || t("未命中软标签")}
 									</p>
 									<div className="mt-3 flex flex-wrap gap-4 text-xs">
 										<span className="flex items-center gap-1">
 											<Star className="size-3.5 fill-warning text-warning" />
 											{candidate.score.toFixed(1)}
 										</span>
-									<span>{t("{count} 次完成", { count: candidate.completed })}</span>
-									<span>{t("响应 {count} 分钟", { count: candidate.responseMinutes })}</span>
 										<span>
-										{t("预计 {duration}", { duration: duration(candidate.estimatedDurationSeconds, locale) })}
+											{t("{count} 次完成", { count: candidate.completed })}
+										</span>
+										<span>
+											{t("响应 {count} 分钟", {
+												count: candidate.responseMinutes,
+											})}
+										</span>
+										<span>
+											{t("预计 {duration}", {
+												duration: duration(
+													candidate.estimatedDurationSeconds,
+													locale,
+												),
+											})}
 										</span>
 									</div>
 								</div>
@@ -955,7 +1194,9 @@ function MatchCriteriaEditor({
 			</div>
 			<div className="mt-4 flex flex-wrap items-center justify-between gap-3">
 				<p className="max-w-2xl text-muted-foreground text-xs">
-					{t("资金已托管，预算与币种不能在此修改。调整会留下审计记录，并生成新的匹配快照；旧记录继续保留。")}
+					{t(
+						"资金已托管，预算与币种不能在此修改。调整会留下审计记录，并生成新的匹配快照；旧记录继续保留。",
+					)}
 				</p>
 				<Button
 					type="submit"
@@ -1010,9 +1251,12 @@ function EmptyCandidates({
 	);
 }
 
-function filterReasonLabel(reason: string, t: ReturnType<typeof useLocale>["t"]): string {
-	return t((
-		(
+function filterReasonLabel(
+	reason: string,
+	t: ReturnType<typeof useLocale>["t"],
+): string {
+	return t(
+		((
 			{
 				wrong_category: "任务分类不匹配",
 				inactive_agent: "未过审、已暂停或已下架",
@@ -1022,7 +1266,8 @@ function filterReasonLabel(reason: string, t: ReturnType<typeof useLocale>["t"])
 				cannot_meet_deadline: "预计无法按时交付",
 				probation_budget_exceeded: "超出新入驻 Agent 预算上限",
 			} as Readonly<Record<string, string>>
-		)[reason] ?? "未满足平台硬约束") as MessageId);
+		)[reason] ?? "未满足平台硬约束") as MessageId,
+	);
 }
 
 function ExecutionPanel({
@@ -1077,14 +1322,68 @@ function ExecutionPanel({
 			</div>
 			<p className="mt-3 text-muted-foreground text-xs">
 				{status?.lastReportedAt
-					? t("最后上报 {date}", { date: formatDate(status.lastReportedAt, locale) })
+					? t("最后上报 {date}", {
+							date: formatDate(status.lastReportedAt, locale),
+						})
 					: t("等待首次签名进度回调")}
 				{status?.estimatedCompletionAt
-					? t(" · 预计完成 {date}", { date: formatDate(status.estimatedCompletionAt, locale) })
+					? t(" · 预计完成 {date}", {
+							date: formatDate(status.estimatedCompletionAt, locale),
+						})
 					: ""}{" "}
 				{t("· 进度只能单调增加")}
 			</p>
 		</section>
+	);
+}
+
+/**
+ * 历史执行 Tab 只呈现服务端最后一次执行快照，不复用带“正在执行”措辞和刷新操作的
+ * CurrentAction。这样回看已完成阶段时不会出现仍在运行的假象。
+ */
+function ExecutionRecordPanel({
+	status,
+}: {
+	status: TaskExecutionStatus | null;
+}) {
+	const { locale, t } = useLocale();
+	const failed =
+		status?.executionState === "failed" || status?.failureCode !== null;
+	const progress = status?.progress ?? 0;
+	return (
+		<Panel
+			icon={failed ? XCircle : CheckCircle2}
+			eyebrow={t("Agent 执行记录")}
+			title={failed ? t("Agent 执行未完成") : t("Agent 执行已完成")}
+			description={
+				status === null
+					? t("尚未读取到正式执行快照。")
+					: failed
+						? t("平台保留失败状态与后续重试、争议记录，资金不会因执行失败自动释放。")
+						: t("平台已收到完整执行进度，后续交付与验收记录请在对应阶段查看。")
+			}
+			tone={failed ? "neutral" : "success"}
+		>
+			<div className="mt-4 rounded-xl border bg-background/35 p-4">
+				<div className="flex items-center justify-between gap-4 text-sm">
+					<span className="text-muted-foreground">{t("最终执行进度")}</span>
+					<strong>{progress}%</strong>
+				</div>
+				<div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+					<div
+						className={failed ? "h-full bg-destructive" : "h-full bg-success"}
+						style={{ width: `${progress}%` }}
+					/>
+				</div>
+				<p className="mt-3 text-muted-foreground text-xs">
+					{status?.lastReportedAt
+						? t("最后上报 {date}", {
+								date: formatDate(status.lastReportedAt, locale),
+							})
+						: t("暂无上报时间")}
+				</p>
+			</div>
+		</Panel>
 	);
 }
 
@@ -1109,6 +1408,7 @@ function ReviewPanel({
 	const [preview, setPreview] = useState<TaskAcceptancePreview | null>(null);
 	const [previewError, setPreviewError] = useState<string | null>(null);
 	const [previewRevision, setPreviewRevision] = useState(0);
+	const [deliverableReady, setDeliverableReady] = useState(false);
 	const selected =
 		latest.find((result) => result.id === selectedId) ?? latest[0];
 	useEffect(() => {
@@ -1135,10 +1435,14 @@ function ReviewPanel({
 		);
 	if (selected === undefined) return null;
 	return (
-		<section className="rounded-xl border bg-card">
+		<section className="rounded-2xl border bg-card">
 			<header className="border-b px-5 py-4">
-				<p className="font-medium text-warning text-xs">{t("需要发布者决定")}</p>
-				<h2 className="mt-1 font-semibold text-xl">{t("验收最新一批正式交付")}</h2>
+				<p className="font-medium text-warning text-xs">
+					{t("需要发布者决定")}
+				</p>
+				<h2 className="mt-1 font-semibold text-xl">
+					{t("验收最新一批正式交付")}
+				</h2>
 			</header>
 			<div className="p-5">
 				<div className="grid gap-3 sm:grid-cols-3">
@@ -1149,14 +1453,22 @@ function ReviewPanel({
 							onClick={() => setSelectedId(result.id)}
 							className={`rounded-lg border p-4 text-left ${selected.id === result.id ? "border-primary bg-primary-container" : "hover:bg-accent"}`}
 						>
-							<p className="font-semibold text-sm">{t("候选 {index}", { index: result.resultIndex })}</p>
+							<p className="font-semibold text-sm">
+								{t("候选 {index}", { index: result.resultIndex })}
+							</p>
 							<p className="mt-1 line-clamp-2 text-muted-foreground text-xs">
 								{result.summary}
 							</p>
 						</button>
 					))}
 				</div>
-				<ResultPreview result={selected} />
+				<div className="mt-5">
+					<ResultDeliverableWorkspace
+						key={selected.id}
+						result={selected}
+						onReadinessChange={setDeliverableReady}
+					/>
+				</div>
 				<section
 					className="mt-5 rounded-lg border bg-accent p-4"
 					aria-label={t("验收结算明细")}
@@ -1165,7 +1477,9 @@ function ReviewPanel({
 						<div>
 							<p className="font-semibold text-sm">{t("本次验收与结算")}</p>
 							<p className="mt-1 text-muted-foreground text-xs">
-								{t("明细由服务端按冻结成交价与当前费率生成；条件变化时确认会被拒绝。")}
+								{t(
+									"明细由服务端按冻结成交价与当前费率生成；条件变化时确认会被拒绝。",
+								)}
 							</p>
 						</div>
 						<Button
@@ -1182,32 +1496,39 @@ function ReviewPanel({
 						<p
 							className={`mt-4 text-sm ${previewError ? "text-destructive" : "text-muted-foreground"}`}
 						>
-							{previewError ?? t("正在核对托管金额与手续费…")}
+							{previewError ?? t("正在核对托管金额与平台服务费…")}
 						</p>
 					) : (
-						<dl className="mt-4 grid gap-3 sm:grid-cols-3">
-							<InfoRow
-								label={t("成交金额")}
-								value={formatMinorAmount(
-									preview.settlement.grossAmountMinor,
-									currency,
+						<>
+							<dl className="mt-4 grid gap-3 sm:grid-cols-3">
+								<InfoRow
+									label={t("成交金额")}
+									value={formatMinorAmount(
+										preview.settlement.grossAmountMinor,
+										currency,
+									)}
+								/>
+								<InfoRow
+									label={t("平台服务费")}
+									value={formatMinorAmount(
+										preview.settlement.platformFeeMinor,
+										currency,
+									)}
+								/>
+								<InfoRow
+									label={t("Agent 实收")}
+									value={formatMinorAmount(
+										preview.settlement.agentAmountMinor,
+										currency,
+									)}
+								/>
+							</dl>
+							<p className="mt-3 text-muted-foreground text-xs leading-5">
+								{t(
+									"平台服务费已包含在成交金额中，并从 Agent 收入中扣除；发布者不会在托管预算之外被额外收费。",
 								)}
-							/>
-							<InfoRow
-								label={t("平台手续费")}
-								value={formatMinorAmount(
-									preview.settlement.platformFeeMinor,
-									currency,
-								)}
-							/>
-							<InfoRow
-								label={t("Agent 实收")}
-								value={formatMinorAmount(
-									preview.settlement.agentAmountMinor,
-									currency,
-								)}
-							/>
-						</dl>
+							</p>
+						</>
 					)}
 				</section>
 				<label
@@ -1226,7 +1547,7 @@ function ReviewPanel({
 				<div className="mt-4 flex flex-wrap gap-3">
 					<Button
 						className="bg-success hover:bg-success/85"
-						disabled={busy || preview === null}
+						disabled={busy || preview === null || !deliverableReady}
 						onClick={() =>
 							preview &&
 							run("accept-result", () => acceptAndAdvance(taskId, preview))
@@ -1235,6 +1556,12 @@ function ReviewPanel({
 						<CheckCircle2 className="size-4" />
 						{t("确认以上金额并验收")}
 					</Button>
+					{!deliverableReady && (
+						<p className="flex items-center gap-2 text-warning text-xs">
+							<AlertCircle className="size-3.5" />
+							{t("交付物成功打开后才能确认验收")}
+						</p>
+					)}
 					<Button
 						variant="outline"
 						disabled={busy || reason.trim().length < 10}
@@ -1373,25 +1700,37 @@ function DisputePanel({
 	return (
 		<section className="rounded-xl border border-destructive/20 bg-card">
 			<header className="border-destructive/15 border-b bg-destructive-container px-5 py-4">
-				<p className="font-semibold text-destructive">{t("争议中 · 资金保持冻结")}</p>
+				<p className="font-semibold text-destructive">
+					{t("争议中 · 资金保持冻结")}
+				</p>
 				<p className="mt-1 text-destructive/80 text-sm">
-					{t("证据截止 {date}", { date: formatDate(dispute.evidenceDeadline, locale) })} ·{" "}
-					{roleLabel(dispute.viewerRole, t)}
+					{t("证据截止 {date}", {
+						date: formatDate(dispute.evidenceDeadline, locale),
+					})}{" "}
+					· {roleLabel(dispute.viewerRole, t)}
 				</p>
 			</header>
 			<div className="p-5">
 				<dl className="space-y-3 text-sm">
 					<InfoRow label={t("争议 ID")} value={dispute.id} />
 					<InfoRow label={t("争议原因")} value={dispute.reason} />
-					<InfoRow label={t("当前阶段")} value={disputeStatus(dispute.status, t)} />
-					<InfoRow label={t("证据数量")} value={t("{count} 条", { count: dispute.evidence.length })} />
+					<InfoRow
+						label={t("当前阶段")}
+						value={disputeStatus(dispute.status, t)}
+					/>
+					<InfoRow
+						label={t("证据数量")}
+						value={t("{count} 条", { count: dispute.evidence.length })}
+					/>
 				</dl>
 				<ol className="mt-5 space-y-3">
 					{dispute.evidence.map((entry) => (
 						<li key={entry.id} className="rounded-lg border bg-accent p-4">
 							<div className="flex justify-between gap-3">
 								<p className="font-semibold text-sm">
-									{entry.party === "publisher" ? t("发布者证据") : t("Agent 证据")}
+									{entry.party === "publisher"
+										? t("发布者证据")
+										: t("Agent 证据")}
 								</p>
 								<time className="text-muted-foreground text-xs">
 									{formatDate(entry.createdAt, locale)}
@@ -1435,7 +1774,9 @@ function DisputePanel({
 				{dispute.decision && (
 					<div className="mt-5 rounded-lg border bg-accent p-4">
 						<p className="font-semibold">
-							{t("仲裁决定：{decision}", { decision: decisionLabel(dispute.decision.type, t) })}
+							{t("仲裁决定：{decision}", {
+								decision: decisionLabel(dispute.decision.type, t),
+							})}
 						</p>
 						<p className="mt-2 text-muted-foreground text-sm">
 							{dispute.decision.reason}
@@ -1453,10 +1794,10 @@ function DisputePanel({
 					<Button
 						className="mt-5"
 						variant="destructive"
-						render={<Link href={`/admin/disputes/${dispute.id}`} />}
+						render={<Link href={`/workspace/disputes/${dispute.id}`} />}
 					>
 						<Scale className="size-4" />
-						{t("前往独立仲裁台")}
+						{t("前往争议与仲裁")}
 					</Button>
 				)}
 			</div>
@@ -1480,10 +1821,14 @@ function RatingPanel({
 	});
 	return (
 		<section className="rounded-xl border bg-card p-5">
-			<p className="font-medium text-success text-xs">{t("任务已完成并链上结算")}</p>
+			<p className="font-medium text-success text-xs">
+				{t("任务已完成并链上结算")}
+			</p>
 			<h2 className="mt-1 font-semibold text-xl">{t("提交一次交付反馈")}</h2>
 			<p className="mt-2 text-muted-foreground text-sm">
-				{t("你只评价交付质量与沟通体验；响应时间、争议和历史规模由系统事件计算，反馈只能提交一次。")}
+				{t(
+					"你只评价交付质量与沟通体验；响应时间、争议和历史规模由系统事件计算，反馈只能提交一次。",
+				)}
 			</p>
 			<div className="mt-5 grid gap-3 sm:grid-cols-2">
 				{RATINGS.map(({ key: dimension, label }) => (
@@ -1528,6 +1873,33 @@ const RATINGS: readonly { key: keyof TaskRatingInput; label: string }[] = [
 	{ key: "quality", label: "交付质量" },
 	{ key: "communication", label: "沟通体验" },
 ];
+
+function TaskConfiguration({ task }: { task: TaskDisplay }) {
+	const { locale, t } = useLocale();
+	return (
+		<section className="rounded-xl border bg-card p-5">
+			<h2 className="font-semibold">{t("任务配置")}</h2>
+			<dl className="mt-4 space-y-3 text-sm">
+				<InfoRow
+					label={t("可见性")}
+					value={task.visibility === "public" ? t("公开（已脱敏）") : t("私密")}
+				/>
+				<InfoRow
+					label={t("分配方式")}
+					value={task.assignmentMode === "manual" ? t("手动选择") : t("自动分配")}
+				/>
+				<InfoRow
+					label={t("验收方式")}
+					value={task.acceptanceMode === "manual" ? t("人工验收") : t("规则验收")}
+				/>
+				<InfoRow
+					label={t("截止时间")}
+					value={task.deadline === null ? t("尚未填写") : formatDate(task.deadline, locale)}
+				/>
+			</dl>
+		</section>
+	);
+}
 
 function TaskOverview({ task }: { task: TaskDisplay }) {
 	const { t } = useLocale();
@@ -1582,7 +1954,10 @@ function ResultsHistory({ results }: { results: readonly TaskResult[] }) {
 					<article key={result.id} className="px-5 py-4">
 						<div className="flex flex-wrap items-center gap-2">
 							<span className="font-semibold text-sm">
-								{t("第 {batch} 批 · 候选 {index}", { batch: result.batchNo, index: result.resultIndex })}
+								{t("第 {batch} 批 · 候选 {index}", {
+									batch: result.batchNo,
+									index: result.resultIndex,
+								})}
 							</span>
 							{result.isLatest && (
 								<span className="rounded-full bg-primary-container px-2 py-0.5 text-[10px] text-primary">
@@ -1600,34 +1975,6 @@ function ResultsHistory({ results }: { results: readonly TaskResult[] }) {
 				))}
 			</div>
 		</section>
-	);
-}
-
-function ResultPreview({ result }: { result: TaskResult }) {
-	const { t } = useLocale();
-	return (
-		<div className="mt-4 rounded-lg border bg-accent p-4">
-			<div className="flex flex-wrap justify-between gap-2">
-				<p className="font-semibold">{result.summary}</p>
-				<span className="font-mono text-muted-foreground text-xs">
-					{result.mimeType} · {result.sizeBytes} B
-				</span>
-			</div>
-			{result.content && result.kind === "inline" ? (
-				<pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-card p-4 text-xs leading-5">
-					{result.content}
-				</pre>
-			) : (
-				<p className="mt-3 break-all rounded-md bg-card p-3 font-mono text-muted-foreground text-xs">
-					{result.content ?? t("文件引用不可用")}
-				</p>
-			)}
-			{result.note && (
-				<p className="mt-3 text-muted-foreground text-sm">
-					{t("Agent 备注：{note}", { note: result.note })}
-				</p>
-			)}
-		</div>
 	);
 }
 
@@ -1779,7 +2126,9 @@ function AssignmentCard({
 			{assignment === null ? (
 				<div className="mt-4 rounded-lg border border-dashed p-5 text-center">
 					<Bot className="mx-auto size-6 text-muted-foreground" />
-					<p className="mt-2 text-muted-foreground text-sm">{t("尚未锁定候选")}</p>
+					<p className="mt-2 text-muted-foreground text-sm">
+						{t("尚未锁定候选")}
+					</p>
 				</div>
 			) : (
 				<div className="mt-4">
@@ -1823,29 +2172,108 @@ function AssignmentCard({
 	);
 }
 
-function FlowProgress({ status }: { status: TaskStatus }) {
+/**
+ * 任务阶段导航同时承担进度展示与 Tab 选择：服务端状态决定可访问边界，组件只把
+ * 已发生阶段交给用户选择。这样未来阶段无法被前端误开，历史阶段又不需要额外入口。
+ */
+function FlowProgress({
+	status,
+	active,
+	interactive,
+	selected,
+	onSelect,
+}: {
+	status: TaskStatus;
+	active?: number;
+	interactive: boolean;
+	selected: number;
+	onSelect: (index: number) => void;
+}) {
 	const { t } = useLocale();
-	let active = FLOW.findIndex((step) => step.statuses.includes(status));
-	if (status === "timed_out") active = 2;
+	const activeStage = active ?? flowStageIndex(status);
 	return (
-		<ol className="mt-7 grid grid-cols-5 overflow-hidden rounded-lg border bg-accent">
-			{FLOW.map((step, index) => (
-				<li
-					key={step.label}
-					className={`flex min-h-14 items-center gap-2 border-r px-2 last:border-r-0 sm:px-4 ${index < active ? "text-success" : index === active ? (status === "execution_failed" || status === "timed_out" ? "bg-destructive-container text-destructive" : "bg-primary-container text-primary") : "text-muted-foreground"}`}
-				>
-					<span
-						className={`flex size-6 shrink-0 items-center justify-center rounded-full text-xs ${index < active ? "bg-success text-white" : index === active ? (status === "execution_failed" || status === "timed_out" ? "bg-destructive text-destructive-foreground" : "bg-primary text-white") : "border bg-card"}`}
-					>
-						{index < active ? <Check className="size-3.5" /> : index + 1}
-					</span>
-					<span className="hidden font-medium text-xs sm:block">
-						{t(step.label as MessageId)}
-					</span>
-				</li>
-			))}
-		</ol>
+		<div className="mt-7 overflow-x-auto rounded-xl border bg-accent">
+			<div
+				role="tablist"
+				aria-label={t("任务阶段")}
+				className="grid min-w-[720px] grid-cols-5"
+			>
+				{FLOW.map((step, index) => {
+					const occurred = index <= activeStage;
+					const isSelected = selected === index;
+					const failedCurrent =
+						index === activeStage &&
+						(status === "execution_failed" || status === "timed_out");
+					return (
+						<button
+							key={step.label}
+							id={`task-stage-tab-${index}`}
+							type="button"
+							role="tab"
+							aria-selected={isSelected}
+							aria-controls="task-stage-panel"
+							disabled={!interactive || !occurred}
+							tabIndex={isSelected ? 0 : -1}
+							onClick={() => onSelect(index)}
+							className={`relative flex min-h-16 items-center gap-2.5 border-r px-4 text-left transition-colors last:border-r-0 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset disabled:cursor-not-allowed ${isSelected ? "bg-primary-container/70 text-primary shadow-[inset_0_-2px_0_var(--primary)]" : occurred ? "cursor-pointer text-success hover:bg-white/5" : "text-muted-foreground opacity-60"}`}
+							aria-label={t("查看{stage}阶段详情", {
+								stage: t(step.label as MessageId),
+							})}
+						>
+							<span
+								className={`flex size-7 shrink-0 items-center justify-center rounded-full text-xs ${index < activeStage ? "bg-success text-white" : failedCurrent ? "bg-destructive text-destructive-foreground" : index === activeStage ? "bg-primary text-white" : "border bg-card"}`}
+							>
+								{index < activeStage ? <Check className="size-3.5" /> : index + 1}
+							</span>
+							<span className="font-medium text-xs sm:text-sm">
+								{t(step.label as MessageId)}
+							</span>
+						</button>
+					);
+				})}
+			</div>
+		</div>
 	);
+}
+
+/** 任务状态到五个产品阶段的映射只维护在这里，Tab 和内容区共享同一结果。 */
+function flowStageIndex(status: TaskStatus): number {
+	if (status === "timed_out") return 2;
+	const index = FLOW.findIndex((step) => step.statuses.includes(status));
+	return index < 0 ? 0 : index;
+}
+
+/**
+ * 多 Agent 节点会反复经历匹配、执行和验收，任务主状态不能完整表达已经发生的阶段。
+ * 导航因此取“任务主状态”和“持久化节点事实”的最高阶段：下游重新匹配时不会把已经
+ * 出现过交付物的任务错误退回第二格，结算阶段则仍只由任务终态或工作流终态开启。
+ */
+function formalFlowStageIndex(workflow: FormalWorkflow, taskStatus: TaskStatus): number {
+	const taskStage = flowStageIndex(taskStatus);
+	if (
+		taskStage === 4 ||
+		["completed", "failed", "disputed", "cancelled"].includes(workflow.run.status)
+	) return 4;
+	if (
+		workflow.nodes.some((node) =>
+			node.latestResultBatch !== null ||
+			node.acceptedAt !== null ||
+			["awaiting_review", "accepted", "disputed"].includes(node.status),
+		)
+	) return Math.max(taskStage, 3);
+	if (
+		workflow.nodes.some((node) =>
+			node.execution !== null ||
+			["executing", "rework", "execution_failed"].includes(node.status),
+		)
+	) return Math.max(taskStage, 2);
+	if (
+		workflow.nodes.some((node) =>
+			node.assignment !== null ||
+			["matching", "awaiting_agent_acceptance"].includes(node.status),
+		)
+	) return Math.max(taskStage, 1);
+	return taskStage;
 }
 
 function Panel({
@@ -1940,15 +2368,41 @@ function ErrorNotice({
 		</div>
 	);
 }
-function ReadOnlyNotice() {
+function ReadOnlyNotice({
+	wallet,
+}: {
+	wallet: ReturnType<typeof useWalletSession>;
+}) {
 	const { t } = useLocale();
+	const sessionExpired = wallet.status === "error";
+	const disconnected = wallet.status === "disconnected";
+	const connectedAsNonOwner = wallet.status === "connected";
 	return (
 		<Panel
 			icon={ShieldCheck}
 			eyebrow={t("公开任务详情")}
-			title={t("这是经过脱敏的市场视图")}
-			description={t("连接发布者钱包后才能查看候选报价、托管、验收和交付内容。")}
-		/>
+			title={
+				sessionExpired
+					? t("登录已过期")
+					: connectedAsNonOwner
+						? t("当前钱包不是任务发布者")
+						: t("这是经过脱敏的市场视图")
+			}
+			description={
+				sessionExpired
+					? wallet.error
+					: connectedAsNonOwner
+						? t("请使用发布这个任务的钱包重新登录，公开视图不会展示候选报价、托管、验收和交付内容。")
+						: t("连接发布者钱包后才能查看候选报价、托管、验收和交付内容。")
+			}
+		>
+			{(sessionExpired || disconnected) && (
+				<Button type="button" onClick={() => void wallet.connect()}>
+					<Wallet className="size-4" />
+					{sessionExpired ? t("重新签名登录") : t("连接发布者钱包")}
+				</Button>
+			)}
+		</Panel>
 	);
 }
 function LoadingState() {
@@ -1991,15 +2445,11 @@ async function findOwnedTask(
 	taskId: string,
 	signal?: AbortSignal,
 ): Promise<OwnedTaskSummary | null> {
-	try {
-		return (
-			(await listOwnedTasks(signal)).find((task) => task.id === taskId) ?? null
-		);
-	} catch (caught) {
-		if (caught instanceof TaskApiRequestError && caught.status === 401)
-			return null;
-		throw caught;
-	}
+	// 只有成功读取“我的任务”且确实找不到目标时，才能判定当前钱包不是发布者。
+	// 401 代表会话失效，必须继续抛出并由统一认证边界处理，禁止伪装成公开访客。
+	return (
+		(await listOwnedTasks(signal)).find((task) => task.id === taskId) ?? null
+	);
 }
 async function optionalRead<T>(
 	read: () => Promise<T>,
@@ -2013,6 +2463,26 @@ async function optionalRead<T>(
 			(caught.status === 404 || caught.status === 409)
 		)
 			return fallback;
+		throw caught;
+	}
+}
+
+/**
+ * 正式工作流尚未创建是旧任务的合法状态，只允许吞掉该一个业务缺口。认证失败、越权和
+ * 服务故障必须继续冒泡，否则页面会错误回退到旧流程并隐藏真实异常。
+ */
+async function optionalWorkflowRead(
+	read: () => Promise<FormalWorkflow>,
+): Promise<FormalWorkflow | null> {
+	try {
+		return await read();
+	} catch (caught) {
+		if (
+			caught instanceof TaskApiRequestError &&
+			caught.status === 404 &&
+			caught.body.error_code === "WORKFLOW_NOT_FOUND"
+		)
+			return null;
 		throw caught;
 	}
 }
@@ -2073,9 +2543,12 @@ function appendUniqueEvent(
 		BigInt(left.id || "0") < BigInt(right.id || "0") ? -1 : 1,
 	);
 }
-function eventTitle(type: string, t: ReturnType<typeof useLocale>["t"]): string {
-	return t((
-		(
+function eventTitle(
+	type: string,
+	t: ReturnType<typeof useLocale>["t"],
+): string {
+	return t(
+		((
 			{
 				"task.submitted": "任务已发布",
 				"task.escrow_confirmed": "链上托管已确认",
@@ -2100,9 +2573,13 @@ function eventTitle(type: string, t: ReturnType<typeof useLocale>["t"]): string 
 				"task.timed_out": "任务执行超时",
 				"task.rated": "发布者已评分",
 			} as Record<string, string>
-		)[type] ?? "任务状态已更新") as MessageId);
+		)[type] ?? "任务状态已更新") as MessageId,
+	);
 }
-function eventDetail(event: TaskEventData, t: ReturnType<typeof useLocale>["t"]): string {
+function eventDetail(
+	event: TaskEventData,
+	t: ReturnType<typeof useLocale>["t"],
+): string {
 	if (typeof event.payload.message === "string") return event.payload.message;
 	if (typeof event.payload.progress === "number")
 		return t("执行进度 {progress}%", { progress: event.payload.progress });
@@ -2110,22 +2587,44 @@ function eventDetail(event: TaskEventData, t: ReturnType<typeof useLocale>["t"])
 		return t("任务状态：{status}", { status: event.payload.status });
 	return t("事件已通过任务聚合版本和服务端审计记录固化。");
 }
-function messageOf(caught: unknown, t: ReturnType<typeof useLocale>["t"]): string {
+function messageOf(
+	caught: unknown,
+	t: ReturnType<typeof useLocale>["t"],
+): string {
 	if (caught instanceof TaskApiRequestError) return caught.body.message;
-	if (caught instanceof Error && caught.message !== "INVALID_DEADLINE") return caught.message;
-	return caught instanceof Error ? t("请选择有效的截止时间") : t("操作未完成，请稍后重试");
+	if (caught instanceof Error && caught.message !== "INVALID_DEADLINE")
+		return caught.message;
+	return caught instanceof Error
+		? t("请选择有效的截止时间")
+		: t("操作未完成，请稍后重试");
 }
 function key(operation: string): string {
 	return `${operation}:${crypto.randomUUID()}`;
 }
+
+/** 基点由服务端返回；这里仅做无损展示，不能用 Number 除法重新计算资金。 */
+function formatBasisPoints(value: string): string {
+	const basisPoints = BigInt(value);
+	const basisPointScale = BigInt(100);
+	const whole = basisPoints / basisPointScale;
+	const fraction = (basisPoints % basisPointScale).toString().padStart(2, "0");
+	const trimmedFraction = fraction.replace(/0+$/, "");
+	return `${whole}${trimmedFraction === "" ? "" : `.${trimmedFraction}`}%`;
+}
+
 function required<T>(value: T | null): T {
 	if (value === null) throw new Error("TASK_DISPLAY_SOURCE_MISSING");
 	return value;
 }
 function duration(seconds: number, locale: "en" | "zh-CN"): string {
 	if (seconds < 60) return locale === "en" ? `${seconds}s` : `${seconds} 秒`;
-	if (seconds < 3_600) return locale === "en" ? `${Math.ceil(seconds / 60)}m` : `${Math.ceil(seconds / 60)} 分钟`;
-	return locale === "en" ? `${Math.ceil(seconds / 3_600)}h` : `${Math.ceil(seconds / 3_600)} 小时`;
+	if (seconds < 3_600)
+		return locale === "en"
+			? `${Math.ceil(seconds / 60)}m`
+			: `${Math.ceil(seconds / 60)} 分钟`;
+	return locale === "en"
+		? `${Math.ceil(seconds / 3_600)}h`
+		: `${Math.ceil(seconds / 3_600)} 小时`;
 }
 function parseTagList(value: string): readonly string[] {
 	return [
@@ -2137,50 +2636,69 @@ function parseTagList(value: string): readonly string[] {
 		),
 	];
 }
-function escrowStatusLabel(status: EscrowStatus["status"] | undefined, t: ReturnType<typeof useLocale>["t"]): string {
-	return t((
-		{
-			prepared: "待钱包确认",
-			submitted: "交易已提交",
-			pending_confirmation: "确认中",
-			confirmed: "已确认",
-			released: "已释放",
-			refunded: "已退款",
-			failed: "可重试",
-			needs_review: "待人工复核",
-		} as const
-	)[status ?? "prepared"] as MessageId);
+function escrowStatusLabel(
+	status: EscrowStatus["status"] | undefined,
+	t: ReturnType<typeof useLocale>["t"],
+): string {
+	return t(
+		(
+			{
+				prepared: "待钱包确认",
+				submitted: "交易已提交",
+				pending_confirmation: "确认中",
+				confirmed: "已确认",
+				partially_released: "分阶段结算中",
+				released: "已释放",
+				refunded: "已退款",
+				failed: "可重试",
+				needs_review: "待人工复核",
+			} as const
+		)[status ?? "prepared"] as MessageId,
+	);
 }
-function assignmentStatus(result: TaskAssignmentResult, t: ReturnType<typeof useLocale>["t"]): string {
+function assignmentStatus(
+	result: TaskAssignmentResult,
+	t: ReturnType<typeof useLocale>["t"],
+): string {
 	if (result.assignment.status === "accept_failed") {
 		return result.dispatchAttempt.status === "rejected"
 			? t("Agent 已拒绝，可重新选择")
 			: t("接单超时或派发失败，可重新选择");
 	}
-	return t((
-		{
-			pending_ack: "等待签名接单",
-			accepted: "已接单",
-			cancelled: "已取消",
-		} as const
-	)[result.assignment.status] as MessageId);
+	return t(
+		(
+			{
+				pending_ack: "等待签名接单",
+				accepted: "已接单",
+				cancelled: "已取消",
+			} as const
+		)[result.assignment.status] as MessageId,
+	);
 }
-function roleLabel(role: TaskDispute["viewerRole"], t: ReturnType<typeof useLocale>["t"]): string {
+function roleLabel(
+	role: TaskDispute["viewerRole"],
+	t: ReturnType<typeof useLocale>["t"],
+): string {
 	return role === "publisher"
 		? t("发布者")
 		: role === "agent"
 			? t("Agent 提供者")
 			: t("仲裁员");
 }
-function disputeStatus(status: TaskDispute["status"], t: ReturnType<typeof useLocale>["t"]): string {
-	return t((
-		{
-			evidence_collection: "证据收集中",
-			decided: "已作出决定",
-			executed: "链上执行完成",
-			cancelled: "已取消",
-		} as const
-	)[status] as MessageId);
+function disputeStatus(
+	status: TaskDispute["status"],
+	t: ReturnType<typeof useLocale>["t"],
+): string {
+	return t(
+		(
+			{
+				evidence_collection: "证据收集中",
+				decided: "已作出决定",
+				executed: "链上执行完成",
+				cancelled: "已取消",
+			} as const
+		)[status] as MessageId,
+	);
 }
 function decisionLabel(
 	type: NonNullable<TaskDispute["decision"]>["type"],
