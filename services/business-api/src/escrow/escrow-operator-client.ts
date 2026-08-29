@@ -1,14 +1,19 @@
 import { JsonRpcProvider, keccak256 } from "ethers";
 
-import { encodeRefundCall, encodeReleaseCall } from "./escrow-chain-client";
+import {
+  encodeFinalizeCall,
+  encodeMilestoneReleaseCall,
+  encodeRefundCall,
+  encodeReleaseCall,
+} from "./escrow-chain-client";
 
 export type EscrowOperatorJob = Readonly<{
   taskKey: string;
   contractAddress: string;
-  action: "release" | "refund";
+  action: "release" | "milestone_release" | "finalize" | "refund";
   payee: string | null;
-  agentGrossAmountWei: bigint | null;
-  feeAmountWei: bigint | null;
+  agentGrossAmountMinor: bigint | null;
+  feeAmountMinor: bigint | null;
 }>;
 
 export type PreparedOperatorTransaction = Readonly<{ txHash: string; rawTransaction: string }>;
@@ -28,14 +33,7 @@ export class LocalUnlockedEscrowOperatorClient implements EscrowOperatorClient {
   }
 
   async prepare(job: EscrowOperatorJob): Promise<PreparedOperatorTransaction> {
-    const data = job.action === "refund"
-      ? encodeRefundCall(job.taskKey)
-      : encodeReleaseCall(
-        job.taskKey,
-        required(job.payee, "RELEASE_PAYEE_REQUIRED"),
-        required(job.agentGrossAmountWei, "RELEASE_GROSS_REQUIRED"),
-        required(job.feeAmountWei, "RELEASE_FEE_REQUIRED"),
-      );
+    const data = encodeOperatorCall(job);
     const from = this.operatorAddress.toLowerCase();
     const transaction = { from, to: job.contractAddress, data, value: "0x0" };
     const [network, nonce, gas, fees] = await Promise.all([
@@ -77,6 +75,17 @@ export class LocalUnlockedEscrowOperatorClient implements EscrowOperatorClient {
       throw error;
     }
   }
+}
+
+function encodeOperatorCall(job: EscrowOperatorJob): string {
+  if (job.action === "refund") return encodeRefundCall(job.taskKey);
+  if (job.action === "finalize") return encodeFinalizeCall(job.taskKey);
+  const payee = required(job.payee, "RELEASE_PAYEE_REQUIRED");
+  const gross = required(job.agentGrossAmountMinor, "RELEASE_GROSS_REQUIRED");
+  const fee = required(job.feeAmountMinor, "RELEASE_FEE_REQUIRED");
+  return job.action === "milestone_release"
+    ? encodeMilestoneReleaseCall(job.taskKey, payee, gross, fee)
+    : encodeReleaseCall(job.taskKey, payee, gross, fee);
 }
 
 export function createLocalUnlockedOperatorClient(rpcUrl: string, chainId: bigint, operatorAddress: string): EscrowOperatorClient {

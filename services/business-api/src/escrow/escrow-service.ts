@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { encodeDepositCall, taskKeyForTaskId, type EscrowChainClient } from "./escrow-chain-client";
+import {
+  encodeDepositCall,
+  encodeUsdcApprovalCall,
+  taskKeyForTaskId,
+  type EscrowChainClient,
+} from "./escrow-chain-client";
 import {
   type EscrowIntent,
   type EscrowRepository,
@@ -53,13 +58,21 @@ export class EscrowService {
       status: intent.status,
       chainId: intent.chainId.toString(),
       contractAddress: intent.contractAddress,
+      paymentTokenAddress: this.chain.paymentTokenAddress,
       taskKey: intent.taskKey,
-      transaction: {
-        to: intent.contractAddress,
-        data: encodeDepositCall(intent.taskKey),
-        value: `0x${intent.amountWei.toString(16)}`,
+      transactions: {
+        approve: {
+          to: this.chain.paymentTokenAddress,
+          data: encodeUsdcApprovalCall(intent.contractAddress, intent.amountMinor),
+          value: "0x0",
+        },
+        deposit: {
+          to: intent.contractAddress,
+          data: encodeDepositCall(intent.taskKey, intent.amountMinor),
+          value: "0x0",
+        },
       },
-      amountWei: intent.amountWei.toString(),
+      amountMinor: intent.amountMinor.toString(),
     };
   }
 
@@ -81,10 +94,18 @@ export class EscrowService {
     const intent = await this.repository.resetFailedIntent(taskId, publisherId);
     return {
       ...presentIntent(intent, this.config.requiredConfirmations),
-      transaction: {
-        to: intent.contractAddress,
-        data: encodeDepositCall(intent.taskKey),
-        value: `0x${intent.amountWei.toString(16)}`,
+      paymentTokenAddress: this.chain.paymentTokenAddress,
+      transactions: {
+        approve: {
+          to: this.chain.paymentTokenAddress,
+          data: encodeUsdcApprovalCall(intent.contractAddress, intent.amountMinor),
+          value: "0x0",
+        },
+        deposit: {
+          to: intent.contractAddress,
+          data: encodeDepositCall(intent.taskKey, intent.amountMinor),
+          value: "0x0",
+        },
       },
     };
   }
@@ -200,7 +221,7 @@ function presentIntent(intent: EscrowIntent, requiredConfirmations: bigint) {
     chainId: intent.chainId.toString(),
     contractAddress: intent.contractAddress,
     taskKey: intent.taskKey,
-    amountWei: intent.amountWei.toString(),
+    amountMinor: intent.amountMinor.toString(),
     txHash: intent.depositTxHash,
     confirmations: "0",
     requiredConfirmations: requiredConfirmations.toString(),

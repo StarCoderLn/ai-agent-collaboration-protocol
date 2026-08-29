@@ -155,7 +155,7 @@ export class PgDisputeRepository implements DisputeRepository {
               (SELECT agent.provider_wallet_address FROM task_assignments assignment JOIN agents agent ON agent.id=assignment.agent_id
                 WHERE assignment.task_id=task.id AND assignment.status='accepted' ORDER BY assignment.assigned_at DESC LIMIT 1) AS agent_provider_id,
               EXISTS(SELECT 1 FROM platform_actor_roles WHERE lower(actor_id)=lower($2) AND role='arbitrator') AS arbitrator
-              ,(SELECT intent.amount_wei::text FROM escrow_intents intent WHERE intent.task_id=task.id) AS escrow_amount_minor
+              ,(SELECT intent.amount_minor::text FROM escrow_intents intent WHERE intent.task_id=task.id) AS escrow_amount_minor
          FROM disputes dispute JOIN tasks task ON task.id=dispute.task_id WHERE dispute.id=$1`,
       [disputeId, actorId],
     );
@@ -202,10 +202,10 @@ export class PgDisputeRepository implements DisputeRepository {
     const role = await this.db.query("SELECT 1 FROM platform_actor_roles WHERE lower(actor_id)=lower($1) AND role='arbitrator'", [actorId]);
     const config = await this.db.query<{
       partial_release_enabled: boolean; fee_version: string; fee_basis_points: number; gas_fallback_minor: string;
-      amount_wei: string; payee: string | null;
+      amount_minor: string; payee: string | null;
     }>(
       `SELECT dispute_config.partial_release_enabled,fee.version AS fee_version,fee.fee_basis_points,
-              fee.gas_fallback_minor::text,intent.amount_wei::text,
+              fee.gas_fallback_minor::text,intent.amount_minor::text,
               (SELECT agent.payout_wallet_address FROM task_assignments assignment JOIN agents agent ON agent.id=assignment.agent_id
                 WHERE assignment.task_id=$1 AND assignment.status='accepted' ORDER BY assignment.assigned_at DESC LIMIT 1) AS payee
          FROM dispute_config CROSS JOIN platform_fee_config fee
@@ -220,7 +220,7 @@ export class PgDisputeRepository implements DisputeRepository {
       decision = decideDispute({
         decisionId: randomUUID(), dispute: context.dispute, actorId,
         actorRoles: role.rows[0] === undefined ? new Set() : new Set(["arbitrator"]),
-        type: input.type, escrowAmountMinor: BigInt(money.amount_wei),
+        type: input.type, escrowAmountMinor: BigInt(money.amount_minor),
         releaseAmountMinor: input.releaseAmountMinor, refundAmountMinor: input.refundAmountMinor,
         agentResponsibility: input.agentResponsibility, reason: input.reason,
         partialReleaseEnabled: money.partial_release_enabled, now,
@@ -241,7 +241,7 @@ export class PgDisputeRepository implements DisputeRepository {
     await this.db.query("UPDATE disputes SET status='decided',updated_at=$2 WHERE id=$1", [disputeId, now]);
     await this.db.query(
       `INSERT INTO escrow_execution_jobs(
-         task_id,source,source_ref,action,payee,agent_gross_amount_wei,fee_amount_wei,status,next_attempt_at
+         task_id,source,source_ref,action,payee,agent_gross_amount_minor,fee_amount_minor,status,next_attempt_at
        ) VALUES ($1,'arbitration',$2,$3,$4,$5,$6,'pending',$7)`,
       [context.dispute.taskId, decision.id, decision.type === "refund" ? "refund" : "release",
         decision.type === "refund" ? null : money.payee.toLowerCase(),

@@ -10,26 +10,54 @@ import {
 const ESCROW_ABI = [
   "event Deposited(bytes32 indexed taskId,address indexed payer,uint256 amount)",
   "event Released(bytes32 indexed taskId,address indexed payee,uint256 escrowAmount,uint256 agentGrossAmount,uint256 feeAmount,uint256 payerRefundAmount)",
-  "event Refunded(bytes32 indexed taskId,address indexed payer,uint256 amount)",
-  "function deposit(bytes32 taskId) payable",
+  "event MilestoneReleased(bytes32 indexed taskId,address indexed payee,uint256 escrowAmount,uint256 milestoneGrossAmount,uint256 feeAmount,uint256 totalReleasedAmount,uint256 remainingAmount)",
+  "event Finalized(bytes32 indexed taskId,address indexed payer,uint256 escrowAmount,uint256 releasedAmount,uint256 payerRefundAmount)",
+  "event Refunded(bytes32 indexed taskId,address indexed payer,uint256 escrowAmount,uint256 releasedAmount,uint256 payerRefundAmount)",
+  "function deposit(bytes32 taskId,uint256 amount)",
   "function release(bytes32 taskId,address payee,uint256 agentGrossAmount,uint256 feeAmount)",
+  "function releaseMilestone(bytes32 taskId,address payee,uint256 agentGrossAmount,uint256 feeAmount)",
+  "function finalize(bytes32 taskId)",
   "function refund(bytes32 taskId)",
-  "function escrowOf(bytes32 taskId) view returns ((address payer,uint256 amount,uint8 state))",
+  "function escrowOf(bytes32 taskId) view returns ((address payer,uint256 amount,uint256 releasedAmount,uint8 state))",
 ] as const;
+const ERC20_ABI = ["function approve(address spender,uint256 amount) returns (bool)"] as const;
 
 const escrowInterface = new Interface(ESCROW_ABI);
+const erc20Interface = new Interface(ERC20_ABI);
 
 export type EscrowEventPayload =
-  | Readonly<{ type: "Deposited"; payer: string; escrowAmountWei: bigint }>
+  | Readonly<{ type: "Deposited"; payer: string; escrowAmountMinor: bigint }>
   | Readonly<{
     type: "Released";
     payee: string;
-    escrowAmountWei: bigint;
-    agentGrossAmountWei: bigint;
-    feeAmountWei: bigint;
-    payerRefundAmountWei: bigint;
+    escrowAmountMinor: bigint;
+    agentGrossAmountMinor: bigint;
+    feeAmountMinor: bigint;
+    payerRefundAmountMinor: bigint;
   }>
-  | Readonly<{ type: "Refunded"; payer: string; escrowAmountWei: bigint }>;
+  | Readonly<{
+    type: "MilestoneReleased";
+    payee: string;
+    escrowAmountMinor: bigint;
+    milestoneGrossAmountMinor: bigint;
+    feeAmountMinor: bigint;
+    totalReleasedAmountMinor: bigint;
+    remainingAmountMinor: bigint;
+  }>
+  | Readonly<{
+    type: "Finalized";
+    payer: string;
+    escrowAmountMinor: bigint;
+    releasedAmountMinor: bigint;
+    payerRefundAmountMinor: bigint;
+  }>
+  | Readonly<{
+    type: "Refunded";
+    payer: string;
+    escrowAmountMinor: bigint;
+    releasedAmountMinor: bigint;
+    payerRefundAmountMinor: bigint;
+  }>;
 
 export type ObservedEscrowEvent = Readonly<{
   chainId: bigint;
@@ -44,13 +72,15 @@ export type ObservedEscrowEvent = Readonly<{
 
 export type OnchainEscrowRecord = Readonly<{
   payer: string;
-  amountWei: bigint;
+  amountMinor: bigint;
+  releasedAmountMinor: bigint;
   state: "none" | "deposited" | "released" | "refunded";
 }>;
 
 export interface EscrowChainClient {
   readonly chainId: bigint;
   readonly contractAddress: string;
+  readonly paymentTokenAddress: string;
   getHeadBlockNumber(): Promise<bigint>;
   getBlockHash(blockNumber: bigint): Promise<string | null>;
   getEvents(fromBlock: bigint, toBlock: bigint): Promise<readonly ObservedEscrowEvent[]>;
@@ -68,8 +98,10 @@ export class EthersEscrowChainClient implements EscrowChainClient {
     private readonly provider: JsonRpcProvider,
     readonly chainId: bigint,
     contractAddress: string,
+    readonly paymentTokenAddress: string,
   ) {
     this.contractAddress = normalizeAddress(contractAddress);
+    this.paymentTokenAddress = normalizeAddress(paymentTokenAddress);
   }
 
   async getHeadBlockNumber(): Promise<bigint> {
@@ -90,6 +122,8 @@ export class EthersEscrowChainClient implements EscrowChainClient {
       topics: [[
         eventTopic("Deposited"),
         eventTopic("Released"),
+        eventTopic("MilestoneReleased"),
+        eventTopic("Finalized"),
         eventTopic("Refunded"),
       ]],
     });
@@ -103,8 +137,13 @@ export class EthersEscrowChainClient implements EscrowChainClient {
     const decoded = escrowInterface.decodeFunctionResult("escrowOf", raw);
     const tuple = decoded[0];
     if (!isTupleResult(tuple)) throw new Error("INVALID_ESCROW_RESPONSE");
-    const state = toEscrowState(Number(tuple[2]));
-    return { payer: normalizeAddress(String(tuple[0])), amountWei: BigInt(String(tuple[1])), state };
+    const state = toEscrowState(Number(tuple[3]));
+    return {
+      payer: normalizeAddress(String(tuple[0])),
+      amountMinor: BigInt(String(tuple[1])),
+      releasedAmountMinor: BigInt(String(tuple[2])),
+      state,
+    };
   }
 }
 
@@ -118,15 +157,38 @@ export function taskKeyForTaskId(taskId: string): string {
 }
 
 /** 前端只接收已编码 calldata，不需要复制 ABI 或 taskKey 派生规则。 */
-export function encodeDepositCall(taskKey: string): string {
+export function encodeDepositCall(taskKey: string, amountMinor: bigint): string {
   assertBytes32(taskKey, "INVALID_TASK_KEY");
-  return escrowInterface.encodeFunctionData("deposit", [taskKey]);
+  if (amountMinor <= 0n) throw new Error("INVALID_DEPOSIT_AMOUNT");
+  return escrowInterface.encodeFunctionData("deposit", [taskKey, amountMinor]);
+}
+
+/** 授权金额只覆盖当前任务，避免使用无限授权扩大 Escrow 合约失陷后的影响范围。 */
+export function encodeUsdcApprovalCall(escrowAddress: string, amountMinor: bigint): string {
+  if (amountMinor <= 0n) throw new Error("INVALID_APPROVAL_AMOUNT");
+  return erc20Interface.encodeFunctionData("approve", [normalizeAddress(escrowAddress), amountMinor]);
 }
 
 export function encodeReleaseCall(taskKey: string, payee: string, agentGrossAmount: bigint, feeAmount: bigint): string {
   assertBytes32(taskKey, "INVALID_TASK_KEY");
   if (agentGrossAmount < 0n || feeAmount < 0n || feeAmount > agentGrossAmount) throw new Error("INVALID_RELEASE_AMOUNT");
   return escrowInterface.encodeFunctionData("release", [taskKey, normalizeAddress(payee), agentGrossAmount, feeAmount]);
+}
+
+export function encodeMilestoneReleaseCall(taskKey: string, payee: string, agentGrossAmount: bigint, feeAmount: bigint): string {
+  assertBytes32(taskKey, "INVALID_TASK_KEY");
+  if (agentGrossAmount <= 0n || feeAmount < 0n || feeAmount > agentGrossAmount) throw new Error("INVALID_RELEASE_AMOUNT");
+  return escrowInterface.encodeFunctionData("releaseMilestone", [
+    taskKey,
+    normalizeAddress(payee),
+    agentGrossAmount,
+    feeAmount,
+  ]);
+}
+
+export function encodeFinalizeCall(taskKey: string): string {
+  assertBytes32(taskKey, "INVALID_TASK_KEY");
+  return escrowInterface.encodeFunctionData("finalize", [taskKey]);
 }
 
 export function encodeRefundCall(taskKey: string): string {
@@ -149,7 +211,7 @@ function parseEscrowLog(log: Log, chainId: bigint, contractAddress: string): Obs
     blockHash: normalizedHash(log.blockHash),
   };
   if (parsed.name === "Deposited") {
-    return { ...common, payload: { type: "Deposited", payer: normalizeAddress(String(parsed.args[1])), escrowAmountWei: BigInt(String(parsed.args[2])) } };
+    return { ...common, payload: { type: "Deposited", payer: normalizeAddress(String(parsed.args[1])), escrowAmountMinor: BigInt(String(parsed.args[2])) } };
   }
   if (parsed.name === "Released") {
     return {
@@ -157,15 +219,50 @@ function parseEscrowLog(log: Log, chainId: bigint, contractAddress: string): Obs
       payload: {
         type: "Released",
         payee: normalizeAddress(String(parsed.args[1])),
-        escrowAmountWei: BigInt(String(parsed.args[2])),
-        agentGrossAmountWei: BigInt(String(parsed.args[3])),
-        feeAmountWei: BigInt(String(parsed.args[4])),
-        payerRefundAmountWei: BigInt(String(parsed.args[5])),
+        escrowAmountMinor: BigInt(String(parsed.args[2])),
+        agentGrossAmountMinor: BigInt(String(parsed.args[3])),
+        feeAmountMinor: BigInt(String(parsed.args[4])),
+        payerRefundAmountMinor: BigInt(String(parsed.args[5])),
+      },
+    };
+  }
+  if (parsed.name === "MilestoneReleased") {
+    return {
+      ...common,
+      payload: {
+        type: "MilestoneReleased",
+        payee: normalizeAddress(String(parsed.args[1])),
+        escrowAmountMinor: BigInt(String(parsed.args[2])),
+        milestoneGrossAmountMinor: BigInt(String(parsed.args[3])),
+        feeAmountMinor: BigInt(String(parsed.args[4])),
+        totalReleasedAmountMinor: BigInt(String(parsed.args[5])),
+        remainingAmountMinor: BigInt(String(parsed.args[6])),
+      },
+    };
+  }
+  if (parsed.name === "Finalized") {
+    return {
+      ...common,
+      payload: {
+        type: "Finalized",
+        payer: normalizeAddress(String(parsed.args[1])),
+        escrowAmountMinor: BigInt(String(parsed.args[2])),
+        releasedAmountMinor: BigInt(String(parsed.args[3])),
+        payerRefundAmountMinor: BigInt(String(parsed.args[4])),
       },
     };
   }
   if (parsed.name === "Refunded") {
-    return { ...common, payload: { type: "Refunded", payer: normalizeAddress(String(parsed.args[1])), escrowAmountWei: BigInt(String(parsed.args[2])) } };
+    return {
+      ...common,
+      payload: {
+        type: "Refunded",
+        payer: normalizeAddress(String(parsed.args[1])),
+        escrowAmountMinor: BigInt(String(parsed.args[2])),
+        releasedAmountMinor: BigInt(String(parsed.args[3])),
+        payerRefundAmountMinor: BigInt(String(parsed.args[4])),
+      },
+    };
   }
   throw new Error("UNKNOWN_ESCROW_EVENT");
 }
@@ -181,8 +278,8 @@ function normalizedHash(value: string): string {
 function assertBytes32(value: string, code: string): void {
   if (!/^0x[0-9a-f]{64}$/.test(value)) throw new Error(code);
 }
-function isTupleResult(value: unknown): value is Readonly<{ 0: unknown; 1: unknown; 2: unknown }> {
-  return typeof value === "object" && value !== null && 0 in value && 1 in value && 2 in value;
+function isTupleResult(value: unknown): value is Readonly<{ 0: unknown; 1: unknown; 2: unknown; 3: unknown }> {
+  return typeof value === "object" && value !== null && 0 in value && 1 in value && 2 in value && 3 in value;
 }
 function toEscrowState(value: number): OnchainEscrowRecord["state"] {
   if (value === 0) return "none";
@@ -192,12 +289,22 @@ function toEscrowState(value: number): OnchainEscrowRecord["state"] {
   throw new Error("INVALID_ESCROW_STATE");
 }
 
-function eventTopic(name: "Deposited" | "Released" | "Refunded"): string {
+function eventTopic(name: "Deposited" | "Released" | "MilestoneReleased" | "Finalized" | "Refunded"): string {
   const fragment = escrowInterface.getEvent(name);
   if (fragment === null) throw new Error("ESCROW_ABI_EVENT_NOT_FOUND");
   return fragment.topicHash;
 }
 
-export function createJsonRpcEscrowClient(input: Readonly<{ rpcUrl: string; chainId: bigint; contractAddress: string }>): EscrowChainClient {
-  return new EthersEscrowChainClient(new JsonRpcProvider(input.rpcUrl, Number(input.chainId), { staticNetwork: true }), input.chainId, input.contractAddress);
+export function createJsonRpcEscrowClient(input: Readonly<{
+  rpcUrl: string;
+  chainId: bigint;
+  contractAddress: string;
+  paymentTokenAddress: string;
+}>): EscrowChainClient {
+  return new EthersEscrowChainClient(
+    new JsonRpcProvider(input.rpcUrl, Number(input.chainId), { staticNetwork: true }),
+    input.chainId,
+    input.contractAddress,
+    input.paymentTokenAddress,
+  );
 }

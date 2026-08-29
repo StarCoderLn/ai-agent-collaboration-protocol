@@ -7,6 +7,7 @@ import { EscrowService, type EscrowRuntimeConfig } from "./escrow-service";
 const HASH_A = `0x${"11".repeat(32)}`;
 const TX_HASH = `0x${"22".repeat(32)}`;
 const CONTRACT = `0x${"33".repeat(20)}`;
+const PAYMENT_TOKEN = `0x${"34".repeat(20)}`;
 const TASK_KEY = `0x${"44".repeat(32)}`;
 const EVENT: ObservedEscrowEvent = {
   chainId: 31_337n,
@@ -16,7 +17,7 @@ const EVENT: ObservedEscrowEvent = {
   logIndex: 0,
   blockNumber: 9n,
   blockHash: HASH_A,
-  payload: { type: "Deposited", payer: `0x${"55".repeat(20)}`, escrowAmountWei: 2n },
+  payload: { type: "Deposited", payer: `0x${"55".repeat(20)}`, escrowAmountMinor: 2n },
 };
 const CONFIG: EscrowRuntimeConfig = {
   requiredConfirmations: 12n,
@@ -34,7 +35,7 @@ describe("EscrowService worker", () => {
       claimCursor: vi.fn(async () => ({ token: "lease-1", nextBlock: 9n })),
       listPending: vi.fn(async () => [{ id: "event-1", blockNumber: 9n, blockHash: HASH_A }]),
       applyCanonicalConfirmation: vi.fn(async () => "confirmed" as const),
-      listReconciliationCandidates: vi.fn(async () => [{ taskId: "task-1", taskKey: TASK_KEY, amountWei: 2n, expectedState: "deposited" as const, payerWallet: EVENT.payload.type === "Deposited" ? EVENT.payload.payer : "" }]),
+      listReconciliationCandidates: vi.fn(async () => [{ taskId: "task-1", taskKey: TASK_KEY, amountMinor: 2n, releasedAmountMinor: 0n, expectedState: "deposited" as const, payerWallet: EVENT.payload.type === "Deposited" ? EVENT.payload.payer : "" }]),
     });
     const chain = fakeChain({ getHeadBlockNumber: vi.fn(async () => 20n), getEvents: vi.fn(async () => [EVENT]) });
     const service = new EscrowService(repository, chain, CONFIG);
@@ -108,10 +109,11 @@ function fakeChain(overrides: Partial<EscrowChainClient> = {}): EscrowChainClien
   return {
     chainId: 31_337n,
     contractAddress: CONTRACT,
+    paymentTokenAddress: PAYMENT_TOKEN,
     getHeadBlockNumber: vi.fn(async () => 0n),
     getBlockHash: vi.fn(async () => HASH_A),
     getEvents: vi.fn(async () => []),
-    getEscrow: vi.fn(async () => ({ payer: EVENT.payload.type === "Deposited" ? EVENT.payload.payer : "", amountWei: 2n, state: "deposited" as const })),
+    getEscrow: vi.fn(async () => ({ payer: EVENT.payload.type === "Deposited" ? EVENT.payload.payer : "", amountMinor: 2n, releasedAmountMinor: 0n, state: "deposited" as const })),
     ...overrides,
   };
 }

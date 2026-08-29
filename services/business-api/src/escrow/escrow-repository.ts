@@ -7,6 +7,7 @@ import { withTransaction } from "../db/pool";
 import { transitionTaskStatus, type TaskStatus, type TaskTransitionEvent } from "../platform/task-state";
 import { nextRefundAttempt } from "../platform/escrow-sync";
 import { emitTaskEvent } from "../tasks/task-event-repository";
+import { ensureFormalWorkflow } from "../workflows/workflow-repository";
 import type { EscrowEventPayload, ObservedEscrowEvent, OnchainEscrowRecord } from "./escrow-chain-client";
 
 export type EscrowDatabase = PoolLike & QueryExecutor;
@@ -17,8 +18,9 @@ export type EscrowIntent = Readonly<{
   contractAddress: string;
   taskKey: string;
   payerWallet: string;
-  amountWei: bigint;
-  status: "prepared" | "submitted" | "pending_confirmation" | "confirmed" | "released" | "refunded" | "failed" | "needs_review";
+  amountMinor: bigint;
+  releasedAmountMinor: bigint;
+  status: "prepared" | "submitted" | "pending_confirmation" | "confirmed" | "partially_released" | "released" | "refunded" | "failed" | "needs_review";
   depositTxHash: string | null;
   failureReason: string | null;
   updatedAt: Date;
@@ -44,7 +46,8 @@ export type CursorLease = Readonly<{
 export type ReconciliationCandidate = Readonly<{
   taskId: string;
   taskKey: string;
-  amountWei: bigint;
+  amountMinor: bigint;
+  releasedAmountMinor: bigint;
   expectedState: OnchainEscrowRecord["state"];
   payerWallet: string;
 }>;
@@ -90,21 +93,44 @@ type IntentRow = QueryResultRow & {
   contract_address: string;
   task_key: string;
   payer_wallet: string;
-  amount_wei: string;
+  amount_minor: string;
+  released_amount_minor: string;
   status: EscrowIntent["status"];
   deposit_tx_hash: string | null;
   failure_reason: string | null;
   updated_at: Date;
 };
 
+type LockedEscrowState = {
+  task_status: TaskStatus;
+  status_version: string;
+  amount_minor: string;
+  released_amount_minor: string;
+  payer_wallet: string;
+  deposit_tx_hash: string | null;
+  intent_status: EscrowIntent["status"];
+};
+
 const payloadSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("Deposited"), payer: z.string(), escrowAmountWei: z.string().regex(/^\d+$/) }).strict(),
+  z.object({ type: z.literal("Deposited"), payer: z.string(), escrowAmountMinor: z.string().regex(/^\d+$/) }).strict(),
   z.object({
-    type: z.literal("Released"), payee: z.string(), escrowAmountWei: z.string().regex(/^\d+$/),
-    agentGrossAmountWei: z.string().regex(/^\d+$/), feeAmountWei: z.string().regex(/^\d+$/),
-    payerRefundAmountWei: z.string().regex(/^\d+$/),
+    type: z.literal("Released"), payee: z.string(), escrowAmountMinor: z.string().regex(/^\d+$/),
+    agentGrossAmountMinor: z.string().regex(/^\d+$/), feeAmountMinor: z.string().regex(/^\d+$/),
+    payerRefundAmountMinor: z.string().regex(/^\d+$/),
   }).strict(),
-  z.object({ type: z.literal("Refunded"), payer: z.string(), escrowAmountWei: z.string().regex(/^\d+$/) }).strict(),
+  z.object({
+    type: z.literal("MilestoneReleased"), payee: z.string(), escrowAmountMinor: z.string().regex(/^\d+$/),
+    milestoneGrossAmountMinor: z.string().regex(/^\d+$/), feeAmountMinor: z.string().regex(/^\d+$/),
+    totalReleasedAmountMinor: z.string().regex(/^\d+$/), remainingAmountMinor: z.string().regex(/^\d+$/),
+  }).strict(),
+  z.object({
+    type: z.literal("Finalized"), payer: z.string(), escrowAmountMinor: z.string().regex(/^\d+$/),
+    releasedAmountMinor: z.string().regex(/^\d+$/), payerRefundAmountMinor: z.string().regex(/^\d+$/),
+  }).strict(),
+  z.object({
+    type: z.literal("Refunded"), payer: z.string(), escrowAmountMinor: z.string().regex(/^\d+$/),
+    releasedAmountMinor: z.string().regex(/^\d+$/), payerRefundAmountMinor: z.string().regex(/^\d+$/),
+  }).strict(),
 ]);
 
 /**
@@ -133,8 +159,8 @@ export class PgEscrowRepository implements EscrowRepository {
       if (task.status !== "awaiting_escrow") {
         throw new EscrowRepositoryError("TASK_NOT_AWAITING_ESCROW", "任务当前不处于待托管状态", 409);
       }
-      if (task.currency.toUpperCase() !== "ETH") {
-        throw new EscrowRepositoryError("ESCROW_CURRENCY_UNSUPPORTED", "当前 Ethereum 合约仅支持 ETH", 422);
+      if (task.currency.toUpperCase() !== "USDC") {
+        throw new EscrowRepositoryError("ESCROW_CURRENCY_UNSUPPORTED", "任务托管仅支持 USDC", 422);
       }
       if (task.budget_max_minor === null || BigInt(task.budget_max_minor) <= 0n) {
         throw new EscrowRepositoryError("ESCROW_AMOUNT_INVALID", "托管金额无效", 422);
@@ -145,11 +171,11 @@ export class PgEscrowRepository implements EscrowRepository {
 
       const result = await client.query<IntentRow>(
         `INSERT INTO escrow_intents(
-           task_id,chain_id,contract_address,task_key,payer_wallet,amount_wei,status
+           task_id,chain_id,contract_address,task_key,payer_wallet,amount_minor,status
          ) VALUES ($1,$2,$3,$4,$5,$6,'prepared')
          ON CONFLICT (task_id) DO UPDATE SET updated_at=escrow_intents.updated_at
          RETURNING task_id::text,chain_id::text,contract_address,task_key,payer_wallet,
-                   amount_wei::text,status,deposit_tx_hash,failure_reason,updated_at`,
+                   amount_minor::text,released_amount_minor::text,status,deposit_tx_hash,failure_reason,updated_at`,
         [input.taskId, input.chainId.toString(), input.contractAddress, input.taskKey, task.publisher_id.toLowerCase(), task.budget_max_minor],
       );
       const intent = mapIntent(required(result.rows[0], "ESCROW_INTENT_NOT_WRITTEN"));
@@ -167,7 +193,8 @@ export class PgEscrowRepository implements EscrowRepository {
        WHERE intent.task_id=$1 AND task.id=intent.task_id AND lower(task.publisher_id)=lower($2)
          AND intent.status IN ('prepared','submitted','failed')
        RETURNING intent.task_id::text,intent.chain_id::text,intent.contract_address,intent.task_key,
-                 intent.payer_wallet,intent.amount_wei::text,intent.status,intent.deposit_tx_hash,
+                 intent.payer_wallet,intent.amount_minor::text,intent.released_amount_minor::text,
+                 intent.status,intent.deposit_tx_hash,
                  intent.failure_reason,intent.updated_at`,
       [taskId, publisherId, txHash],
     );
@@ -179,7 +206,8 @@ export class PgEscrowRepository implements EscrowRepository {
   async findOwnedIntent(taskId: string, publisherId: string): Promise<EscrowIntent | null> {
     const result = await this.db.query<IntentRow>(
       `SELECT intent.task_id::text,intent.chain_id::text,intent.contract_address,intent.task_key,
-              intent.payer_wallet,intent.amount_wei::text,intent.status,intent.deposit_tx_hash,
+              intent.payer_wallet,intent.amount_minor::text,intent.released_amount_minor::text,
+              intent.status,intent.deposit_tx_hash,
               intent.failure_reason,intent.updated_at
          FROM escrow_intents intent JOIN tasks task ON task.id=intent.task_id
         WHERE intent.task_id=$1 AND lower(task.publisher_id)=lower($2)`,
@@ -191,7 +219,8 @@ export class PgEscrowRepository implements EscrowRepository {
   async findOwnedStatus(taskId: string, publisherId: string): Promise<EscrowStatusView | null> {
     const result = await this.db.query<IntentRow & { confirmations: string | null; chain_event_status: EscrowStatusView["chainEventStatus"] }>(
       `SELECT intent.task_id::text,intent.chain_id::text,intent.contract_address,intent.task_key,
-              intent.payer_wallet,intent.amount_wei::text,intent.status,intent.deposit_tx_hash,
+              intent.payer_wallet,intent.amount_minor::text,intent.released_amount_minor::text,
+              intent.status,intent.deposit_tx_hash,
               intent.failure_reason,intent.updated_at,event.confirmations::text,
               event.status AS chain_event_status
          FROM escrow_intents intent JOIN tasks task ON task.id=intent.task_id
@@ -217,7 +246,8 @@ export class PgEscrowRepository implements EscrowRepository {
        WHERE intent.task_id=$1 AND task.id=intent.task_id AND lower(task.publisher_id)=lower($2)
          AND intent.status IN ('prepared','submitted','pending_confirmation')
        RETURNING intent.task_id::text,intent.chain_id::text,intent.contract_address,intent.task_key,
-                 intent.payer_wallet,intent.amount_wei::text,intent.status,intent.deposit_tx_hash,
+                 intent.payer_wallet,intent.amount_minor::text,intent.released_amount_minor::text,
+                 intent.status,intent.deposit_tx_hash,
                  intent.failure_reason,intent.updated_at`,
       [taskId, publisherId, reason],
     );
@@ -233,7 +263,8 @@ export class PgEscrowRepository implements EscrowRepository {
        WHERE intent.task_id=$1 AND task.id=intent.task_id AND lower(task.publisher_id)=lower($2)
          AND intent.status='failed'
        RETURNING intent.task_id::text,intent.chain_id::text,intent.contract_address,intent.task_key,
-                 intent.payer_wallet,intent.amount_wei::text,intent.status,intent.deposit_tx_hash,
+                 intent.payer_wallet,intent.amount_minor::text,intent.released_amount_minor::text,
+                 intent.status,intent.deposit_tx_hash,
                  intent.failure_reason,intent.updated_at`,
       [taskId, publisherId],
     );
@@ -291,7 +322,7 @@ export class PgEscrowRepository implements EscrowRepository {
     const mapped = taskId !== null;
     const result = await this.db.query(
       `INSERT INTO escrow_sync(
-         task_id,chain_id,contract_address,task_key,tx_hash,log_index,event_type,amount_wei,
+         task_id,chain_id,contract_address,task_key,tx_hash,log_index,event_type,amount_minor,
          event_payload,status,block_number,block_hash,failure_reason
        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13)
        ON CONFLICT (chain_id,tx_hash,log_index) DO NOTHING`,
@@ -426,29 +457,47 @@ export class PgEscrowRepository implements EscrowRepository {
 
   async listReconciliationCandidates(limit: number): Promise<readonly ReconciliationCandidate[]> {
     const result = await this.db.query<IntentRow>(
-      `SELECT task_id::text,chain_id::text,contract_address,task_key,payer_wallet,amount_wei::text,
-              status,deposit_tx_hash,failure_reason,updated_at
-         FROM escrow_intents WHERE status IN ('confirmed','released','refunded')
+      `SELECT task_id::text,chain_id::text,contract_address,task_key,payer_wallet,amount_minor::text,
+              released_amount_minor::text,status,deposit_tx_hash,failure_reason,updated_at
+         FROM escrow_intents WHERE status IN ('confirmed','partially_released','released','refunded')
         ORDER BY updated_at LIMIT $1`,
       [limit],
     );
     return result.rows.map((row) => {
       const intent = mapIntent(row);
       const expectedState = expectedOnchainState(intent.status);
-      return { taskId: intent.taskId, taskKey: intent.taskKey, amountWei: intent.amountWei, expectedState, payerWallet: intent.payerWallet };
+      return {
+        taskId: intent.taskId,
+        taskKey: intent.taskKey,
+        amountMinor: intent.amountMinor,
+        releasedAmountMinor: intent.releasedAmountMinor,
+        expectedState,
+        payerWallet: intent.payerWallet,
+      };
     });
   }
 
   async recordReconciliation(taskId: string, expected: ReconciliationCandidate, actual: OnchainEscrowRecord): Promise<boolean> {
-    const matches = expected.amountWei === actual.amountWei
+    const matches = expected.amountMinor === actual.amountMinor
+      && expected.releasedAmountMinor === actual.releasedAmountMinor
       && expected.expectedState === actual.state
       && (actual.state === "none" || expected.payerWallet === actual.payer);
     if (matches) return true;
     await withTransaction(this.db, async (client) => {
       await writeReconciliationAlert(client, taskId, {
         code: "ESCROW_RECONCILIATION_MISMATCH",
-        expected: { amountWei: expected.amountWei.toString(), state: expected.expectedState, payer: expected.payerWallet },
-        actual: { amountWei: actual.amountWei.toString(), state: actual.state, payer: actual.payer },
+        expected: {
+          amountMinor: expected.amountMinor.toString(),
+          releasedAmountMinor: expected.releasedAmountMinor.toString(),
+          state: expected.expectedState,
+          payer: expected.payerWallet,
+        },
+        actual: {
+          amountMinor: actual.amountMinor.toString(),
+          releasedAmountMinor: actual.releasedAmountMinor.toString(),
+          state: actual.state,
+          payer: actual.payer,
+        },
       });
       await client.query("UPDATE escrow_intents SET status='needs_review',failure_reason='RECONCILIATION_MISMATCH',updated_at=now() WHERE task_id=$1", [taskId]);
     });
@@ -489,33 +538,39 @@ async function applyEventToTask(
   db: QueryExecutor,
   input: Readonly<{ eventId: string; taskId: string; txHash: string; payload: EscrowEventPayload; confirmations: bigint; now: Date }>,
 ): Promise<"confirmed" | "needs_review"> {
-  const joined = await db.query<{
-    task_status: TaskStatus; status_version: string; amount_wei: string; payer_wallet: string;
-    deposit_tx_hash: string | null; intent_status: EscrowIntent["status"];
-  }>(
-    `SELECT task.status AS task_status,task.status_version::text,intent.amount_wei::text,
-            intent.payer_wallet,intent.deposit_tx_hash,intent.status AS intent_status
+  const joined = await db.query<LockedEscrowState>(
+    `SELECT task.status AS task_status,task.status_version::text,intent.amount_minor::text,
+            intent.released_amount_minor::text,intent.payer_wallet,intent.deposit_tx_hash,
+            intent.status AS intent_status
        FROM tasks task JOIN escrow_intents intent ON intent.task_id=task.id
       WHERE task.id=$1 FOR UPDATE OF task,intent`,
     [input.taskId],
   );
   const state = joined.rows[0];
   if (state === undefined) return markNeedsReview(db, input, "ESCROW_INTENT_NOT_FOUND");
-  const amount = BigInt(state.amount_wei);
+  const amount = BigInt(state.amount_minor);
+  const alreadyReleased = BigInt(state.released_amount_minor);
+
+  if (input.payload.type === "MilestoneReleased") {
+    return applyMilestoneRelease(db, { ...input, payload: input.payload }, state, amount, alreadyReleased);
+  }
+  if (input.payload.type === "Finalized") {
+    return applyWorkflowFinalize(db, { ...input, payload: input.payload }, state, amount, alreadyReleased);
+  }
 
   let transition: TaskTransitionEvent;
   let intentStatus: EscrowIntent["status"];
   if (input.payload.type === "Deposited") {
     const txMatches = state.deposit_tx_hash === null || state.deposit_tx_hash === input.txHash;
-    if (input.payload.escrowAmountWei !== amount || input.payload.payer !== state.payer_wallet || !txMatches) {
+    if (input.payload.escrowAmountMinor !== amount || input.payload.payer !== state.payer_wallet || !txMatches) {
       return markNeedsReview(db, input, "DEPOSIT_DETAILS_MISMATCH");
     }
     transition = { type: "escrow_confirmed", txHash: input.txHash };
     intentStatus = "confirmed";
   } else if (input.payload.type === "Released") {
-    if (input.payload.escrowAmountWei !== amount
-      || input.payload.agentGrossAmountWei + input.payload.payerRefundAmountWei !== amount
-      || input.payload.feeAmountWei > input.payload.agentGrossAmountWei) {
+    if (input.payload.escrowAmountMinor !== amount
+      || input.payload.agentGrossAmountMinor + input.payload.payerRefundAmountMinor !== amount
+      || input.payload.feeAmountMinor > input.payload.agentGrossAmountMinor) {
       return markNeedsReview(db, input, "RELEASE_AMOUNT_MISMATCH");
     }
     const valid = await validateReleaseDetails(db, input.taskId, state.task_status, input.txHash, input.payload);
@@ -525,7 +580,9 @@ async function applyEventToTask(
       : { type: "settlement_confirmed", txHash: input.txHash };
     intentStatus = "released";
   } else {
-    if (input.payload.escrowAmountWei !== amount || input.payload.payer !== state.payer_wallet) {
+    if (input.payload.escrowAmountMinor !== amount || input.payload.payer !== state.payer_wallet
+      || input.payload.releasedAmountMinor !== alreadyReleased
+      || input.payload.payerRefundAmountMinor !== amount - alreadyReleased) {
       return markNeedsReview(db, input, "REFUND_DETAILS_MISMATCH");
     }
     const decision = await db.query<{ execution_tx_hash: string | null }>(
@@ -550,6 +607,11 @@ async function applyEventToTask(
     "UPDATE escrow_intents SET status=$2,failure_reason=NULL,updated_at=$3 WHERE task_id=$1",
     [input.taskId, intentStatus, input.now],
   );
+  if (input.payload.type === "Deposited") {
+    // 托管确认、任务进入 matching 与正式执行图创建必须处于同一事务。若图创建失败，
+    // 整次链上确认回滚，避免 legacy 任务匹配先抢到任务后才补出另一套节点分配事实。
+    await ensureFormalWorkflow(db, input.taskId);
+  }
   await db.query(
     `UPDATE escrow_sync SET status='confirmed',confirmations=$2,task_transitioned=TRUE,
             resulting_status_version=$3,canonical_checked_at=$4,updated_at=$4,failure_reason=NULL
@@ -620,8 +682,8 @@ async function validateReleaseDetails(
     );
     const row = result.rows[0];
     return row !== undefined
-      && BigInt(row.gross_amount_minor) === payload.agentGrossAmountWei
-      && BigInt(row.platform_fee_minor) === payload.feeAmountWei
+      && BigInt(row.gross_amount_minor) === payload.agentGrossAmountMinor
+      && BigInt(row.platform_fee_minor) === payload.feeAmountMinor
       && row.payout_wallet_address.toLowerCase() === payload.payee
       && row.tx_hash === txHash;
   }
@@ -643,9 +705,203 @@ async function validateReleaseDetails(
   );
   const row = result.rows[0];
   return row !== undefined && row.execution_tx_hash === txHash
-    && row.release_amount_minor !== null && BigInt(row.release_amount_minor) === payload.agentGrossAmountWei
-    && row.platform_fee_minor !== null && BigInt(row.platform_fee_minor) === payload.feeAmountWei
+    && row.release_amount_minor !== null && BigInt(row.release_amount_minor) === payload.agentGrossAmountMinor
+    && row.platform_fee_minor !== null && BigInt(row.platform_fee_minor) === payload.feeAmountMinor
     && row.payout_wallet_address.toLowerCase() === payload.payee;
+}
+
+async function applyMilestoneRelease(
+  db: QueryExecutor,
+  input: Readonly<{
+    eventId: string;
+    taskId: string;
+    txHash: string;
+    payload: Extract<EscrowEventPayload, { type: "MilestoneReleased" }>;
+    confirmations: bigint;
+    now: Date;
+  }>,
+  state: LockedEscrowState,
+  escrowAmount: bigint,
+  alreadyReleased: bigint,
+): Promise<"confirmed" | "needs_review"> {
+  const payload = input.payload;
+  const nextReleased = alreadyReleased + payload.milestoneGrossAmountMinor;
+  if (payload.escrowAmountMinor !== escrowAmount
+    || payload.milestoneGrossAmountMinor <= 0n
+    || payload.feeAmountMinor > payload.milestoneGrossAmountMinor
+    || payload.totalReleasedAmountMinor !== nextReleased
+    || payload.remainingAmountMinor !== escrowAmount - nextReleased
+    || nextReleased > escrowAmount) {
+    return markNeedsReview(db, input, "MILESTONE_AMOUNT_MISMATCH");
+  }
+  const expected = await db.query<{
+    gross_amount_minor: string;
+    platform_fee_minor: string;
+    payout_wallet_address: string;
+    tx_hash: string | null;
+  }>(
+    `SELECT acceptance.gross_amount_minor::text,acceptance.platform_fee_minor::text,
+            agent.payout_wallet_address,job.tx_hash
+       FROM workflow_node_acceptances acceptance
+       JOIN task_assignments assignment ON assignment.id=acceptance.assignment_id
+       JOIN agents agent ON agent.id=assignment.agent_id
+       JOIN escrow_execution_jobs job
+         ON job.source='workflow_acceptance' AND job.source_ref=acceptance.id
+      WHERE acceptance.task_id=$1 AND job.status='submitted' AND job.tx_hash=$2`,
+    [input.taskId, input.txHash],
+  );
+  const row = expected.rows[0];
+  if (row === undefined
+    || BigInt(row.gross_amount_minor) !== payload.milestoneGrossAmountMinor
+    || BigInt(row.platform_fee_minor) !== payload.feeAmountMinor
+    || row.payout_wallet_address.toLocaleLowerCase() !== payload.payee
+    || row.tx_hash !== input.txHash) {
+    return markNeedsReview(db, input, "MILESTONE_RELEASE_DETAILS_MISMATCH");
+  }
+  const ledger = await db.query<{ released_amount_minor: string; refundable_amount_minor: string }>(
+    `SELECT released_amount_minor::text,refundable_amount_minor::text
+       FROM task_workflow_runs WHERE task_id=$1 FOR UPDATE`,
+    [input.taskId],
+  );
+  const ledgerRow = ledger.rows[0];
+  if (ledgerRow === undefined
+    || BigInt(ledgerRow.released_amount_minor) !== alreadyReleased
+    || BigInt(ledgerRow.refundable_amount_minor) < payload.milestoneGrossAmountMinor) {
+    return markNeedsReview(db, input, "MILESTONE_LEDGER_CONFLICT");
+  }
+
+  const intent = await db.query(
+    `UPDATE escrow_intents
+        SET status='partially_released',released_amount_minor=$2,failure_reason=NULL,updated_at=$3
+      WHERE task_id=$1 AND released_amount_minor=$4
+        AND status IN ('confirmed','partially_released')`,
+    [input.taskId, nextReleased.toString(), input.now, alreadyReleased.toString()],
+  );
+  const run = await db.query(
+    `UPDATE task_workflow_runs
+        SET released_amount_minor=released_amount_minor+$2,
+            refundable_amount_minor=refundable_amount_minor-$2,version=version+1,updated_at=$3
+      WHERE task_id=$1 AND refundable_amount_minor >= $2`,
+    [input.taskId, payload.milestoneGrossAmountMinor.toString(), input.now],
+  );
+  if (intent.rowCount !== 1 || run.rowCount !== 1) throw new Error("MILESTONE_LEDGER_UPDATE_FAILED");
+  const task = await db.query<{ status_version: string }>(
+    "UPDATE tasks SET status_version=status_version+1,updated_at=$2 WHERE id=$1 RETURNING status_version::text",
+    [input.taskId, input.now],
+  );
+  const version = BigInt(required(task.rows[0], "TASK_NOT_FOUND").status_version);
+  await db.query(
+    `UPDATE escrow_sync SET status='confirmed',confirmations=$2,task_transitioned=TRUE,
+            resulting_status_version=$3,canonical_checked_at=$4,updated_at=$4,failure_reason=NULL
+      WHERE id=$1`,
+    [input.eventId, input.confirmations.toString(), version.toString(), input.now],
+  );
+  await db.query(
+    `UPDATE escrow_execution_jobs SET status='executed',lock_token=NULL,lock_expires_at=NULL,updated_at=$3
+      WHERE task_id=$1 AND tx_hash=$2 AND source='workflow_acceptance' AND status='submitted'`,
+    [input.taskId, input.txHash, input.now],
+  );
+  await emitTaskEvent(db, {
+    taskId: input.taskId,
+    statusVersion: version,
+    eventType: "task.workflow_milestone_confirmed",
+    payload: {
+      status: state.task_status,
+      txHash: input.txHash,
+      escrowEventId: input.eventId,
+      milestoneGrossAmountMinor: payload.milestoneGrossAmountMinor.toString(),
+      totalReleasedAmountMinor: nextReleased.toString(),
+      remainingAmountMinor: payload.remainingAmountMinor.toString(),
+    },
+    createdAt: input.now,
+  });
+  return "confirmed";
+}
+
+async function applyWorkflowFinalize(
+  db: QueryExecutor,
+  input: Readonly<{
+    eventId: string;
+    taskId: string;
+    txHash: string;
+    payload: Extract<EscrowEventPayload, { type: "Finalized" }>;
+    confirmations: bigint;
+    now: Date;
+  }>,
+  state: LockedEscrowState,
+  escrowAmount: bigint,
+  alreadyReleased: bigint,
+): Promise<"confirmed" | "needs_review"> {
+  const payload = input.payload;
+  if (payload.payer !== state.payer_wallet
+    || payload.escrowAmountMinor !== escrowAmount
+    || payload.releasedAmountMinor !== alreadyReleased
+    || payload.payerRefundAmountMinor !== escrowAmount - alreadyReleased) {
+    return markNeedsReview(db, input, "WORKFLOW_FINALIZE_AMOUNT_MISMATCH");
+  }
+  const expected = await db.query<{
+    released_amount_minor: string;
+    refundable_amount_minor: string;
+    tx_hash: string | null;
+  }>(
+    `SELECT run.released_amount_minor::text,run.refundable_amount_minor::text,job.tx_hash
+       FROM task_workflow_runs run
+       JOIN escrow_execution_jobs job ON job.source='workflow_run' AND job.source_ref=run.id
+      WHERE run.task_id=$1 AND run.status='completed' AND job.status='submitted' AND job.tx_hash=$2
+        AND NOT EXISTS (
+          SELECT 1 FROM escrow_execution_jobs milestone
+           WHERE milestone.task_id=run.task_id AND milestone.source='workflow_acceptance'
+             AND milestone.status<>'executed'
+        )`,
+    [input.taskId, input.txHash],
+  );
+  const row = expected.rows[0];
+  if (row === undefined
+    || BigInt(row.released_amount_minor) !== alreadyReleased
+    || BigInt(row.refundable_amount_minor) !== payload.payerRefundAmountMinor
+    || row.tx_hash !== input.txHash) {
+    return markNeedsReview(db, input, "WORKFLOW_FINALIZE_DETAILS_MISMATCH");
+  }
+  let next: TaskStatus;
+  try {
+    next = transitionTaskStatus(state.task_status, { type: "workflow_settlement_confirmed", txHash: input.txHash });
+  } catch {
+    return markNeedsReview(db, input, "TASK_TRANSITION_NOT_READY");
+  }
+  const version = BigInt(state.status_version) + 1n;
+  await db.query(
+    "UPDATE tasks SET status=$2,status_version=$3,updated_at=$4 WHERE id=$1",
+    [input.taskId, next, version.toString(), input.now],
+  );
+  await db.query(
+    "UPDATE escrow_intents SET status='released',failure_reason=NULL,updated_at=$2 WHERE task_id=$1",
+    [input.taskId, input.now],
+  );
+  await db.query(
+    `UPDATE escrow_sync SET status='confirmed',confirmations=$2,task_transitioned=TRUE,
+            resulting_status_version=$3,canonical_checked_at=$4,updated_at=$4,failure_reason=NULL
+      WHERE id=$1`,
+    [input.eventId, input.confirmations.toString(), version.toString(), input.now],
+  );
+  await db.query(
+    `UPDATE escrow_execution_jobs SET status='executed',lock_token=NULL,lock_expires_at=NULL,updated_at=$3
+      WHERE task_id=$1 AND tx_hash=$2 AND source='workflow_run' AND status='submitted'`,
+    [input.taskId, input.txHash, input.now],
+  );
+  await emitTaskEvent(db, {
+    taskId: input.taskId,
+    statusVersion: version,
+    eventType: "task.workflow_settlement_confirmed",
+    payload: {
+      status: next,
+      txHash: input.txHash,
+      escrowEventId: input.eventId,
+      releasedAmountMinor: alreadyReleased.toString(),
+      payerRefundAmountMinor: payload.payerRefundAmountMinor.toString(),
+    },
+    createdAt: input.now,
+  });
+  return "confirmed";
 }
 
 async function markNeedsReview(
@@ -680,7 +936,8 @@ function mapIntent(row: IntentRow): EscrowIntent {
     contractAddress: row.contract_address,
     taskKey: row.task_key,
     payerWallet: row.payer_wallet,
-    amountWei: BigInt(row.amount_wei),
+    amountMinor: BigInt(row.amount_minor),
+    releasedAmountMinor: BigInt(row.released_amount_minor),
     status: row.status,
     depositTxHash: row.deposit_tx_hash,
     failureReason: row.failure_reason,
@@ -688,34 +945,74 @@ function mapIntent(row: IntentRow): EscrowIntent {
   };
 }
 
-function escrowAmount(payload: EscrowEventPayload): bigint { return payload.escrowAmountWei; }
+function escrowAmount(payload: EscrowEventPayload): bigint { return payload.escrowAmountMinor; }
 
 function serializePayload(payload: EscrowEventPayload): Readonly<Record<string, string>> {
-  if (payload.type === "Deposited" || payload.type === "Refunded") {
-    return { type: payload.type, payer: payload.payer, escrowAmountWei: payload.escrowAmountWei.toString() };
+  if (payload.type === "Deposited") {
+    return { type: payload.type, payer: payload.payer, escrowAmountMinor: payload.escrowAmountMinor.toString() };
+  }
+  if (payload.type === "Finalized" || payload.type === "Refunded") {
+    return {
+      type: payload.type,
+      payer: payload.payer,
+      escrowAmountMinor: payload.escrowAmountMinor.toString(),
+      releasedAmountMinor: payload.releasedAmountMinor.toString(),
+      payerRefundAmountMinor: payload.payerRefundAmountMinor.toString(),
+    };
+  }
+  if (payload.type === "MilestoneReleased") {
+    return {
+      type: payload.type,
+      payee: payload.payee,
+      escrowAmountMinor: payload.escrowAmountMinor.toString(),
+      milestoneGrossAmountMinor: payload.milestoneGrossAmountMinor.toString(),
+      feeAmountMinor: payload.feeAmountMinor.toString(),
+      totalReleasedAmountMinor: payload.totalReleasedAmountMinor.toString(),
+      remainingAmountMinor: payload.remainingAmountMinor.toString(),
+    };
   }
   return {
     type: payload.type,
     payee: payload.payee,
-    escrowAmountWei: payload.escrowAmountWei.toString(),
-    agentGrossAmountWei: payload.agentGrossAmountWei.toString(),
-    feeAmountWei: payload.feeAmountWei.toString(),
-    payerRefundAmountWei: payload.payerRefundAmountWei.toString(),
+    escrowAmountMinor: payload.escrowAmountMinor.toString(),
+    agentGrossAmountMinor: payload.agentGrossAmountMinor.toString(),
+    feeAmountMinor: payload.feeAmountMinor.toString(),
+    payerRefundAmountMinor: payload.payerRefundAmountMinor.toString(),
   };
 }
 
 function parsePayload(raw: unknown): EscrowEventPayload {
   const parsed = payloadSchema.parse(raw);
-  if (parsed.type === "Deposited" || parsed.type === "Refunded") {
-    return { type: parsed.type, payer: parsed.payer, escrowAmountWei: BigInt(parsed.escrowAmountWei) };
+  if (parsed.type === "Deposited") {
+    return { type: parsed.type, payer: parsed.payer, escrowAmountMinor: BigInt(parsed.escrowAmountMinor) };
+  }
+  if (parsed.type === "Finalized" || parsed.type === "Refunded") {
+    return {
+      type: parsed.type,
+      payer: parsed.payer,
+      escrowAmountMinor: BigInt(parsed.escrowAmountMinor),
+      releasedAmountMinor: BigInt(parsed.releasedAmountMinor),
+      payerRefundAmountMinor: BigInt(parsed.payerRefundAmountMinor),
+    };
+  }
+  if (parsed.type === "MilestoneReleased") {
+    return {
+      type: parsed.type,
+      payee: parsed.payee,
+      escrowAmountMinor: BigInt(parsed.escrowAmountMinor),
+      milestoneGrossAmountMinor: BigInt(parsed.milestoneGrossAmountMinor),
+      feeAmountMinor: BigInt(parsed.feeAmountMinor),
+      totalReleasedAmountMinor: BigInt(parsed.totalReleasedAmountMinor),
+      remainingAmountMinor: BigInt(parsed.remainingAmountMinor),
+    };
   }
   return {
     type: "Released",
     payee: parsed.payee,
-    escrowAmountWei: BigInt(parsed.escrowAmountWei),
-    agentGrossAmountWei: BigInt(parsed.agentGrossAmountWei),
-    feeAmountWei: BigInt(parsed.feeAmountWei),
-    payerRefundAmountWei: BigInt(parsed.payerRefundAmountWei),
+    escrowAmountMinor: BigInt(parsed.escrowAmountMinor),
+    agentGrossAmountMinor: BigInt(parsed.agentGrossAmountMinor),
+    feeAmountMinor: BigInt(parsed.feeAmountMinor),
+    payerRefundAmountMinor: BigInt(parsed.payerRefundAmountMinor),
   };
 }
 
@@ -725,7 +1022,7 @@ function required<T>(value: T | undefined, code: string): T {
 }
 
 function expectedOnchainState(status: EscrowIntent["status"]): OnchainEscrowRecord["state"] {
-  if (status === "confirmed") return "deposited";
+  if (status === "confirmed" || status === "partially_released") return "deposited";
   if (status === "released" || status === "refunded") return status;
   // SQL 只查询三种终态；保留运行时保护，避免未来查询放宽后静默做错误对账。
   throw new Error("ESCROW_INTENT_NOT_RECONCILABLE");

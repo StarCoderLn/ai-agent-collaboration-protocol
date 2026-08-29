@@ -125,6 +125,50 @@ integration("escrow execution worker PostgreSQL recovery", () => {
     expect(operator.prepare).not.toHaveBeenCalled();
     expect(operator.broadcast).not.toHaveBeenCalled();
   });
+
+  it("只有全部里程碑已确认后才领取 workflow finalize，并保留独立事件语义", async () => {
+    const fixture = await insertWorkflowFinalizeFixture(pool, taskIds);
+    const operator: EscrowOperatorClient = {
+      prepare: vi.fn(async (job) => {
+        expect(job).toMatchObject({
+          action: "finalize",
+          payee: null,
+          agentGrossAmountMinor: null,
+          feeAmountMinor: null,
+        });
+        return { txHash: TX_HASH, rawTransaction: RAW_TRANSACTION };
+      }),
+      broadcast: vi.fn(async () => TX_HASH),
+    };
+
+    const worker = new EscrowExecutionWorker(pool, operator, workerConfig());
+    await expect(worker.runOne(FIRST_RUN)).resolves.toEqual({
+      claimed: false,
+      jobId: null,
+      status: "idle",
+      txHash: null,
+    });
+    expect(operator.prepare).not.toHaveBeenCalled();
+
+    await pool.query("UPDATE escrow_execution_jobs SET status='executed' WHERE id=$1", [fixture.milestoneJobId]);
+    await expect(worker.runOne(new Date(FIRST_RUN.getTime() + 1))).resolves.toEqual({
+      claimed: true,
+      jobId: fixture.jobId,
+      status: "submitted",
+      txHash: TX_HASH,
+    });
+    const evidence = await pool.query<{ job_status: string; event_type: string; event_action: string }>(
+      `SELECT job.status AS job_status,event.event_type,event.payload->>'action' AS event_action
+         FROM escrow_execution_jobs job JOIN task_events event ON event.task_id=job.task_id
+        WHERE job.id=$1`,
+      [fixture.jobId],
+    );
+    expect(evidence.rows[0]).toEqual({
+      job_status: "submitted",
+      event_type: "task.workflow_finalize_submitted",
+      event_action: "finalize",
+    });
+  });
 });
 
 function workerConfig() {
@@ -136,7 +180,7 @@ async function insertAcceptanceFixture(pool: Pool, taskIds: string[]) {
   const jobId = randomUUID();
   await pool.query(
     `INSERT INTO escrow_execution_jobs(
-       id,task_id,source,source_ref,action,payee,agent_gross_amount_wei,fee_amount_wei,status,next_attempt_at
+       id,task_id,source,source_ref,action,payee,agent_gross_amount_minor,fee_amount_minor,status,next_attempt_at
      ) VALUES ($1,$2,'acceptance',$3,'release',$4,9000,50,'pending',$5)`,
     [jobId, taskId, randomUUID(), PAYEE, FIRST_RUN],
   );
@@ -169,10 +213,37 @@ async function insertArbitrationRefundFixture(pool: Pool, taskIds: string[]) {
   return { taskId, jobId };
 }
 
+async function insertWorkflowFinalizeFixture(pool: Pool, taskIds: string[]) {
+  const taskId = await insertTaskAndIntent(pool, taskIds, "executing", 9);
+  const runId = randomUUID();
+  const jobId = randomUUID();
+  const milestoneJobId = randomUUID();
+  await pool.query(
+    `INSERT INTO task_workflow_runs(
+       id,task_id,status,currency,total_budget_minor,released_amount_minor,refundable_amount_minor
+     ) VALUES ($1,$2,'completed','USDC',10000,9000,1000)`,
+    [runId, taskId],
+  );
+  await pool.query(
+    `INSERT INTO escrow_execution_jobs(
+       id,task_id,source,source_ref,action,payee,agent_gross_amount_minor,fee_amount_minor,
+       status,next_attempt_at,tx_hash
+     ) VALUES ($1,$2,'workflow_acceptance',$3,'milestone_release',$4,9000,50,'submitted',$5,$6)`,
+    [milestoneJobId, taskId, randomUUID(), PAYEE, FIRST_RUN, `0x${"55".repeat(32)}`],
+  );
+  await pool.query(
+    `INSERT INTO escrow_execution_jobs(
+       id,task_id,source,source_ref,action,status,next_attempt_at
+     ) VALUES ($1,$2,'workflow_run',$3,'finalize','pending',$4)`,
+    [jobId, taskId, runId, FIRST_RUN],
+  );
+  return { taskId, jobId, milestoneJobId };
+}
+
 async function insertTaskAndIntent(
   pool: Pool,
   taskIds: string[],
-  status: "pending_settlement" | "disputed",
+  status: "pending_settlement" | "executing" | "disputed",
   statusVersion: number,
 ): Promise<string> {
   const taskId = randomUUID();
@@ -183,12 +254,12 @@ async function insertTaskAndIntent(
        category_version,pricing_type,budget_min_minor,budget_max_minor,currency,deadline,
        required_capability,visibility,status,status_version
      ) VALUES ($1,$2,'资金执行恢复测试','验证签名交易重播、死信与争议冻结。','资金操作必须幂等且可恢复',
-       '链上交易与审计事件',$3,1,'fixed',10000,10000,'ETH','2091-01-01T00:00:00Z',
+       '链上交易与审计事件',$3,1,'fixed',10000,10000,'USDC','2091-01-01T00:00:00Z',
        'Ethereum','private',$4,$5)`,
     [taskId, PUBLISHER, CATEGORY_ID, status, statusVersion],
   );
   await pool.query(
-    `INSERT INTO escrow_intents(task_id,chain_id,contract_address,task_key,payer_wallet,amount_wei,status)
+    `INSERT INTO escrow_intents(task_id,chain_id,contract_address,task_key,payer_wallet,amount_minor,status)
      VALUES ($1,31337,$2,$3,$4,10000,'confirmed')`,
     [taskId, CONTRACT, taskKeyForTaskId(taskId), PUBLISHER],
   );
@@ -208,6 +279,7 @@ async function cleanupFixture(pool: Pool, taskId: string): Promise<void> {
   await pool.query("DELETE FROM disputes WHERE task_id=$1", [taskId]);
   await pool.query("DELETE FROM escrow_sync WHERE task_id=$1", [taskId]);
   await pool.query("DELETE FROM escrow_intents WHERE task_id=$1", [taskId]);
+  await pool.query("DELETE FROM task_workflow_runs WHERE task_id=$1", [taskId]);
   await pool.query("DELETE FROM tasks WHERE id=$1", [taskId]);
 }
 

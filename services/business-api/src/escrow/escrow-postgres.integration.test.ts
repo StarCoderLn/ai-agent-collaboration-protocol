@@ -25,6 +25,9 @@ integration("escrow PostgreSQL synchronization", () => {
       await pool.query("DELETE FROM reconciliation_alerts WHERE task_id=$1", [taskId]);
       await pool.query("DELETE FROM escrow_sync WHERE task_id=$1", [taskId]);
       await pool.query("DELETE FROM escrow_intents WHERE task_id=$1", [taskId]);
+      await pool.query("DELETE FROM task_workflow_edges WHERE workflow_run_id IN (SELECT id FROM task_workflow_runs WHERE task_id=$1)", [taskId]);
+      await pool.query("DELETE FROM task_workflow_nodes WHERE task_id=$1", [taskId]);
+      await pool.query("DELETE FROM task_workflow_runs WHERE task_id=$1", [taskId]);
       await pool.query("DELETE FROM tasks WHERE id=$1", [taskId]);
     }
     await pool.query("DELETE FROM chain_event_cursor WHERE chain_id=$1 AND contract_address=$2", [CHAIN_ID.toString(), CONTRACT]);
@@ -54,16 +57,23 @@ integration("escrow PostgreSQL synchronization", () => {
     })).resolves.toBe("replayed");
 
     const evidence = await pool.query<{
-      status: string; status_version: string; event_count: string; sync_count: string; transitioned: boolean;
+      status: string; status_version: string; event_count: string; sync_count: string;
+      transitioned: boolean; workflow_count: string; matchable_node_count: string;
     }>(
       `SELECT task.status,task.status_version::text,
               (SELECT count(*)::text FROM task_events WHERE task_id=task.id) AS event_count,
               (SELECT count(*)::text FROM escrow_sync WHERE task_id=task.id) AS sync_count,
-              (SELECT task_transitioned FROM escrow_sync WHERE task_id=task.id LIMIT 1) AS transitioned
+              (SELECT task_transitioned FROM escrow_sync WHERE task_id=task.id LIMIT 1) AS transitioned,
+              (SELECT count(*)::text FROM task_workflow_runs run WHERE run.task_id=task.id) AS workflow_count,
+              (SELECT count(*)::text FROM task_workflow_nodes node
+                WHERE node.task_id=task.id AND node.status='matching') AS matchable_node_count
          FROM tasks task WHERE task.id=$1`,
       [taskId],
     );
-    expect(evidence.rows[0]).toEqual({ status: "matching", status_version: "1", event_count: "1", sync_count: "1", transitioned: true });
+    expect(evidence.rows[0]).toEqual({
+      status: "matching", status_version: "1", event_count: "1", sync_count: "1",
+      transitioned: true, workflow_count: "1", matchable_node_count: "1",
+    });
   });
 
   it("freezes operations and keeps the task awaiting escrow when the confirmed amount differs", async () => {
@@ -165,7 +175,7 @@ integration("escrow PostgreSQL synchronization", () => {
   });
 });
 
-async function insertAwaitingEscrowTask(pool: Pool, taskIds: string[], amountWei: bigint): Promise<string> {
+async function insertAwaitingEscrowTask(pool: Pool, taskIds: string[], amountMinor: bigint): Promise<string> {
   const taskId = randomUUID();
   taskIds.push(taskId);
   await pool.query(
@@ -175,13 +185,13 @@ async function insertAwaitingEscrowTask(pool: Pool, taskIds: string[], amountWei
        required_capability,visibility,status
      ) VALUES ($1,$2,'Ethereum 托管同步集成测试','验证链上事件确认、幂等、重组与金额守恒。',
        '达到确认数且金额完全一致','链上状态和审计事件','40000000-0000-4000-8000-000000000001',
-       1,'fixed',$3,$3,'ETH','2026-08-24T00:00:00Z','Ethereum','private','awaiting_escrow')`,
-    [taskId, PUBLISHER, amountWei.toString()],
+       1,'fixed',$3,$3,'USDC','2026-08-24T00:00:00Z','Ethereum','private','awaiting_escrow')`,
+    [taskId, PUBLISHER, amountMinor.toString()],
   );
   return taskId;
 }
 
-function depositEvent(taskId: string, amountWei: bigint, blockNumber: bigint, txHash: string): ObservedEscrowEvent {
+function depositEvent(taskId: string, amountMinor: bigint, blockNumber: bigint, txHash: string): ObservedEscrowEvent {
   return {
     chainId: CHAIN_ID,
     contractAddress: CONTRACT,
@@ -190,7 +200,7 @@ function depositEvent(taskId: string, amountWei: bigint, blockNumber: bigint, tx
     logIndex: 0,
     blockNumber,
     blockHash: BLOCK_HASH,
-    payload: { type: "Deposited", payer: PUBLISHER, escrowAmountWei: amountWei },
+    payload: { type: "Deposited", payer: PUBLISHER, escrowAmountMinor: amountMinor },
   };
 }
 

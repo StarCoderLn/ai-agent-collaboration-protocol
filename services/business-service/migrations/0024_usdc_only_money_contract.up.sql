@@ -1,0 +1,99 @@
+-- 将业务结算从原生 ETH 完整迁移为 6 位精度 USDC。
+--
+-- 旧数据中的数值单位是 wei，不能只把 currency 改成 USDC：例如 10^15 wei 代表
+-- 0.001 ETH，却会被解释成 10 亿 USDC。迁移因此先拒绝无法无损换算的历史资金数据，
+-- 要求部署者先完成退款/结算并导出审计记录，或在纯开发环境显式重建数据库。
+BEGIN;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM tasks WHERE upper(currency) <> 'USDC') THEN
+    RAISE EXCEPTION 'USDC_MIGRATION_REQUIRES_TASK_REVIEW';
+  END IF;
+  IF EXISTS (SELECT 1 FROM escrow_intents) THEN
+    RAISE EXCEPTION 'USDC_MIGRATION_REQUIRES_EMPTY_ESCROW_INTENTS';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM agents
+     WHERE upper(price_currency) <> 'USDC'
+       AND id NOT IN (
+         '91000000-0000-4000-8000-000000000001',
+         '91000000-0000-4000-8000-000000000002',
+         '91000000-0000-4000-8000-000000000003',
+         '91000000-0000-4000-8000-000000000004',
+         '91000000-0000-4000-8000-000000000005',
+         '91000000-0000-4000-8000-000000000006',
+         '91000000-0000-4000-8000-000000000007',
+         '91000000-0000-4000-8000-000000000008',
+         '91000000-0000-4000-8000-000000000009'
+       )
+  ) THEN
+    RAISE EXCEPTION 'USDC_MIGRATION_REQUIRES_AGENT_REPRICING';
+  END IF;
+  -- 已经使用 USDC 的用户 Agent 也必须满足新版 1 USDC 最低报价。迁移不能静默
+  -- 抬价，否则会在所有者不知情的情况下改变市场承诺和结算金额。
+  IF EXISTS (
+    SELECT 1 FROM agents
+     WHERE upper(price_currency) = 'USDC'
+       AND price_amount < 1000000
+       AND id NOT IN (
+         '91000000-0000-4000-8000-000000000001',
+         '91000000-0000-4000-8000-000000000002',
+         '91000000-0000-4000-8000-000000000003',
+         '91000000-0000-4000-8000-000000000004',
+         '91000000-0000-4000-8000-000000000005',
+         '91000000-0000-4000-8000-000000000006',
+         '91000000-0000-4000-8000-000000000007',
+         '91000000-0000-4000-8000-000000000008',
+         '91000000-0000-4000-8000-000000000009'
+       )
+  ) THEN
+    RAISE EXCEPTION 'USDC_MIGRATION_REQUIRES_AGENT_REPRICING';
+  END IF;
+END $$;
+
+ALTER TABLE tasks ALTER COLUMN currency SET DEFAULT 'USDC';
+
+-- 金额列统一表达“币种最小单位”，不再把 ETH 的 wei 实现细节泄漏给仓储和同步器。
+ALTER TABLE escrow_intents RENAME COLUMN amount_wei TO amount_minor;
+ALTER TABLE escrow_sync RENAME COLUMN amount_wei TO amount_minor;
+ALTER TABLE escrow_execution_jobs RENAME COLUMN agent_gross_amount_wei TO agent_gross_amount_minor;
+ALTER TABLE escrow_execution_jobs RENAME COLUMN fee_amount_wei TO fee_amount_minor;
+
+UPDATE platform_fee_config SET active = FALSE WHERE active = TRUE;
+INSERT INTO platform_fee_config(version, fee_basis_points, gas_fallback_minor, active)
+VALUES ('fee-v3-usdc', 40, 50000, TRUE);
+
+-- 这 9 个 Agent 是代码库拥有的固定目录，因此能够使用明确产品价格无损重建报价。
+-- 用户自行上架的 Agent 不做汇率换算，必须由所有者确认新的 USDC 价格。
+UPDATE agents
+   SET price_currency = 'USDC',
+       price_amount = CASE id
+         WHEN '91000000-0000-4000-8000-000000000001' THEN 12000000
+         WHEN '91000000-0000-4000-8000-000000000002' THEN 18000000
+         WHEN '91000000-0000-4000-8000-000000000003' THEN 24000000
+         WHEN '91000000-0000-4000-8000-000000000004' THEN 16000000
+         WHEN '91000000-0000-4000-8000-000000000005' THEN 22000000
+         WHEN '91000000-0000-4000-8000-000000000006' THEN 28000000
+         WHEN '91000000-0000-4000-8000-000000000007' THEN 24000000
+         WHEN '91000000-0000-4000-8000-000000000008' THEN 32000000
+         WHEN '91000000-0000-4000-8000-000000000009' THEN 42000000
+         ELSE price_amount
+       END
+ WHERE id IN (
+   '91000000-0000-4000-8000-000000000001',
+   '91000000-0000-4000-8000-000000000002',
+   '91000000-0000-4000-8000-000000000003',
+   '91000000-0000-4000-8000-000000000004',
+   '91000000-0000-4000-8000-000000000005',
+   '91000000-0000-4000-8000-000000000006',
+   '91000000-0000-4000-8000-000000000007',
+   '91000000-0000-4000-8000-000000000008',
+   '91000000-0000-4000-8000-000000000009'
+ );
+
+-- 入口校验提供友好错误，数据库约束则保护批处理和未来写路径不能绕过业务下限。
+ALTER TABLE agents DROP CONSTRAINT agents_price_amount_check;
+ALTER TABLE agents ADD CONSTRAINT agents_price_amount_check CHECK (price_amount >= 1000000);
+
+COMMIT;

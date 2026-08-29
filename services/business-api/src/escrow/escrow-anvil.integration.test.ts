@@ -4,7 +4,10 @@ import { createJsonRpcEscrowClient, taskKeyForTaskId } from "./escrow-chain-clie
 
 const RPC_URL = process.env.ESCROW_TEST_RPC_URL;
 const CONTRACT_ADDRESS = process.env.ESCROW_TEST_CONTRACT_ADDRESS;
-const integration = RPC_URL === undefined || CONTRACT_ADDRESS === undefined ? describe.skip : describe;
+const PAYMENT_TOKEN_ADDRESS = process.env.ESCROW_TEST_PAYMENT_TOKEN_ADDRESS;
+const integration = RPC_URL === undefined || CONTRACT_ADDRESS === undefined || PAYMENT_TOKEN_ADDRESS === undefined
+  ? describe.skip
+  : describe;
 const TASK_ID = "11111111-1111-4111-8111-111111111111";
 
 /**
@@ -17,6 +20,7 @@ integration("escrow Anvil contract adapter", () => {
       rpcUrl: required(RPC_URL),
       chainId: 31_337n,
       contractAddress: required(CONTRACT_ADDRESS),
+      paymentTokenAddress: required(PAYMENT_TOKEN_ADDRESS),
     });
     const head = await client.getHeadBlockNumber();
     const events = await client.getEvents(0n, head);
@@ -25,16 +29,19 @@ integration("escrow Anvil contract adapter", () => {
       chainId: 31_337n,
       contractAddress: required(CONTRACT_ADDRESS).toLowerCase(),
       taskKey: "0x31e5891f6803041a37cfae842c5bf47aa89df5130d6a8ba235cdd9041744763f",
-      logIndex: 0,
+      // USDC 的 Transfer 日志先于 Escrow 的 Deposited，因此真实 receipt 中该事件
+      // 位于 logIndex=1；同步幂等键必须保留链上真实索引，不能沿用原生 ETH 时代的 0。
+      logIndex: 1,
       payload: {
         type: "Deposited",
         payer: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-        escrowAmountWei: 2_000_000_000_000_000_000n,
+        escrowAmountMinor: 2_000_000n,
       },
     });
     await expect(client.getEscrow(taskKeyForTaskId(TASK_ID))).resolves.toEqual({
       payer: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-      amountWei: 2_000_000_000_000_000_000n,
+      amountMinor: 2_000_000n,
+      releasedAmountMinor: 0n,
       state: "deposited",
     });
   });

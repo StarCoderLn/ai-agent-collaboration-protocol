@@ -42,7 +42,7 @@ integration("dispute PostgreSQL and escrow execution vertical slice", () => {
       const disputeId = requiredString(opened.body.disputeId);
       expect(opened.body).toMatchObject({ status: "evidence_collection", fundsFrozen: true, taskStatus: "disputed" });
       await expect(disputeWrite(pool, (service) => service.read(disputeId, PUBLISHER)))
-        .resolves.toMatchObject({ body: { escrowAmountMinor: "10000", viewerRole: "publisher" } });
+        .resolves.toMatchObject({ body: { escrowAmountMinor: "10000000", viewerRole: "publisher" } });
       await expect(pool.query("SELECT status FROM escrow_execution_jobs WHERE id=$1", [fixture.acceptanceJobId]))
         .resolves.toMatchObject({ rows: [{ status: "cancelled" }] });
 
@@ -54,13 +54,13 @@ integration("dispute PostgreSQL and escrow execution vertical slice", () => {
         .resolves.toMatchObject({ body: { viewerRole: "agent", fundsFrozen: true } });
 
       await expect(disputeWrite(pool, (service) => service.decide(disputeId, {
-        type: "refund", releaseAmountMinor: "0", refundAmountMinor: "10000",
+        type: "refund", releaseAmountMinor: "0", refundAmountMinor: "10000000",
         agentResponsibility: "agent_at_fault", reason: "关键验收条件未满足，决定全额退回发布者。",
       }, PUBLISHER, forbiddenKey))).rejects.toMatchObject({ code: "ARBITRATION_FORBIDDEN" });
       await pool.query("INSERT INTO platform_actor_roles(actor_id,role,granted_by) VALUES ($1,'arbitrator','integration-test')", [arbitrator]);
 
       const decided = await disputeWrite(pool, (service) => service.decide(disputeId, {
-        type: "refund", releaseAmountMinor: "0", refundAmountMinor: "10000",
+        type: "refund", releaseAmountMinor: "0", refundAmountMinor: "10000000",
         agentResponsibility: "agent_at_fault", reason: "关键验收条件未满足，决定全额退回发布者。",
       }, arbitrator, decisionKey));
       expect(decided.body).toMatchObject({ status: "decided", executionStatus: "decided", decision: "refund" });
@@ -86,7 +86,13 @@ integration("dispute PostgreSQL and escrow execution vertical slice", () => {
       const event: ObservedEscrowEvent = {
         chainId: 31_337n, contractAddress: CONTRACT, taskKey: taskKeyForTaskId(fixture.taskId),
         txHash: TX_HASH, logIndex: 0, blockNumber: 20n, blockHash: BLOCK_HASH,
-        payload: { type: "Refunded", payer: PUBLISHER, escrowAmountWei: 10_000n },
+      payload: {
+        type: "Refunded",
+        payer: PUBLISHER,
+        escrowAmountMinor: 10_000_000n,
+        releasedAmountMinor: 0n,
+        payerRefundAmountMinor: 10_000_000n,
+      },
       };
       const escrow = new PgEscrowRepository(pool);
       await escrow.observe(event);
@@ -142,14 +148,14 @@ async function insertFixture(pool: Pool) {
        category_version,pricing_type,budget_min_minor,budget_max_minor,currency,deadline,
        required_capability,visibility,status,status_version
      ) VALUES ($1,$2,'争议集成测试任务','验证争议冻结、仲裁 outbox 和链上确认。','满足全部恢复路径',
-       '代码与测试',$3,1,'fixed',10000,10000,'ETH','2026-08-24T00:00:00Z','TypeScript','private','awaiting_review',5)`,
+       '代码与测试',$3,1,'fixed',10000000,10000000,'USDC','2026-08-24T00:00:00Z','TypeScript','private','awaiting_review',5)`,
     [taskId, PUBLISHER, CATEGORY_ID],
   );
   await pool.query(
     `INSERT INTO agents(
        id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,pricing_type,price_amount,
        price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
-     ) VALUES ($1,$2,$3,'争议测试 Agent',$4,'测试',ARRAY['agent'],'fixed',9000,'ETH',
+     ) VALUES ($1,$2,$3,'争议测试 Agent',$4,'测试',ARRAY['agent'],'fixed',9000000,'USDC',
        'http://127.0.0.1:3999/agent','dispute@example.com','active',1800,1)`,
     [agentId, AGENT_WALLET, AGENT_PAYOUT_WALLET, CATEGORY_ID],
   );
@@ -160,17 +166,17 @@ async function insertFixture(pool: Pool) {
   );
   await pool.query(
     `INSERT INTO task_assignments(id,task_id,agent_id,distribution_record_id,agreed_amount_minor,status,assigned_by,accept_by,responded_at)
-     VALUES ($1,$2,$3,$4,9000,'accepted',$5,now()+interval '5 minutes',now())`,
+     VALUES ($1,$2,$3,$4,9000000,'accepted',$5,now()+interval '5 minutes',now())`,
     [assignmentId, taskId, agentId, distributionId, PUBLISHER],
   );
   await pool.query(
-    `INSERT INTO escrow_intents(task_id,chain_id,contract_address,task_key,payer_wallet,amount_wei,status)
-     VALUES ($1,31337,$2,$3,$4,10000,'confirmed')`,
+    `INSERT INTO escrow_intents(task_id,chain_id,contract_address,task_key,payer_wallet,amount_minor,status)
+     VALUES ($1,31337,$2,$3,$4,10000000,'confirmed')`,
     [taskId, CONTRACT, taskKeyForTaskId(taskId), PUBLISHER],
   );
   await pool.query(
-    `INSERT INTO escrow_execution_jobs(id,task_id,source,source_ref,action,payee,agent_gross_amount_wei,fee_amount_wei,status)
-     VALUES ($1,$2,'acceptance',$3,'release',$4,9000,50,'pending')`,
+    `INSERT INTO escrow_execution_jobs(id,task_id,source,source_ref,action,payee,agent_gross_amount_minor,fee_amount_minor,status)
+     VALUES ($1,$2,'acceptance',$3,'release',$4,9000000,50000,'pending')`,
     [acceptanceJobId, taskId, randomUUID(), AGENT_WALLET],
   );
   return { taskId, agentId, distributionId, acceptanceJobId };

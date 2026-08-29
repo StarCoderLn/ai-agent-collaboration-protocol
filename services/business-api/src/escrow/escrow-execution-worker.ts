@@ -14,7 +14,7 @@ export type EscrowExecutionWorkerResult = Readonly<{
 }>;
 
 type ClaimedJob = EscrowOperatorJob & Readonly<{
-  id: string; taskId: string; source: "acceptance" | "arbitration"; sourceRef: string;
+  id: string; taskId: string; source: "acceptance" | "workflow_acceptance" | "workflow_run" | "arbitration"; sourceRef: string;
   attemptNo: number; token: string; rawTransaction: string | null; txHash: string | null;
 }>;
 
@@ -53,17 +53,28 @@ export class EscrowExecutionWorker {
 
 async function claimJob(db: QueryExecutor, now: Date, leaseMs: number): Promise<ClaimedJob | null> {
   const selected = await db.query<{
-    id: string; task_id: string; source: "acceptance" | "arbitration"; source_ref: string;
-    action: "release" | "refund"; payee: string | null; agent_gross_amount_wei: string | null;
-    fee_amount_wei: string | null; attempt_no: number; raw_transaction: string | null; tx_hash: string | null;
-    task_key: string; contract_address: string; task_status: string; alert_open: boolean;
+    id: string; task_id: string; source: "acceptance" | "workflow_acceptance" | "workflow_run" | "arbitration"; source_ref: string;
+    action: "release" | "milestone_release" | "finalize" | "refund"; payee: string | null; agent_gross_amount_minor: string | null;
+    fee_amount_minor: string | null; attempt_no: number; raw_transaction: string | null; tx_hash: string | null;
+    task_key: string; contract_address: string; task_status: string; alert_open: boolean; workflow_source_valid: boolean;
   }>(
     `SELECT job.id::text,job.task_id::text,job.source,job.source_ref::text,job.action,job.payee,
-            job.agent_gross_amount_wei::text,job.fee_amount_wei::text,job.attempt_no,
+            job.agent_gross_amount_minor::text,job.fee_amount_minor::text,job.attempt_no,
             job.raw_transaction,job.tx_hash,intent.task_key,intent.contract_address,
             task.status AS task_status,
             EXISTS(SELECT 1 FROM reconciliation_alerts alert WHERE alert.task_id=task.id
-                    AND alert.resolved_at IS NULL AND alert.operations_frozen=TRUE) AS alert_open
+                    AND alert.resolved_at IS NULL AND alert.operations_frozen=TRUE) AS alert_open,
+            CASE
+              WHEN job.source='workflow_acceptance' THEN EXISTS(
+                SELECT 1 FROM workflow_node_acceptances acceptance
+                 WHERE acceptance.id=job.source_ref AND acceptance.task_id=task.id
+              )
+              WHEN job.source='workflow_run' THEN EXISTS(
+                SELECT 1 FROM task_workflow_runs run
+                 WHERE run.id=job.source_ref AND run.task_id=task.id AND run.status='completed'
+              )
+              ELSE FALSE
+            END AS workflow_source_valid
        FROM escrow_execution_jobs job JOIN tasks task ON task.id=job.task_id
        JOIN escrow_intents intent ON intent.task_id=job.task_id
       WHERE job.next_attempt_at <= $1 AND (
@@ -71,13 +82,25 @@ async function claimJob(db: QueryExecutor, now: Date, leaseMs: number): Promise<
         OR (job.status='prepared' AND (job.lock_expires_at IS NULL OR job.lock_expires_at <= $1))
         OR (job.status='processing' AND job.lock_expires_at <= $1)
       )
+        AND (
+          job.source<>'workflow_run'
+          OR NOT EXISTS (
+            SELECT 1 FROM escrow_execution_jobs milestone
+             WHERE milestone.task_id=job.task_id AND milestone.source='workflow_acceptance'
+               AND milestone.status<>'executed'
+          )
+        )
       ORDER BY job.next_attempt_at,job.created_at,job.id
       FOR UPDATE OF job,task SKIP LOCKED LIMIT 1`,
     [now],
   );
   const row = selected.rows[0];
   if (row === undefined) return null;
-  const allowed = row.source === "acceptance" ? row.task_status === "pending_settlement" : row.task_status === "disputed";
+  const allowed = row.source === "acceptance"
+    ? row.task_status === "pending_settlement"
+    : row.source === "arbitration"
+      ? row.task_status === "disputed"
+      : row.workflow_source_valid && !["disputed", "refunded", "settled"].includes(row.task_status);
   if (!allowed || row.alert_open) {
     await db.query(
       `UPDATE escrow_execution_jobs SET status=$2,last_error_code=$3,lock_token=NULL,
@@ -96,8 +119,8 @@ async function claimJob(db: QueryExecutor, now: Date, leaseMs: number): Promise<
   return {
     id: row.id, taskId: row.task_id, source: row.source, sourceRef: row.source_ref,
     action: row.action, payee: row.payee,
-    agentGrossAmountWei: row.agent_gross_amount_wei === null ? null : BigInt(row.agent_gross_amount_wei),
-    feeAmountWei: row.fee_amount_wei === null ? null : BigInt(row.fee_amount_wei),
+    agentGrossAmountMinor: row.agent_gross_amount_minor === null ? null : BigInt(row.agent_gross_amount_minor),
+    feeAmountMinor: row.fee_amount_minor === null ? null : BigInt(row.fee_amount_minor),
     taskKey: row.task_key, contractAddress: row.contract_address,
     attemptNo: required(updated.rows[0], "ESCROW_JOB_NOT_CLAIMED").attempt_no,
     token, rawTransaction: row.raw_transaction, txHash: row.tx_hash,
@@ -146,8 +169,8 @@ async function markSubmitted(db: QueryExecutor, job: ClaimedJob, txHash: string,
   const version = BigInt(required(task.rows[0], "TASK_NOT_FOUND").status_version);
   await emitTaskEvent(db, {
     taskId: job.taskId, statusVersion: version,
-    eventType: job.source === "arbitration" ? "task.arbitration_execution_submitted" : "task.settlement_submitted",
-    payload: { status: job.source === "arbitration" ? "disputed" : "pending_settlement", jobId: job.id, txHash, action: job.action },
+    eventType: submittedEventType(job),
+    payload: { status: submittedTaskStatus(job), jobId: job.id, txHash, action: job.action },
     createdAt: now,
   });
   await new PgAuditLogWriter(db).write({
@@ -156,6 +179,19 @@ async function markSubmitted(db: QueryExecutor, job: ClaimedJob, txHash: string,
     beforeSummary: { jobId: job.id, executionStatus: "prepared" },
     afterSummary: { jobId: job.id, executionStatus: "submitted", txHash, action: job.action, source: job.source },
   });
+}
+
+function submittedEventType(job: ClaimedJob): string {
+  if (job.source === "arbitration") return "task.arbitration_execution_submitted";
+  if (job.source === "workflow_acceptance") return "task.workflow_milestone_submitted";
+  if (job.source === "workflow_run") return "task.workflow_finalize_submitted";
+  return "task.settlement_submitted";
+}
+
+function submittedTaskStatus(job: ClaimedJob): string {
+  if (job.source === "arbitration") return "disputed";
+  if (job.source === "acceptance") return "pending_settlement";
+  return "executing";
 }
 
 async function recordFailure(

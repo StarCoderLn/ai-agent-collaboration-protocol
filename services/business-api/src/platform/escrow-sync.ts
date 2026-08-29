@@ -1,5 +1,13 @@
 export type ChainEventKey = `${string}:${number}`;
-export type ChainEvent = { txHash: string; logIndex: number; taskId: string; eventType: "Deposited" | "Released" | "Refunded"; amountMinor: bigint; blockNumber: bigint; blockHash: string };
+export type ChainEvent = {
+  txHash: string;
+  logIndex: number;
+  taskId: string;
+  eventType: "Deposited" | "Released" | "MilestoneReleased" | "Finalized" | "Refunded";
+  amountMinor: bigint;
+  blockNumber: bigint;
+  blockHash: string;
+};
 export type SyncedChainEvent = ChainEvent & { status: "pending_confirmation" | "confirmed" | "orphaned" | "needs_review"; confirmations: bigint; taskTransitioned: boolean };
 
 /** 可测试的链事件语义；生产持久化依赖 `(tx_hash, log_index)` 唯一约束实现相同幂等。 */

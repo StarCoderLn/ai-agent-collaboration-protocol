@@ -7,6 +7,11 @@ import { PgEscrowRepository } from "../escrow/escrow-repository";
 import { EscrowService, type EscrowRuntimeConfig } from "../escrow/escrow-service";
 import type { InternalEscrowHttpDeps, PublisherEscrowHttpDeps } from "./escrow-handlers";
 
+/**
+ * 生产 Escrow 依赖在单一进程内只装配一次，确保准备交易、同步事件和对账始终共享
+ * 同一组 chainId、Escrow 地址与 USDC 地址。三个值任一漂移都会让授权目标、存款目标
+ * 或事件来源互不相容，因此全部是启动必填配置，不允许请求级覆盖。
+ */
 let service: EscrowService | undefined;
 
 function getService(): EscrowService {
@@ -16,6 +21,7 @@ function getService(): EscrowService {
     rpcUrl: getRequiredEnv("ETHEREUM_RPC_URL"),
     chainId,
     contractAddress: getRequiredEnv("ESCROW_CONTRACT_ADDRESS"),
+    paymentTokenAddress: getRequiredEnv("ESCROW_PAYMENT_TOKEN_ADDRESS"),
   });
   const config: EscrowRuntimeConfig = {
     requiredConfirmations: resolveEscrowRequiredConfirmations({
