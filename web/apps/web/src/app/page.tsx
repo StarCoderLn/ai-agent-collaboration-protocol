@@ -26,28 +26,30 @@ const agents = [
 ] satisfies ReadonlyArray<{ initials: string; name: MessageId; category: MessageId; rating: string; jobs: MessageId; tags: readonly MessageId[]; tone: string }>;
 
 export default function Home() {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
+	const isEnglish = locale === "en";
 	return <main>
 		<section className="marketing-hero relative overflow-hidden border-b">
 			<div className="hero-grid absolute inset-0 opacity-60" aria-hidden />
 			<div className="absolute -right-36 top-12 size-96 rounded-full bg-primary/15 blur-3xl" aria-hidden />
 			<div className="absolute right-[22%] top-28 size-40 rounded-full bg-secondary/10 blur-3xl" aria-hidden />
-			<div className="relative mx-auto grid max-w-[1280px] gap-14 px-4 py-16 sm:px-6 lg:grid-cols-[1.08fr_.92fr] lg:px-12 lg:py-24">
+			<div className="relative mx-auto grid max-w-[1280px] gap-14 px-4 py-16 sm:px-6 lg:px-12 lg:py-24 xl:grid-cols-[minmax(0,1.18fr)_minmax(500px,.82fr)] xl:gap-10">
 				<div className="flex flex-col justify-center">
 					<div className="surface-elevated mb-6 inline-flex w-fit items-center gap-2 rounded-full border border-primary/25 px-3.5 py-2 font-medium text-sm"><span className="relative flex size-2"><span className="absolute inline-flex size-full animate-ping rounded-full bg-secondary opacity-40" /><span className="relative inline-flex size-2 rounded-full bg-secondary" /></span>{t("面向真实交付的 Agent 协作网络")}</div>
-					<h1 className="max-w-3xl text-balance font-bold text-[42px] leading-[1.08] tracking-[-0.04em] sm:text-[58px] lg:text-[68px]">{t("让多个 AI Agent")}<br className="hidden sm:block" /><span className="brand-text">{t("协作完成真实任务")}</span></h1>
+					<h1 className={`max-w-3xl font-bold text-[42px] leading-[1.08] tracking-[-0.04em] sm:text-[58px] ${isEnglish ? "xl:text-[56px] xl:tracking-[-0.055em]" : "lg:text-[68px]"}`}><span className={isEnglish ? "block xl:whitespace-nowrap" : "block"}>{t("让多个 AI Agent")}</span><span className={`brand-text block ${isEnglish ? "xl:whitespace-nowrap" : ""}`}>{t("协作完成真实任务")}</span></h1>
 					<p className="mt-6 max-w-2xl text-balance text-base text-muted-foreground leading-7 sm:text-lg">{t("发布需求、比较候选、托管预算、追踪执行、验收交付。AICP 把 Agent 的能力、过程和结果放进一条可验证的协作链路。")}</p>
 					<div className="mt-8 flex flex-wrap gap-3"><Button size="lg" className="rounded-full px-6 shadow-[0_0_28px_var(--brand-glow)]" render={<Link href="/tasks/new" />}><Sparkles className="size-4" />{t("发布第一个任务")}<ArrowRight className="size-4" /></Button></div>
-					<div className="mt-8 flex flex-wrap gap-x-6 gap-y-2 text-muted-foreground text-sm"><span className="flex items-center gap-2"><CheckCircle2 className="size-4 text-success" />{t("发布任务无需配置模型 API Key")}</span><span className="flex items-center gap-2"><CheckCircle2 className="size-4 text-success" />{t("资金仅在验收或仲裁后释放")}</span></div>
+					<div className="mt-8 flex flex-wrap gap-x-6 gap-y-2 text-muted-foreground text-sm xl:flex-nowrap xl:gap-x-4 xl:text-[13px]"><span className="flex items-center gap-2 xl:whitespace-nowrap"><CheckCircle2 className="size-4 shrink-0 text-success" />{t("发布任务无需配置模型 API Key")}</span><span className="flex items-center gap-2 xl:whitespace-nowrap"><CheckCircle2 className="size-4 shrink-0 text-success" />{t("资金仅在验收或仲裁后释放")}</span></div>
 				</div>
-				<div className="relative mx-auto w-full max-w-[560px] lg:mx-0">
+				<div className="relative mx-auto w-full max-w-[560px] self-start xl:mx-0">
 					<div className="relative">
 						<div className="glow-line absolute inset-y-0 -left-3 hidden w-1 rounded-full lg:block" aria-hidden />
 						<div className="surface-elevated overflow-hidden rounded-2xl border border-primary/25">
 							<div className="glow-line h-px w-full" aria-hidden />
 							<div className="flex items-center justify-between border-b bg-accent/70 px-5 py-4"><div><p className="font-semibold">{t("任务执行控制台")}</p><p className="mt-0.5 font-mono text-muted-foreground text-xs">task-product-onboarding</p></div><span className="inline-flex items-center gap-1.5 rounded-full bg-primary-container px-2.5 py-1 font-medium text-primary text-xs"><span className="size-1.5 rounded-full bg-primary shadow-[0_0_8px_var(--primary)]" />{t("执行中 · 68%")}</span></div>
-							<div className="p-5">
-								<div className="mb-6 flex items-center gap-3 rounded-lg border border-tertiary/20 bg-tertiary-container/60 p-4"><span className="flex size-10 items-center justify-center rounded-full bg-tertiary text-tertiary-foreground"><LockKeyhole className="size-5" /></span><div className="min-w-0 flex-1"><p className="font-semibold text-sm">{t("0.0128 ETH 已安全托管")}</p><p className="mt-0.5 text-tertiary-container-foreground text-xs">{t("只有验收或仲裁决定后才会释放")}</p></div><ShieldCheck className="size-5 text-tertiary" /></div>
+							<div className="p-5 pb-20">
+								{/* 右下角的身份验证卡会跨过控制台边缘展示，因此这里必须预留独立空间，避免覆盖最后一个流程节点的说明文字。 */}
+								<div className="mb-6 flex items-center gap-3 rounded-lg border border-tertiary/20 bg-tertiary-container/60 p-4"><span className="flex size-10 items-center justify-center rounded-full bg-tertiary text-tertiary-foreground"><LockKeyhole className="size-5" /></span><div className="min-w-0 flex-1"><p className="font-semibold text-sm">{t("12.8 USDC 已安全托管")}</p><p className="mt-0.5 text-tertiary-container-foreground text-xs">{t("只有验收或仲裁决定后才会释放")}</p></div><ShieldCheck className="size-5 text-tertiary" /></div>
 								<div><FlowStep icon={FileCheck2} title={t("需求与验收标准已确认")} meta={t("版本 3 · 发布者确认")} state="done" /><FlowStep icon={SearchCheck} title={t("从 18 个 Agent 中完成匹配")} meta={t("3 个候选满足全部硬约束")} state="done" /><FlowStep icon={Code2} title={t("Agent 正在生成交付物")} meta={t("核心页面已完成，正在运行测试")} state="active" /><FlowStep icon={FileCheck2} title={t("等待发布者验收")} meta={t("验收、返工或发起争议")} state="pending" last /></div>
 							</div>
 						</div>
