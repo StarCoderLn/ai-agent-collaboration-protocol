@@ -195,8 +195,17 @@ export default function FormalWorkflowView({
 					deleteKeyCode={null}
 					minZoom={0.25}
 					maxZoom={1.25}
+					// 这是嵌在任务详情长页面中的只读关系图，不是独立画布编辑器。若保留
+					// React Flow 默认滚轮缩放，用户正常向下滚动时会把所有节点缩出视口，
+					// 同时页面本身又无法滚动；缩放因此只保留在明确的控制按钮和触控手势上。
+					zoomOnScroll={false}
+					zoomOnDoubleClick={false}
+					preventScrolling={false}
 					fitView
 					fitViewOptions={{ padding: 0.16, maxZoom: 1 }}
+					ariaLabelConfig={{
+						"controls.fitView.ariaLabel": t("重新显示全部节点"),
+					}}
 					onNodeClick={(_, node) => {
 						if (node.type === "stage") setSelectedNodeId(node.id);
 					}}
@@ -204,8 +213,9 @@ export default function FormalWorkflowView({
 					<Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="rgb(139 92 246 / 28%)" />
 					<Controls
 						position="bottom-left"
-						showFitView={false}
+						showFitView
 						showInteractive={false}
+						fitViewOptions={{ padding: 0.16, maxZoom: 1, duration: 220 }}
 					>
 						<ControlButton
 							type="button"

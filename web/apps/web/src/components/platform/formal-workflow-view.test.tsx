@@ -109,6 +109,33 @@ describe("FormalWorkflowView", () => {
 		}
 	});
 
+	it("只读关系图不会劫持页面滚轮，并提供重新显示全部节点的恢复入口", () => {
+		const { container } = render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflowFixture()}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+			/>,
+		);
+
+		const pane = container.querySelector(".react-flow__pane");
+		expect(pane).not.toBeNull();
+		const wheel = new WheelEvent("wheel", {
+			bubbles: true,
+			cancelable: true,
+			deltaY: 120,
+		});
+		pane?.dispatchEvent(wheel);
+
+		// 关系图嵌在长页面中，普通滚轮必须继续滚动页面；缩放只通过明确的控制按钮触发。
+		expect(wheel.defaultPrevented).toBe(false);
+		expect(
+			screen.getByRole("button", { name: "重新显示全部节点" }),
+		).toBeInTheDocument();
+	});
+
 	it("分配阶段点击未分配节点时展示候选选择，而不是不存在的交付产物", () => {
 		render(
 			<FormalWorkflowView

@@ -133,4 +133,30 @@ describe("TaskAgentAllocationGraph", () => {
 			screen.queryByText("最终分配的执行 Agent"),
 		).not.toBeInTheDocument();
 	});
+
+	it("兼容任务的只读关系图同样允许页面滚动并保留视口恢复入口", () => {
+		const { container } = render(
+			<TaskAgentAllocationGraph
+				task={{ id: taskId, title: "开发可信任务工作台", status: "matching" }}
+				candidates={candidates}
+				assignment={null}
+				execution={null}
+				currency="USDC"
+			/>,
+		);
+
+		const pane = container.querySelector(".react-flow__pane");
+		expect(pane).not.toBeNull();
+		const wheel = new WheelEvent("wheel", {
+			bubbles: true,
+			cancelable: true,
+			deltaY: 120,
+		});
+		pane?.dispatchEvent(wheel);
+
+		expect(wheel.defaultPrevented).toBe(false);
+		expect(
+			screen.getByRole("button", { name: "重新显示全部节点" }),
+		).toBeInTheDocument();
+	});
 });

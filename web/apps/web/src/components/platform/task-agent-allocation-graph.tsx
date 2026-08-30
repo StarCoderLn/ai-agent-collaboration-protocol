@@ -248,8 +248,16 @@ export default function TaskAgentAllocationGraph({
 					deleteKeyCode={null}
 					minZoom={0.55}
 					maxZoom={1.45}
+					// 兼容任务关系图与正式工作流共用“嵌入式只读画布”契约：滚轮负责
+					// 页面浏览，只有明确的缩放按钮或触控手势才能改变图的视口。
+					zoomOnScroll={false}
+					zoomOnDoubleClick={false}
+					preventScrolling={false}
 					fitView
 					fitViewOptions={{ padding: 0.2, maxZoom: 1.08 }}
+					ariaLabelConfig={{
+						"controls.fitView.ariaLabel": t("重新显示全部节点"),
+					}}
 					onlyRenderVisibleElements
 				>
 					<Background
@@ -269,7 +277,11 @@ export default function TaskAgentAllocationGraph({
 							{displaysExecutionRelation ? t("最终分配") : t("候选 Agent")}
 						</span>
 					</FlowPanel>
-					<Controls position="bottom-left" showInteractive={false} />
+					<Controls
+						position="bottom-left"
+						showInteractive={false}
+						fitViewOptions={{ padding: 0.2, maxZoom: 1.08, duration: 220 }}
+					/>
 				</ReactFlow>
 			</section>
 
