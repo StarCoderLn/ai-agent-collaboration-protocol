@@ -12,7 +12,6 @@ import NewTaskForm from "./new-task-form";
 const mocks = vi.hoisted(() => ({
 	createTaskDraft: vi.fn(),
 	submitTask: vi.fn(),
-	suggestTaskTags: vi.fn(),
 	push: vi.fn(),
 }));
 
@@ -52,7 +51,6 @@ vi.mock("@/lib/api/tasks", async (importOriginal) => {
 				],
 			},
 		]),
-		suggestTaskTags: mocks.suggestTaskTags,
 	};
 });
 
@@ -61,10 +59,17 @@ async function selectProductCategory() {
 	const category = await screen.findByRole("combobox", { name: "服务分类" });
 	fireEvent.click(category);
 	const categoryOption = await screen.findByRole("option", {
-		name: "代码开发",
+		name: "软件与网站开发",
 	});
 	fireEvent.pointerDown(categoryOption, { pointerType: "mouse" });
 	fireEvent.click(categoryOption);
+}
+
+/** 标签没有平台推荐列表后，所有表单测试都通过真实的自定义输入路径添加标签。 */
+function addCustomTag(tag: string) {
+	const input = screen.getByRole("textbox", { name: "技能标签" });
+	fireEvent.change(input, { target: { value: tag } });
+	fireEvent.keyDown(input, { key: "Enter" });
 }
 
 describe("New task assignment mode", () => {
@@ -90,14 +95,6 @@ describe("New task assignment mode", () => {
 				irreversibleWarning: "链上托管确认后只能按状态机释放资金",
 			},
 		});
-		// 返回真实接口形状的受控标签，用来确认页面只采用正文中明确出现的标签。
-		mocks.suggestTaskTags.mockResolvedValue([
-			{ canonicalName: "next.js", matchedAlias: null },
-			{ canonicalName: "agent", matchedAlias: null },
-			{ canonicalName: "typescript", matchedAlias: null },
-			{ canonicalName: "ui/ux", matchedAlias: null },
-			{ canonicalName: "mastra", matchedAlias: null },
-		]);
 	});
 
 	afterEach(() => cleanup());
@@ -114,7 +111,7 @@ describe("New task assignment mode", () => {
 		expect(screen.queryByText("可验证任务")).not.toBeInTheDocument();
 		expect(screen.queryByText(/正式草稿|服务端校验/)).not.toBeInTheDocument();
 		expect(screen.getByLabelText("任务标题")).toHaveValue("");
-		expect(screen.getByLabelText("详细需求")).toHaveValue("");
+		expect(screen.getByLabelText("补充说明（可选）")).toHaveValue("");
 		expect(screen.getByLabelText("固定预算")).toHaveValue("");
 		expect(screen.getByLabelText("固定预算")).toHaveAttribute(
 			"placeholder",
@@ -128,6 +125,7 @@ describe("New task assignment mode", () => {
 			await screen.findByRole("combobox", { name: "服务分类" }),
 		).toBeInTheDocument();
 		expect(screen.getByRole("group", { name: "技能标签" })).toBeInTheDocument();
+		expect(screen.queryByText("平台推荐")).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("radio", { name: /平台自动分配/ }),
 		).not.toBeInTheDocument();
@@ -150,7 +148,7 @@ describe("New task assignment mode", () => {
 		expect(screen.getByRole("group", { name: "技能标签" })).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("combobox", { name: "服务分类" }));
 		expect(
-			await screen.findByRole("option", { name: "代码开发" }),
+			await screen.findByRole("option", { name: "软件与网站开发" }),
 		).toBeInTheDocument();
 		expect(
 			screen.queryByRole("option", { name: "产品与开发" }),
@@ -186,7 +184,7 @@ describe("New task assignment mode", () => {
 		fireEvent.change(screen.getByLabelText("任务标题"), {
 			target: { value: title },
 		});
-		fireEvent.change(screen.getByLabelText("详细需求"), {
+		fireEvent.change(screen.getByLabelText("补充说明（可选）"), {
 			target: { value: request },
 		});
 		fireEvent.change(screen.getByLabelText("固定预算"), {
@@ -194,7 +192,7 @@ describe("New task assignment mode", () => {
 		});
 		selectFutureDeadline();
 		await selectProductCategory();
-		fireEvent.click(await screen.findByRole("button", { name: "next.js" }));
+		addCustomTag("next.js");
 
 		const publish = screen.getByRole("button", { name: /发布并继续托管/ });
 		await waitFor(() => expect(publish).toBeEnabled());
@@ -223,28 +221,47 @@ describe("New task assignment mode", () => {
 		);
 	});
 
-	it("asks for a clearer request instead of fabricating content to satisfy validation", async () => {
+	it("无需填写补充说明，标题仍可作为需求整理阶段的最小原始输入", async () => {
 		render(<NewTaskForm />);
+		const title = "开发一个内容网站";
 		fireEvent.change(screen.getByLabelText("任务标题"), {
-			target: { value: "开发一个内容网站" },
-		});
-		fireEvent.change(screen.getByLabelText("详细需求"), {
-			target: { value: "帮我开发一个网站" },
+			target: { value: title },
 		});
 		fireEvent.change(screen.getByLabelText("固定预算"), {
-			target: { value: "0.01" },
+			target: { value: "10" },
 		});
 		selectFutureDeadline();
 		await selectProductCategory();
+		addCustomTag("next.js");
 
 		const publish = screen.getByRole("button", { name: /发布并继续托管/ });
 		await waitFor(() => expect(publish).toBeEnabled());
 		fireEvent.click(publish);
 
+		await waitFor(() => expect(mocks.createTaskDraft).toHaveBeenCalledOnce());
+		expect(mocks.createTaskDraft.mock.calls[0]?.[0]).toMatchObject({
+			title,
+			description: title,
+			tags: ["next.js"],
+			requiredCapability: "next.js",
+		});
+	});
+
+	it("要求至少一个技能标签，以保留分类与标签共同匹配的产品规则", async () => {
+		render(<NewTaskForm />);
+		fireEvent.change(screen.getByLabelText("任务标题"), {
+			target: { value: "开发一个内容网站" },
+		});
+		fireEvent.change(screen.getByLabelText("固定预算"), {
+			target: { value: "10" },
+		});
+		selectFutureDeadline();
+		await selectProductCategory();
+
+		fireEvent.click(screen.getByRole("button", { name: /发布并继续托管/ }));
+
 		expect(
-			await screen.findByText(
-				"请至少用 30 个字符描述目标、使用场景和必须满足的限制",
-			),
+			await screen.findByText("请至少选择一个技能标签"),
 		).toBeInTheDocument();
 		expect(mocks.createTaskDraft).not.toHaveBeenCalled();
 	});
@@ -254,7 +271,7 @@ describe("New task assignment mode", () => {
 		fireEvent.change(screen.getByLabelText("任务标题"), {
 			target: { value: "开发团队运营数据后台" },
 		});
-		fireEvent.change(screen.getByLabelText("详细需求"), {
+		fireEvent.change(screen.getByLabelText("补充说明（可选）"), {
 			target: {
 				value:
 					"开发团队运营数据后台，支持成员权限、任务统计和交付验收，并提供自动化测试与使用说明。",
@@ -265,7 +282,7 @@ describe("New task assignment mode", () => {
 		});
 		selectFutureDeadline();
 		await selectProductCategory();
-		fireEvent.click(await screen.findByRole("button", { name: "next.js" }));
+		addCustomTag("dashboard");
 
 		fireEvent.click(screen.getByRole("button", { name: /发布并继续托管/ }));
 
@@ -278,12 +295,11 @@ describe("New task assignment mode", () => {
 	});
 
 	it("accepts a normalized custom tag even when no platform suggestion is available", async () => {
-		mocks.suggestTaskTags.mockResolvedValue([]);
 		render(<NewTaskForm />);
 		fireEvent.change(screen.getByLabelText("任务标题"), {
 			target: { value: "制作内容运营工作台" },
 		});
-		fireEvent.change(screen.getByLabelText("详细需求"), {
+		fireEvent.change(screen.getByLabelText("补充说明（可选）"), {
 			target: {
 				value:
 					"为内容团队制作一套清晰易用的运营工作台，需要支持日常数据查看、权限控制和结果验收。",
@@ -316,9 +332,8 @@ describe("New task assignment mode", () => {
 	it("keeps the preview compact and reveals how many selected tags are hidden", async () => {
 		render(<NewTaskForm />);
 
-		for (const tag of ["next.js", "agent", "typescript", "ui/ux", "mastra"]) {
-			fireEvent.click(await screen.findByRole("button", { name: tag }));
-		}
+		for (const tag of ["next.js", "agent", "typescript", "ui/ux", "mastra"])
+			addCustomTag(tag);
 
 		const overflow = screen.getByLabelText("另有 1 个技能标签");
 		expect(overflow).toBeInTheDocument();
@@ -343,7 +358,7 @@ describe("New task assignment mode", () => {
 		fireEvent.change(screen.getByLabelText("任务标题"), {
 			target: { value: "开发团队项目管理后台" },
 		});
-		fireEvent.change(screen.getByLabelText("详细需求"), {
+		fireEvent.change(screen.getByLabelText("补充说明（可选）"), {
 			target: {
 				value:
 					"开发一个团队项目管理后台，支持任务分配、进度查看和成员权限，并提供完整测试与使用说明。",
@@ -354,7 +369,7 @@ describe("New task assignment mode", () => {
 		});
 		selectFutureDeadline();
 		await selectProductCategory();
-		fireEvent.click(await screen.findByRole("button", { name: "next.js" }));
+		addCustomTag("project-management");
 
 		fireEvent.click(screen.getByRole("button", { name: /发布并继续托管/ }));
 		await waitFor(() => expect(mocks.createTaskDraft).toHaveBeenCalledOnce());

@@ -79,7 +79,7 @@ describe("Task marketplace filters", () => {
 			screen.queryByRole("option", { name: "产品与开发" }),
 		).not.toBeInTheDocument();
 		const categoryOption = await screen.findByRole("option", {
-			name: "代码开发",
+			name: "软件与网站开发",
 		});
 		fireEvent.pointerDown(categoryOption, { pointerType: "mouse" });
 		fireEvent.click(categoryOption);

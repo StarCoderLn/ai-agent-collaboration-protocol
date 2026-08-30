@@ -45,10 +45,10 @@ describe("listSelectableCapabilityCategories", () => {
 		const translate = (id: MessageId): string => `translated:${id}`;
 
 		expect(listSelectableCapabilityCategories(categories, translate)).toEqual([
-			{ id: "code", label: "translated:代码开发" },
+			{ id: "code", label: "translated:软件与网站开发" },
+			{ id: "research", label: "translated:研究与报告" },
 			// 未知 slug 必须回退服务端名称，确保新增运营分类无需等待前端发版才可用。
 			{ id: "future-service", label: "新运营分类" },
-			{ id: "research", label: "translated:研究分析" },
 		]);
 	});
 });

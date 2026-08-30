@@ -68,7 +68,9 @@ const EXECUTABLE_EXTENSIONS = /\.(?:exe|dll|dmg|pkg|app|sh|bat|cmd|com|msi|jar)$
 export function validateTaskDraft(input: TaskDraft, now: Date, config: TaskValidationConfig): readonly TaskFieldError[] {
   const errors: TaskFieldError[] = [];
   if ([...input.title.trim()].length < 6) errors.push(error("title", "TITLE_TOO_SHORT", "标题至少需要 6 个字符"));
-  if ([...input.description.trim()].length < 30) errors.push(error("description", "DESCRIPTION_TOO_SHORT", "任务描述至少需要 30 个字符"));
+  // 用户可以只用标题启动需求澄清流程；说明字段只保证非空，短需求的结构化与补全由
+  // 首个 PRD Agent 负责，不能把 Agent 的工作提前转嫁给任务发布者。
+  if (input.description.trim().length === 0) errors.push(error("description", "DESCRIPTION_REQUIRED", "任务说明不能为空"));
   if (input.acceptanceCriteria.trim().length < 10) errors.push(error("acceptanceCriteria", "ACCEPTANCE_CRITERIA_REQUIRED", "请提供可量化的验收标准"));
   if (input.deliverableFormat.trim().length === 0) errors.push(error("deliverableFormat", "DELIVERABLE_FORMAT_REQUIRED", "请填写交付格式"));
   if (input.requiredCapability.trim().length === 0) errors.push(error("requiredCapability", "REQUIRED_CAPABILITY_REQUIRED", "请填写所需能力"));

@@ -104,7 +104,6 @@ export default function NewTaskForm() {
 			? findCapabilityCategory(taxonomy.categories, categoryId)
 			: null;
 	const structuredFields = buildStructuredTaskFields(
-		description,
 		selectedCategory?.name ?? "",
 		selectedTags,
 		locale,
@@ -150,16 +149,9 @@ export default function NewTaskForm() {
 			rejectSubmit(submittedForm, "title", t("请输入 6–72 个字符的任务标题"));
 			return;
 		}
-		// 用户只负责描述真实需求，不能为了满足服务端最小长度而由前端虚构正文。
-		// 使用和领域校验一致的 Unicode 字符计数，让中文、英文和 emoji 的提示结果一致。
-		if (countCharacters(description.trim()) < 30) {
-			rejectSubmit(
-				submittedForm,
-				"description",
-				t("请至少用 30 个字符描述目标、使用场景和必须满足的限制"),
-			);
-			return;
-		}
+		// 数据库中的正式任务说明仍是非空字段。用户未填写可选说明时，直接复用其标题，
+		// 不虚构功能细节；后续需求整理阶段会把这份最小原始需求澄清为结构化制品。
+		const taskDescription = description.trim() || normalizedTitle;
 		if (taxonomy.kind !== "loaded") {
 			rejectSubmit(submittedForm, "categoryId", t("任务分类尚未加载完成"));
 			return;
@@ -194,7 +186,7 @@ export default function NewTaskForm() {
 		setValidationError(null);
 		const input: TaskDraftInput = {
 			title: normalizedTitle,
-			description,
+			description: taskDescription,
 			acceptanceCriteria: structuredFields.acceptanceCriteria,
 			deliverableFormat: structuredFields.deliverableFormat,
 			categoryId,
@@ -299,7 +291,7 @@ export default function NewTaskForm() {
 						number="01"
 						title={t("描述你的需求")}
 						description={t(
-							"填写标题、详细需求、分类、标签、预算和截止时间即可开始",
+							"填写标题、服务分类、技能标签、预算和截止时间即可开始，补充说明可选",
 						)}
 						icon={Sparkles}
 					>
@@ -331,9 +323,9 @@ export default function NewTaskForm() {
 							/>
 						</Field>
 						<Field
-							label={t("详细需求")}
+							label={t("补充说明（可选）")}
 							htmlFor="task-description"
-							hint={t("描述目标、使用场景和必须满足的限制")}
+							hint={t("可以补充使用场景、偏好或限制，帮助平台更准确地整理需求")}
 							error={
 								validationError?.field === "description"
 									? validationError.message
@@ -342,9 +334,9 @@ export default function NewTaskForm() {
 						>
 							<Textarea
 								id="task-description"
-								className="min-h-48 rounded-xl text-sm leading-6"
+								className="min-h-32 rounded-xl text-sm leading-6"
 								placeholder={t(
-									"例如：为跨境电商团队开发一个可管理商品、订单和权限的后台系统……",
+									"例如：主要给运营团队使用，希望支持商品管理和权限控制……",
 								)}
 								value={description}
 								aria-invalid={validationError?.field === "description"}
@@ -451,16 +443,16 @@ export default function NewTaskForm() {
 						</div>
 					</FormSection>
 
-						<DisclosureSection
-							icon={SlidersHorizontal}
-							title={t("高级设置")}
-							description={t("平台自动执行完整流程，最终交付由你验收")}
+					<DisclosureSection
+						icon={SlidersHorizontal}
+						title={t("高级设置")}
+						description={t("平台自动执行完整流程，最终交付由你验收")}
 						open={advancedOpen}
 						onToggle={() => setAdvancedOpen((current) => !current)}
 						openLabel={t("收起高级设置")}
 						closedLabel={t("展开高级设置")}
 					>
-							<Choice
+						<Choice
 							label={t("可见范围")}
 							value={visibility}
 							onChange={(value) => {
@@ -496,7 +488,8 @@ export default function NewTaskForm() {
 								{title.trim() || t("填写任务标题后显示预览")}
 							</p>
 							<p className="mt-2 line-clamp-3 text-muted-foreground text-sm leading-5">
-								{description}
+								{description.trim() ||
+									t("未填写补充说明，平台将根据任务标题继续整理需求")}
 							</p>
 							<div className="mt-3 flex flex-wrap gap-1.5">
 								{selectedTags.slice(0, 4).map((tag) => (
@@ -534,10 +527,7 @@ export default function NewTaskForm() {
 								label={t("平台服务费")}
 								value={t("成功结算时从 Agent 收入中扣除")}
 							/>
-							<PreviewRow
-								label={t("分配方式")}
-								value={t("平台自动分配")}
-							/>
+							<PreviewRow label={t("分配方式")} value={t("平台自动分配")} />
 							<PreviewRow
 								label={t("验收方式")}
 								value={t("中间阶段自动推进，最终交付由你验收")}
@@ -805,7 +795,6 @@ type StructuredTaskFields = Readonly<{
  * 结构化字段，既不调用模型，也不补写用户未表达的具体功能，避免把生成结果冒充事实。
  */
 function buildStructuredTaskFields(
-	description: string,
 	categoryName: string,
 	tags: readonly string[],
 	locale: string,
@@ -815,16 +804,16 @@ function buildStructuredTaskFields(
 
 	return {
 		acceptanceCriteria: english
-			? "The final result must cover the goals, use cases, and explicit constraints in the detailed request, and remain reviewable by the client."
-			: "最终结果需覆盖详细需求中描述的目标、使用场景和明确限制，并可由发布者逐项检查确认。",
+			? "The final result must cover the task title and any supplementary context or explicit constraints, and remain reviewable by the client."
+			: "最终结果需覆盖任务标题及补充说明中明确表达的场景和限制，并可由发布者检查确认。",
 		deliverableFormat: english
 			? "A usable final deliverable, required source files, and concise usage instructions."
 			: "可直接使用的最终交付物、必要源文件和简明使用说明。",
 		requiredCapability:
 			capabilitySource ||
 			(english
-				? "Professional capabilities required to complete the detailed request"
-				: "完成详细需求所需的专业能力"),
+				? "Professional capabilities required to complete the request"
+				: "完成用户需求所需的专业能力"),
 	};
 }
 
@@ -838,7 +827,7 @@ function fieldLabel(
 ): string {
 	const labels: Record<string, MessageId> = {
 		title: "任务标题",
-		description: "详细需求",
+		description: "补充说明（可选）",
 		acceptanceCriteria: "验收标准",
 		deliverableFormat: "交付格式",
 		categoryId: "服务分类",

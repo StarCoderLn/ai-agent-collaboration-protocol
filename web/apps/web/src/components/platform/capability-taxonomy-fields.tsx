@@ -3,13 +3,12 @@
 import { Label } from "@web/ui/components/label";
 import { SelectField } from "@web/ui/components/select";
 import { Skeleton } from "@web/ui/components/skeleton";
-import { Check, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { useLocale } from "@/components/i18n/locale-provider";
 import {
 	listTaskCategories,
-	suggestTaskTags,
 	TaskApiRequestError,
 	type TaskCategory,
 } from "@/lib/api/tasks";
@@ -33,13 +32,12 @@ export type CapabilityTaxonomyState =
 	| Readonly<{
 			kind: "loaded";
 			categories: readonly TaskCategory[];
-			tags: readonly string[];
 	  }>
 	| Readonly<{ kind: "error"; message: string }>;
 
 /**
- * 上架 Agent 和发布任务必须读取同一套分类与平台推荐标签。这个 hook 是数据加载的
- * 唯一入口，避免两边推荐内容不同；用户自定义标签由下方共享组件按同一规则处理。
+ * 上架 Agent 和发布任务必须读取同一棵分类树。标签由用户按真实需求填写，服务端仍
+ * 负责同义词归一与禁用词校验；页面不再把缺少上下文的全量技术词表展示给普通用户。
  */
 export function useCapabilityTaxonomy(): CapabilityTaxonomyState {
 	const { t } = useLocale();
@@ -49,15 +47,11 @@ export function useCapabilityTaxonomy(): CapabilityTaxonomyState {
 
 	useEffect(() => {
 		const controller = new AbortController();
-		Promise.all([
-			listTaskCategories(controller.signal),
-			suggestTaskTags("", controller.signal),
-		])
-			.then(([categories, suggestions]) => {
+		listTaskCategories(controller.signal)
+			.then((categories) => {
 				setState({
 					kind: "loaded",
 					categories,
-					tags: suggestions.map((item) => item.canonicalName),
 				});
 			})
 			.catch((error: unknown) => {
@@ -68,7 +62,7 @@ export function useCapabilityTaxonomy(): CapabilityTaxonomyState {
 					message:
 						error instanceof TaskApiRequestError
 							? error.body.message
-							: t("分类与标签加载失败"),
+							: t("服务分类加载失败"),
 				});
 			});
 
@@ -115,18 +109,10 @@ export function CapabilityTaxonomyFields({
 	);
 	const categoryFieldId = `${idPrefix}-capability-category`;
 	const tagsInputId = `${idPrefix}-custom-tag`;
-	const recommendedTags = state.kind === "loaded" ? state.tags : [];
-	const recommendedByNormalized = useMemo(
-		() =>
-			new Map(
-				recommendedTags.map((tag) => [normalizeMatchingTag(tag), tag] as const),
-			),
-		[recommendedTags],
-	);
 
 	/**
-	 * 推荐标签与自定义标签进入同一数组。若用户输入的是平台标签的别名大小写形式，
-	 * 优先保留平台 canonical 展示值；重复添加只清空输入，不制造错误或重复 chip。
+	 * 页面先做与服务端一致的基础规范化，让用户立即看到最终形式。平台词表的同义词
+	 * 收敛仍发生在可信服务边界，避免前端缓存过期后产生两套不同的匹配语义。
 	 */
 	function addCustomTag() {
 		const normalized = normalizeMatchingTag(customTagInput);
@@ -147,8 +133,7 @@ export function CapabilityTaxonomyFields({
 			return;
 		}
 
-		const canonical = recommendedByNormalized.get(normalized) ?? normalized;
-		if (selectedTags.includes(canonical)) {
+		if (selectedTags.includes(normalized)) {
 			setCustomTagInput("");
 			setCustomTagError(null);
 			return;
@@ -162,26 +147,8 @@ export function CapabilityTaxonomyFields({
 			return;
 		}
 
-		onTagsChange([...selectedTags, canonical]);
+		onTagsChange([...selectedTags, normalized]);
 		setCustomTagInput("");
-		setCustomTagError(null);
-	}
-
-	function toggleRecommendedTag(tag: string) {
-		const selected = selectedTags.includes(tag);
-		if (!selected && selectedTags.length >= MAX_MATCHING_TAG_COUNT) {
-			setCustomTagError(
-				t("最多选择 {count} 个技能标签", {
-					count: MAX_MATCHING_TAG_COUNT,
-				}),
-			);
-			return;
-		}
-		onTagsChange(
-			selected
-				? selectedTags.filter((item) => item !== tag)
-				: [...selectedTags, tag],
-		);
 		setCustomTagError(null);
 	}
 
@@ -232,7 +199,7 @@ export function CapabilityTaxonomyFields({
 			<TaxonomyField
 				label={t("技能标签")}
 				htmlFor={tagsInputId}
-				hint={t("可选择平台推荐标签，也可输入自定义标签")}
+				hint={t("填写最能代表需求或 Agent 能力的技术、风格或专业标签")}
 				error={tagsError}
 			>
 				<fieldset className="space-y-3 rounded-xl border border-primary/20 bg-card/70 p-3">
@@ -275,6 +242,11 @@ export function CapabilityTaxonomyFields({
 							}}
 							onKeyDown={(event) => {
 								if (event.key !== "Enter") return;
+								// 中文、日文等输入法会用回车确认正在组合的候选词。此时既不能
+								// 提交标签，也不能阻止输入法完成上屏；229 兼容仍未正确暴露
+								// isComposing 的部分 WebKit/旧版浏览器实现。
+								if (event.nativeEvent.isComposing || event.keyCode === 229)
+									return;
 								event.preventDefault();
 								addCustomTag();
 							}}
@@ -300,43 +272,12 @@ export function CapabilityTaxonomyFields({
 							{customTagError ?? t("输入后按回车即可添加")}
 						</span>
 						<span className="shrink-0 text-muted-foreground">
-							{t("已选择 {count}/{max}", {
+							{t("已添加 {count}/{max}", {
 								count: selectedTags.length,
 								max: MAX_MATCHING_TAG_COUNT,
 							})}
 						</span>
 					</div>
-
-					{state.kind === "loading" ? (
-						<Skeleton className="h-8 w-full" />
-					) : state.kind === "loaded" && recommendedTags.length > 0 ? (
-						<div>
-							<p className="mb-2 font-medium text-muted-foreground text-xs">
-								{t("平台推荐")}
-							</p>
-							<div className="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1">
-								{recommendedTags.map((tag) => {
-									const selected = selectedTags.includes(tag);
-									return (
-										<button
-											key={tag}
-											type="button"
-											aria-pressed={selected}
-											onClick={() => toggleRecommendedTag(tag)}
-											className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-all ${selected ? "border-primary bg-primary-container text-primary shadow-[0_0_16px_var(--brand-glow)]" : "border-primary/15 bg-accent/70 text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}
-										>
-											{selected && <Check className="size-3" aria-hidden />}
-											{tag}
-										</button>
-									);
-								})}
-							</div>
-						</div>
-					) : (
-						<span className="px-1 text-muted-foreground text-xs">
-							{t("暂时没有推荐标签，你仍然可以添加自定义标签")}
-						</span>
-					)}
 				</fieldset>
 			</TaxonomyField>
 		</div>

@@ -114,7 +114,7 @@ describe("AgentMarketplace", () => {
 			screen.queryByRole("option", { name: "产品与开发" }),
 		).not.toBeInTheDocument();
 		const codeCategory = await screen.findByRole("option", {
-			name: "代码开发",
+			name: "软件与网站开发",
 		});
 		fireEvent.pointerDown(codeCategory, { pointerType: "mouse" });
 		fireEvent.click(codeCategory);

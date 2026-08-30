@@ -62,23 +62,8 @@ function categoryResponse() {
 	);
 }
 
-function tagResponse() {
-	return new Response(
-		JSON.stringify({
-			query: "",
-			suggestions: [
-				{ canonicalName: "next.js", matchedAlias: null },
-				{ canonicalName: "typescript", matchedAlias: null },
-			],
-		}),
-		{ status: 200, headers: { "content-type": "application/json" } },
-	);
-}
-
 function mockTaxonomyResponses() {
-	vi.mocked(fetch)
-		.mockResolvedValueOnce(categoryResponse())
-		.mockResolvedValueOnce(tagResponse());
+	vi.mocked(fetch).mockResolvedValueOnce(categoryResponse());
 }
 
 async function fillValidForm() {
@@ -107,11 +92,13 @@ async function fillValidForm() {
 	const category = screen.getByRole("combobox", { name: "服务分类" });
 	fireEvent.click(category);
 	const categoryOption = await screen.findByRole("option", {
-		name: "代码开发",
+		name: "软件与网站开发",
 	});
 	fireEvent.pointerDown(categoryOption, { pointerType: "mouse" });
 	fireEvent.click(categoryOption);
-	fireEvent.click(await screen.findByRole("button", { name: "next.js" }));
+	const tagInput = screen.getByRole("textbox", { name: "技能标签" });
+	fireEvent.change(tagInput, { target: { value: "next.js" } });
+	fireEvent.keyDown(tagInput, { key: "Enter" });
 }
 
 describe("AgentRegistrationForm", () => {
@@ -144,7 +131,7 @@ describe("AgentRegistrationForm", () => {
 		const nameInput = screen.getByLabelText("Agent 名称");
 		expect(nameInput).toHaveAttribute("aria-invalid", "true");
 		await waitFor(() => expect(nameInput).toHaveFocus());
-		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(fetch).toHaveBeenCalledOnce();
 	});
 
 	it("未连接钱包时先触发连接，不提交空表单", async () => {
@@ -159,7 +146,7 @@ describe("AgentRegistrationForm", () => {
 		fireEvent.click(connect);
 
 		expect(walletMock.connect).toHaveBeenCalledOnce();
-		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(fetch).toHaveBeenCalledOnce();
 		expect(screen.queryByText("请检查输入内容")).not.toBeInTheDocument();
 	});
 
@@ -194,7 +181,7 @@ describe("AgentRegistrationForm", () => {
 		expect(screen.getByLabelText("收款钱包")).toHaveValue(PAYOUT_WALLET);
 	});
 
-	it("允许在平台推荐标签之外添加、规范化并移除自定义标签", async () => {
+	it("允许添加、规范化并移除自定义标签", async () => {
 		mockTaxonomyResponses();
 		render(<AgentRegistrationForm />);
 
@@ -206,11 +193,42 @@ describe("AgentRegistrationForm", () => {
 			name: "移除标签 rag workflow",
 		});
 		expect(remove).toBeInTheDocument();
-		expect(screen.getByText("已选择 1/10")).toBeInTheDocument();
+		expect(screen.getByText("已添加 1/10")).toBeInTheDocument();
 		fireEvent.click(remove);
 		expect(
 			screen.queryByRole("button", { name: "移除标签 rag workflow" }),
 		).not.toBeInTheDocument();
+	});
+
+	it("中文输入法确认候选词时不会把未完成的拼音提前添加为标签", async () => {
+		mockTaxonomyResponses();
+		render(<AgentRegistrationForm />);
+
+		const input = await screen.findByRole("textbox", { name: "技能标签" });
+		fireEvent.change(input, { target: { value: "dian shang" } });
+		fireEvent.keyDown(input, {
+			key: "Enter",
+			code: "Enter",
+			keyCode: 229,
+			isComposing: true,
+		});
+
+		expect(input).toHaveValue("dian shang");
+		expect(
+			screen.queryByRole("button", { name: "移除标签 dian shang" }),
+		).not.toBeInTheDocument();
+
+		// 输入法完成“电商”上屏后，用户再次按普通回车才会真正添加标签。
+		fireEvent.change(input, { target: { value: "电商" } });
+		fireEvent.keyDown(input, {
+			key: "Enter",
+			code: "Enter",
+			keyCode: 13,
+			isComposing: false,
+		});
+		expect(
+			screen.getByRole("button", { name: "移除标签 电商" }),
+		).toBeInTheDocument();
 	});
 
 	it("展示并复制可直接运行的 TypeScript AICP 接入模板", async () => {

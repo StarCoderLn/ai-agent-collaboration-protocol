@@ -319,8 +319,8 @@ export const EN_MESSAGES = {
 	"DAO 激励": "DAO incentives",
 	网络手续费: "Network fees",
 	链上资产: "Onchain asset",
-	"连接钱包后查看 USDC、Gas ETH 与 YD 余额。":
-		"Connect your wallet to view USDC, gas ETH, and YD balances.",
+	"连接钱包后查看 USDC、ETH 与 YD 余额。":
+		"Connect your wallet to view USDC, ETH, and YD balances.",
 	"钱包余额暂时无法读取，请检查网络后重试。":
 		"Wallet balances are temporarily unavailable. Check your network and try again.",
 	重新读取: "Read again",
@@ -381,7 +381,7 @@ export const EN_MESSAGES = {
 		"Runnable source code, test report, deployment guide, and usage instructions",
 	"Next.js、TypeScript、Agent 协议接入与自动化测试":
 		"Next.js, TypeScript, Agent protocol integration, and automated testing",
-	分类与标签加载失败: "Categories and tags failed to load",
+	服务分类加载失败: "Service categories failed to load",
 	请先连接发布者钱包并完成签名登录:
 		"Connect the client wallet and complete signed login first",
 	任务分类尚未加载完成: "Task categories have not finished loading",
@@ -390,8 +390,6 @@ export const EN_MESSAGES = {
 	"任务预算须在 1–100,000 USDC 之间，最多保留 6 位小数":
 		"Task budget must be between 1 and 100,000 USDC with at most six decimal places",
 	请选择有效截止时间: "Select a valid deadline",
-	"请至少用 30 个字符描述目标、使用场景和必须满足的限制":
-		"Use at least 30 characters to describe the goal, use case, and non-negotiable constraints",
 	请补全结构化任务合同后再发布:
 		"Complete the structured task contract before posting",
 	"任务发布失败，请稍后重试": "Task posting failed. Please try again.",
@@ -413,17 +411,20 @@ export const EN_MESSAGES = {
 	描述你的需求: "Describe your request",
 	"填写需求、预算和截止时间即可开始":
 		"Add your requirements, budget, and deadline to get started",
-	"填写标题、详细需求、分类、标签、预算和截止时间即可开始":
-		"Add a title, detailed request, category, tags, budget, and deadline to get started",
+	"填写标题、服务分类、技能标签、预算和截止时间即可开始，补充说明可选":
+		"Add a title, service category, skill tags, budget, and deadline to get started. Additional context is optional.",
 	用一句话说明需要完成的任务: "Summarize the task in one sentence",
 	"例如：开发一个电商后台管理系统":
 		"Example: Build an e-commerce admin dashboard",
 	"请输入 6–72 个字符的任务标题":
 		"Enter a task title between 6 and 72 characters",
-	"描述目标、使用场景和必须满足的限制":
-		"Describe the goal, use case, and non-negotiable constraints",
-	"例如：为跨境电商团队开发一个可管理商品、订单和权限的后台系统……":
-		"Example: Build an admin system for a cross-border commerce team to manage products, orders, and access…",
+	"补充说明（可选）": "Additional context (optional)",
+	"可以补充使用场景、偏好或限制，帮助平台更准确地整理需求":
+		"Add any context, preferences, or constraints to help the platform organize your request more accurately.",
+	"例如：主要给运营团队使用，希望支持商品管理和权限控制……":
+		"Example: Mainly for an operations team, with product management and access controls…",
+	"未填写补充说明，平台将根据任务标题继续整理需求":
+		"No additional context provided. The platform will continue organizing the request from its title.",
 	结构化任务合同: "Structured task contract",
 	"标题、分类、验收与交付要求":
 		"Title, category, acceptance, and delivery requirements",
@@ -464,8 +465,8 @@ export const EN_MESSAGES = {
 	选择需要或能够提供的服务类型: "Select the type of service needed or provided",
 	"选择更具体的技能标签，可多选":
 		"Select more specific skill tags; you can choose more than one",
-	"可选择平台推荐标签，也可输入自定义标签":
-		"Choose platform suggestions or add your own tags",
+	"填写最能代表需求或 Agent 能力的技术、风格或专业标签":
+		"Add the technical, style, or professional tags that best represent the request or Agent.",
 	"输入自定义标签，按回车添加": "Enter a custom tag and press Enter",
 	请输入要添加的标签: "Enter a tag to add",
 	"每个标签最多 {count} 个字符":
@@ -476,10 +477,7 @@ export const EN_MESSAGES = {
 	"移除标签 {tag}": "Remove tag {tag}",
 	添加: "Add",
 	输入后按回车即可添加: "Press Enter to add the tag",
-	"已选择 {count}/{max}": "Selected {count}/{max}",
-	平台推荐: "Platform suggestions",
-	"暂时没有推荐标签，你仍然可以添加自定义标签":
-		"No suggested tags are available, but you can still add a custom tag",
+	"已添加 {count}/{max}": "Added {count}/{max}",
 	已选择的技能标签: "Selected skill tags",
 	"另有 {count} 个技能标签": "{count} more skill tags",
 	研究分析: "Research & analysis",
@@ -487,6 +485,14 @@ export const EN_MESSAGES = {
 	图片设计: "Image design",
 	视频制作: "Video production",
 	数据处理: "Data processing",
+	"产品方案与 PRD": "Product strategy & PRD",
+	"UI/UX 设计": "UI/UX design",
+	软件与网站开发: "Software & website development",
+	文案与内容: "Copywriting & content",
+	图片与视觉设计: "Image & visual design",
+	视频与动画: "Video & animation",
+	数据分析: "Data analysis",
+	研究与报告: "Research & reports",
 	选择需要或能够提供的核心能力分类:
 		"Select the core capability category needed or provided",
 	"选择更具体的能力标签，可多选":
@@ -1190,6 +1196,8 @@ export const EN_MESSAGES = {
 		"The platform service fee has a {minimum} minimum and is deducted from Agent earnings only after successful settlement. The publisher is not charged beyond the escrow amount.",
 	重新开始托管: "Restart escrow",
 	"开始托管 {amount}": "Start escrow for {amount}",
+	托管操作未完成: "Escrow operation did not complete",
+	"等待 MetaMask 返回结果": "Waiting for MetaMask",
 	任务预算: "Task budget",
 	正在生成候选: "Generating candidates",
 	匹配记录尚未就绪: "Match record not ready",
@@ -1484,6 +1492,7 @@ export const EN_MESSAGES = {
 	"已替换（key_version {version}）": "Replaced (key_version {version})",
 	"多 Agent 执行图": "Multi-Agent execution graph",
 	"Agent 分配关系图": "Agent allocation graph",
+	"重新显示全部节点": "Show all nodes",
 	"展示任务阶段、候选 Agent 与最终分配结果；高亮连线表示已经正式选中的 Agent。":
 		"Shows task stages, candidate Agents, and final assignments. Highlighted connections represent formally selected Agents.",
 	"多 Agent 执行进度": "Multi-Agent execution progress",

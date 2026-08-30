@@ -34,6 +34,13 @@ function validDraft(overrides: Partial<TaskDraft> = {}): TaskDraft {
 }
 
 describe("validateTaskDraft", () => {
+  it("允许用简短原始需求启动 PRD 澄清，但仍拒绝空说明", () => {
+    expect(validateTaskDraft(validDraft({ description: "开发电商首页" }), NOW, CONFIG))
+      .not.toContainEqual(expect.objectContaining({ field: "description" }));
+    expect(validateTaskDraft(validDraft({ description: "   " }), NOW, CONFIG))
+      .toContainEqual(expect.objectContaining({ code: "DESCRIPTION_REQUIRED" }));
+  });
+
   it("reads the current deadline configuration instead of a hard-coded threshold", () => {
     const draft = validDraft({ deadline: new Date(NOW.getTime() + 40 * 60_000) });
     expect(validateTaskDraft(draft, NOW, CONFIG)).toHaveLength(0);

@@ -75,7 +75,7 @@ export type TaskValidationConfig = { minExecutionPeriodMs: number; minBudgetMino
 export function validateTaskInput(input: TaskValidationInput, now: Date, config: TaskValidationConfig): readonly string[] {
   const errors: string[] = [];
   if ([...input.title].length < 6) errors.push("TITLE_TOO_SHORT");
-  if ([...input.description].length < 30) errors.push("DESCRIPTION_TOO_SHORT");
+  if (input.description.trim().length === 0) errors.push("DESCRIPTION_REQUIRED");
   if (input.budgetMinor < config.minBudgetMinor || input.budgetMinor > config.maxBudgetMinor) errors.push("BUDGET_OUT_OF_RANGE");
   if (input.deadline.getTime() < now.getTime() + config.minExecutionPeriodMs) errors.push("DEADLINE_TOO_SOON");
   if (input.tags.some((tag) => config.forbiddenTags.has(tag))) errors.push("FORBIDDEN_TAG");
