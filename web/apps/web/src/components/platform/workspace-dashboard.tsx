@@ -214,9 +214,9 @@ function TaskList({ tasks }: { tasks: readonly OwnedTaskSummary[] }) {
 					title={t("还没有发布任务")}
 					description={t("创建第一个任务即可开始托管、匹配和执行流程。")}
 					action={
-						<Button render={<Link href="/tasks/new" />}>
+						<Button size="lg" render={<Link href="/tasks/new" />}>
 							<CirclePlus className="size-4" />
-							{t("发布任务")}
+							{t("发布第一个任务")}
 						</Button>
 					}
 				/>

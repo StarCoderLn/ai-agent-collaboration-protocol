@@ -42,6 +42,12 @@ describe("Publisher workspace statistics", () => {
 		expect(screen.getByText("待验收")).toBeInTheDocument();
 		expect(screen.getByText("已完成")).toBeInTheDocument();
 		expect(screen.getByText("争议中")).toBeInTheDocument();
+		// 空状态里的创建入口属于页面主操作，规格必须与“上架第一个 Agent”等入口一致；
+		// 不能退回默认 32px 小按钮，否则同一工作台的二级页面会呈现两套视觉层级。
+		const publishTask = screen.getByRole("button", {
+			name: "发布第一个任务",
+		});
+		expect(publishTask).toHaveClass("h-11", "text-sm");
 		expect(screen.getByRole("link", { name: "返回工作台" })).toHaveAttribute(
 			"href",
 			"/workspace",

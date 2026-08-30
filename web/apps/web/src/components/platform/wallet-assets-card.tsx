@@ -113,7 +113,7 @@ export default function WalletAssetsCard() {
 				) : walletAddress === null ? (
 					<div className="rounded-2xl border border-primary/20 border-dashed bg-background/28 p-4">
 						<p className="text-muted-foreground text-sm leading-6">
-								{t("连接钱包后查看 USDC、Gas ETH 与 YD 余额。")}
+							{t("连接钱包后查看 USDC、ETH 与 YD 余额。")}
 						</p>
 						<Button
 							className="mt-4 rounded-full"
@@ -212,7 +212,7 @@ function AssetRowsSkeleton() {
 			role="status"
 			aria-label={t("正在读取钱包余额")}
 		>
-			{/* 当前资产目录固定为 USDC、YD 与 Gas ETH；骨架保持三行，避免余额返回后卡片突然增高。 */}
+			{/* 当前资产目录固定为 USDC、YD 与 ETH；骨架保持三行，避免余额返回后卡片突然增高。 */}
 			{[0, 1, 2].map((row) => (
 				<div
 					key={row}
@@ -265,7 +265,8 @@ function assetPresentation(
 	}
 	if (assetId === "gas-eth") {
 		return {
-			label: "Gas ETH",
+			// ETH 是链上资产符号，Gas 只是它在当前产品里的用途，不能拼进名称制造新币种。
+			label: symbol,
 			purpose: "网络手续费",
 			iconClassName: "border-white/10 bg-white/6 text-muted-foreground",
 		};

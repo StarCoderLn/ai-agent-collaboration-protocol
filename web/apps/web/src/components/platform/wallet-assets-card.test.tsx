@@ -104,7 +104,10 @@ describe("Wallet assets card", () => {
 		expect(screen.getByText("任务结算 · AICP Local Anvil")).toBeInTheDocument();
 		expect(screen.getByText("YD")).toBeInTheDocument();
 		expect(screen.getByText("DAO 激励 · Sepolia")).toBeInTheDocument();
-		expect(screen.getByText("Gas ETH")).toBeInTheDocument();
+		// ETH 是资产符号，“网络手续费”才是用途。把 Gas 写进资产名会让用户误认为
+		// 本地链使用了不同于 Sepolia 的特殊代币。
+		expect(screen.getByText("ETH")).toBeInTheDocument();
+		expect(screen.queryByText("Gas ETH")).not.toBeInTheDocument();
 		expect(screen.getByText("网络手续费 · AICP Local Anvil")).toBeInTheDocument();
 		expect(screen.getByText("暂时无法读取")).toBeInTheDocument();
 
@@ -120,6 +123,9 @@ describe("Wallet assets card", () => {
 		renderCard();
 
 		fireEvent.click(screen.getByRole("button", { name: "连接钱包" }));
+		expect(
+			screen.getByText("连接钱包后查看 USDC、ETH 与 YD 余额。"),
+		).toBeInTheDocument();
 		expect(wallet.connect).toHaveBeenCalledTimes(1);
 		expect(getWalletAssetDirectory).not.toHaveBeenCalled();
 	});

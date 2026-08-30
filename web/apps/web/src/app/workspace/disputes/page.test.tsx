@@ -13,8 +13,9 @@ describe("Workspace disputes page", () => {
 			"href",
 			"/workspace",
 		);
-		// 宽度需要同时作用于页头和表单区，避免只修正其中一块后左右边界仍然错位。
-		expect(container.querySelectorAll(".max-w-\\[1280px\\]")).toHaveLength(2);
+		// 宽度需要同时作用于页头和表单区；这里断言 Tailwind 规范化后的 7xl 类，避免
+		// 继续绑定已经被全局样式整理替换掉的任意值写法。
+		expect(container.querySelectorAll(".max-w-7xl")).toHaveLength(2);
 		expect(container.querySelector(".max-w-\\[980px\\]")).toBeNull();
 	});
 });
