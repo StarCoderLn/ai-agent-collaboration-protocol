@@ -40,8 +40,21 @@ const verifiedSchema = z.object({
 	walletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
 });
 const authErrorSchema = z.object({ message: z.string().min(1) }).passthrough();
+const WALLET_PROMPT_TIMEOUT_MS = 60_000;
+const TRANSACTION_RECEIPT_TIMEOUT_MS = 180_000;
 
 export type WalletSession = Readonly<{ walletAddress: string }>;
+
+/**
+ * 钱包扩展可能在页面与后台消息通道中断后既不成功也不拒绝 Promise。该错误只表示
+ * 浏览器没有拿到结果，不能据此断言交易失败，更不能自动重发资金交易。
+ */
+export class WalletRequestTimeoutError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "WalletRequestTimeoutError";
+	}
+}
 
 export async function restoreWalletSession(): Promise<WalletSession | null> {
 	let response: Response;
@@ -221,6 +234,7 @@ export async function ensureEscrowAllowance(
 				hash: approvalHash as Hex,
 			}),
 		"USDC 授权交易未能确认",
+		TRANSACTION_RECEIPT_TIMEOUT_MS,
 	);
 	if (receipt.status !== "success") {
 		throw new Error("USDC 授权交易执行失败，资金尚未托管");
@@ -285,10 +299,26 @@ async function connectMetaMask(
 async function walletAction<T>(
 	action: () => Promise<T>,
 	fallback: string,
+	timeoutMs = WALLET_PROMPT_TIMEOUT_MS,
 ): Promise<T> {
+	let timeoutId: ReturnType<typeof setTimeout> | null = null;
 	try {
-		return await action();
+		return await Promise.race([
+			action(),
+			new Promise<never>((_resolve, reject) => {
+				timeoutId = setTimeout(() => {
+					reject(
+						new WalletRequestTimeoutError(
+							"MetaMask 长时间没有返回交易结果。当前交易状态仍不确定，请先打开 MetaMask 检查待处理或失败记录，再决定是否重试。",
+						),
+					);
+				}, timeoutMs);
+			}),
+		]);
 	} catch (error) {
+		// 超时与普通钱包失败的资金语义不同，必须保留独立类型供托管流程判断，避免
+		// 把“结果未知”错误登记成“已确认失败”。
+		if (error instanceof WalletRequestTimeoutError) throw error;
 		const shortMessage =
 			typeof error === "object" &&
 			error !== null &&
@@ -297,6 +327,8 @@ async function walletAction<T>(
 				? error.shortMessage
 				: null;
 		throw new Error(shortMessage ?? fallback);
+	} finally {
+		if (timeoutId !== null) clearTimeout(timeoutId);
 	}
 }
 

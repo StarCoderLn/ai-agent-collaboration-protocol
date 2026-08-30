@@ -14,6 +14,7 @@ import {
 import {
 	ensureEscrowAllowance,
 	sendEscrowTransaction,
+	WalletRequestTimeoutError,
 } from "./wallet-session";
 
 vi.mock("../api/tasks", () => ({
@@ -24,6 +25,7 @@ vi.mock("../api/tasks", () => ({
 vi.mock("./wallet-session", () => ({
 	ensureEscrowAllowance: vi.fn(),
 	sendEscrowTransaction: vi.fn(),
+	WalletRequestTimeoutError: class WalletRequestTimeoutError extends Error {},
 }));
 
 const TASK_ID = "11111111-1111-4111-8111-111111111111";
@@ -78,6 +80,7 @@ describe("escrow deposit flow", () => {
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.unstubAllEnvs();
 		vi.unstubAllGlobals();
 		vi.clearAllMocks();
@@ -162,6 +165,39 @@ describe("escrow deposit flow", () => {
 			},
 			"failure-key",
 		);
+	});
+
+	it("does not mark an uncertain wallet timeout as a confirmed failure", async () => {
+		vi.mocked(sendEscrowTransaction).mockRejectedValue(
+			new WalletRequestTimeoutError("钱包请求超时"),
+		);
+
+		await expect(startEscrowDeposit(input())).rejects.toMatchObject({
+			name: "EscrowDepositFlowError",
+			stage: "wallet",
+			message: "钱包请求超时",
+		});
+		expect(submitTaskEscrowTransaction).not.toHaveBeenCalled();
+	});
+
+	it("does not let best-effort failure recording block the wallet error", async () => {
+		vi.useFakeTimers();
+		vi.mocked(sendEscrowTransaction).mockRejectedValue(
+			new Error("User rejected request"),
+		);
+		vi.mocked(submitTaskEscrowTransaction).mockImplementation(
+			() => new Promise<never>(() => undefined),
+		);
+
+		const deposit = startEscrowDeposit(input());
+		const result = deposit.catch((error: unknown) => error);
+		await vi.advanceTimersByTimeAsync(5_000);
+
+		expect(await result).toMatchObject({
+			name: "EscrowDepositFlowError",
+			stage: "wallet",
+			message: "用户已取消钱包交易",
+		});
 	});
 
 	it("never sends funds twice when platform recording fails after broadcast", async () => {

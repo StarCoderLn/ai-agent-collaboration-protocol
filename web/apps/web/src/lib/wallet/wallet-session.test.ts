@@ -9,13 +9,14 @@ import {
 	waitForTransactionReceipt,
 } from "wagmi/actions";
 
+import { wagmiConfig } from "./wagmi-config";
 import {
 	connectWalletSession,
 	ensureEscrowAllowance,
 	logoutWalletSession,
 	sendEscrowTransaction,
+	WalletRequestTimeoutError,
 } from "./wallet-session";
-import { wagmiConfig } from "./wagmi-config";
 
 vi.mock("wagmi/actions", () => ({
 	connect: vi.fn(),
@@ -45,6 +46,7 @@ describe("wagmi wallet session", () => {
 		);
 	});
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.unstubAllGlobals();
 		vi.clearAllMocks();
 	});
@@ -122,6 +124,28 @@ describe("wagmi wallet session", () => {
 			data: "0x1234",
 			value: BigInt(0),
 		}));
+	});
+
+	it("ends a wallet request that never returns instead of leaving the page busy forever", async () => {
+		vi.useFakeTimers();
+		vi.mocked(sendTransaction).mockImplementation(
+			() => new Promise<never>(() => undefined),
+		);
+
+		const submission = sendEscrowTransaction({
+			walletAddress: CHECKSUM_ADDRESS,
+			chainId: 31_337,
+			transaction: { to: CONTRACT, data: "0x1234", value: "0x0" },
+		});
+		const result = submission.catch((error: unknown) => error);
+		await vi.advanceTimersByTimeAsync(60_000);
+
+		const error = await result;
+		expect(error).toBeInstanceOf(WalletRequestTimeoutError);
+		expect(error).toHaveProperty(
+			"message",
+			expect.stringContaining("请先打开 MetaMask 检查"),
+		);
 	});
 
 	it("rejects any native-token value before opening an escrow wallet request", async () => {

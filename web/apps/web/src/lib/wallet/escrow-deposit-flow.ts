@@ -9,7 +9,10 @@ import {
 import {
 	ensureEscrowAllowance,
 	sendEscrowTransaction,
+	WalletRequestTimeoutError,
 } from "./wallet-session";
+
+const FAILURE_RECORD_TIMEOUT_MS = 5_000;
 
 const pendingSubmissionSchema = z
 	.object({
@@ -88,7 +91,11 @@ export async function startEscrowDeposit(
 		// Escrow 合约自身也拒绝同一 taskKey 的重复托管。钱包错误是外部输入，
 		// 不直接持久化英文 SDK 文案、RPC 细节或扩展内部信息。
 		const failureReason = walletFailureReason(cause);
-		await bestEffortRecordWalletFailure(input, failureReason);
+		// 钱包超时只说明页面没有收到结果。此时底层扩展请求可能仍在完成，不能把它
+		// 当成确定失败写入服务端；否则迟到的链上交易会与平台失败状态互相矛盾。
+		if (!(cause instanceof WalletRequestTimeoutError)) {
+			await bestEffortRecordWalletFailure(input, failureReason);
+		}
 		throw new EscrowDepositFlowError("wallet", failureReason, null, { cause });
 	}
 
@@ -193,16 +200,40 @@ async function bestEffortRecordWalletFailure(
 	failureReason: string,
 ): Promise<void> {
 	try {
-		await submitTaskEscrowTransaction(
-			input.taskId,
-			{
-				status: "failed",
-				failureReason,
-			},
-			input.failureIdempotencyKey,
+		await waitAtMost(
+			submitTaskEscrowTransaction(
+				input.taskId,
+				{
+					status: "failed",
+					failureReason,
+				},
+				input.failureIdempotencyKey,
+			),
+			FAILURE_RECORD_TIMEOUT_MS,
 		);
 	} catch {
 		// 钱包原始错误对用户更有价值；服务端登记失败会由后续状态补拉暴露。
+	}
+}
+
+/**
+ * “尽力登记”不能成为资金按钮的新阻塞点。超时后底层请求可以自然结束，但当前调用
+ * 必须及时把原始钱包错误交还页面；Promise 已安装拒绝处理，不会产生未处理异常。
+ */
+async function waitAtMost<T>(
+	promise: Promise<T>,
+	timeoutMs: number,
+): Promise<void> {
+	let timeoutId: ReturnType<typeof setTimeout> | null = null;
+	try {
+		await Promise.race([
+			promise,
+			new Promise<void>((resolve) => {
+				timeoutId = setTimeout(resolve, timeoutMs);
+			}),
+		]);
+	} finally {
+		if (timeoutId !== null) clearTimeout(timeoutId);
 	}
 }
 
@@ -252,6 +283,7 @@ function errorMessage(cause: unknown, fallback: string): string {
  * 受限文本匹配兼容常见实现；其他错误收敛为可操作的产品文案，不泄露 SDK 细节。
  */
 function walletFailureReason(cause: unknown): string {
+	if (cause instanceof WalletRequestTimeoutError) return cause.message;
 	const code = errorCode(cause);
 	const message = errorMessage(cause, "").toLocaleLowerCase();
 	if (

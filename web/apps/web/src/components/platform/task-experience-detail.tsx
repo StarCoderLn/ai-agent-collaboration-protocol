@@ -142,6 +142,7 @@ type TaskDisplay = Readonly<{
 }>;
 
 type EventSyncMode = "connecting" | "live" | "polling";
+const ACTION_REFRESH_TIMEOUT_MS = 10_000;
 
 export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 	const { locale, t } = useLocale();
@@ -149,6 +150,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 	const [data, setData] = useState<LoadedTask | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const [escrowError, setEscrowError] = useState<string | null>(null);
 	const [busy, setBusy] = useState<string | null>(null);
 	const [events, setEvents] = useState<readonly TaskEventData[]>([]);
 	const [eventSyncMode, setEventSyncMode] =
@@ -243,6 +245,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 		setLoading(true);
 		setData(null);
 		setError(null);
+		setEscrowError(null);
 		setEvents([]);
 		setDisputeId(null);
 		setDispute(null);
@@ -320,15 +323,35 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 	}, [currentFlowStage, hasTaskData, taskId]);
 
 	async function run(label: string, action: () => Promise<unknown>) {
+		const escrowAction = isEscrowAction(label);
 		setBusy(label);
-		setError(null);
+		if (escrowAction) setEscrowError(null);
+		else setError(null);
+		let succeeded = false;
 		try {
 			await action();
-			await refresh();
+			succeeded = true;
 		} catch (caught) {
-			setError(messageOf(caught, t));
+			const message = messageOf(caught, t);
+			// 资金错误必须出现在用户刚刚点击的托管卡片内，不能只显示在长页面顶部。
+			if (escrowAction) setEscrowError(message);
+			else setError(message);
 		} finally {
 			setBusy(null);
+		}
+		if (!succeeded) return;
+
+		// 动作结果刷新只是展示同步，不能继续占用操作按钮。服务端暂时无响应时主动
+		// 中止本次补拉，后续 SSE 和 5 秒轮询仍会同步权威状态。
+		const controller = new AbortController();
+		const timeoutId = window.setTimeout(
+			() => controller.abort(),
+			ACTION_REFRESH_TIMEOUT_MS,
+		);
+		try {
+			await refresh(controller.signal);
+		} finally {
+			window.clearTimeout(timeoutId);
 		}
 	}
 
@@ -456,7 +479,15 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 									{/* 高风险资金操作必须排在需求与验收信息之后，确保发布者先复核任务内容再托管。 */}
 									<TaskOverview task={task} />
 									{currentFlowStage === 0 && (
-										<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
+										<CurrentAction
+											task={task}
+											data={data}
+											wallet={wallet}
+											busy={busy !== null}
+											run={run}
+											dispute={dispute}
+											escrowError={escrowError}
+										/>
 									)}
 								</div>
 								<aside className="space-y-4 xl:sticky xl:top-28">
@@ -479,7 +510,15 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 								    回看历史匹配结果时，关系图已经完整表达结果，不再堆叠失效操作。 */}
 								{currentFlowStage === 1 && (
 									<div className="mx-auto grid max-w-7xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-										<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
+										<CurrentAction
+											task={task}
+											data={data}
+											wallet={wallet}
+											busy={busy !== null}
+											run={run}
+											dispute={dispute}
+											escrowError={escrowError}
+										/>
 										<aside className="xl:sticky xl:top-28">
 											<AssignmentCard assignment={data.assignment} candidates={data.candidates} currency={task.currency} />
 										</aside>
@@ -492,7 +531,15 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 							<div className="mx-auto grid max-w-7xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
 								<div className="space-y-5">
 									{currentFlowStage === 2 ? (
-										<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
+										<CurrentAction
+											task={task}
+											data={data}
+											wallet={wallet}
+											busy={busy !== null}
+											run={run}
+											dispute={dispute}
+											escrowError={escrowError}
+										/>
 									) : (
 										<ExecutionRecordPanel status={data.execution} />
 									)}
@@ -505,7 +552,15 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 						{selectedFlowStage === 3 && (
 							<div className="space-y-5">
 								{currentFlowStage === 3 && (
-									<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
+									<CurrentAction
+										task={task}
+										data={data}
+										wallet={wallet}
+										busy={busy !== null}
+										run={run}
+										dispute={dispute}
+										escrowError={escrowError}
+									/>
 								)}
 								{data.results.length > 0 ? (
 									<div className="mx-auto max-w-7xl">
@@ -520,7 +575,15 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 						{selectedFlowStage === 4 && (
 							<div className="mx-auto grid max-w-7xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
 								<div className="space-y-5">
-									<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
+									<CurrentAction
+										task={task}
+										data={data}
+										wallet={wallet}
+										busy={busy !== null}
+										run={run}
+										dispute={dispute}
+										escrowError={escrowError}
+									/>
 									<EventTimeline events={events} statusVersion={task.statusVersion} syncMode={eventSyncMode} />
 								</div>
 								<EscrowCard task={task} escrow={data.escrow} />
@@ -540,6 +603,7 @@ function CurrentAction({
 	busy,
 	run,
 	dispute,
+	escrowError,
 }: {
 	task: TaskDisplay;
 	data: LoadedTask;
@@ -547,6 +611,7 @@ function CurrentAction({
 	busy: boolean;
 	run: (label: string, action: () => Promise<unknown>) => Promise<void>;
 	dispute: TaskDispute | null;
+	escrowError: string | null;
 }) {
 	const { t } = useLocale();
 	if (task.status === "draft")
@@ -573,6 +638,7 @@ function CurrentAction({
 				wallet={wallet}
 				busy={busy}
 				run={run}
+				error={escrowError}
 			/>
 		);
 	if (task.status === "matching")
@@ -704,6 +770,7 @@ function EscrowAction({
 	wallet,
 	busy,
 	run,
+	error,
 }: {
 	task: TaskDisplay;
 	preview: TaskPreview | null;
@@ -711,6 +778,7 @@ function EscrowAction({
 	wallet: ReturnType<typeof useWalletSession>;
 	busy: boolean;
 	run: (label: string, action: () => Promise<unknown>) => Promise<void>;
+	error: string | null;
 }) {
 	const { t } = useLocale();
 	const [pendingSubmission, setPendingSubmission] =
@@ -812,6 +880,19 @@ function EscrowAction({
 			)}
 			tone="escrow"
 		>
+			{error !== null && (
+				<div
+					role="alert"
+					aria-label={t("托管操作未完成")}
+					className="mb-5 flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive-container p-4 text-destructive"
+				>
+					<AlertCircle className="mt-0.5 size-4 shrink-0" />
+					<div>
+						<p className="font-semibold text-sm">{t("托管操作未完成")}</p>
+						<p className="mt-1 text-sm leading-6">{error}</p>
+					</div>
+				</div>
+			)}
 			{preview !== null &&
 				preview.amountMinor !== null &&
 				preview.platformFeeMinor !== null &&
@@ -906,9 +987,11 @@ function EscrowAction({
 					) : (
 						<WalletCards className="size-4" />
 					)}
-					{failed
-						? t("重新开始托管")
-						: t("开始托管 {amount}", { amount: escrowAmount })}
+					{busy
+						? t("等待 MetaMask 返回结果")
+						: failed
+							? t("重新开始托管")
+							: t("开始托管 {amount}", { amount: escrowAmount })}
 				</Button>
 			)}
 		</Panel>
@@ -2610,6 +2693,9 @@ function messageOf(
 	return caught instanceof Error
 		? t("请选择有效的截止时间")
 		: t("操作未完成，请稍后重试");
+}
+function isEscrowAction(label: string): boolean {
+	return label === "escrow" || label === "resume-escrow-submission";
 }
 function key(operation: string): string {
 	return `${operation}:${crypto.randomUUID()}`;

@@ -28,6 +28,10 @@ import {
 	TaskApiRequestError,
 	type FormalWorkflow,
 } from "@/lib/api/tasks";
+import {
+	EscrowDepositFlowError,
+	startEscrowDeposit,
+} from "@/lib/wallet/escrow-deposit-flow";
 import TaskExperienceDetail from "./task-experience-detail";
 
 const walletMock = vi.hoisted(() => ({
@@ -69,6 +73,15 @@ vi.mock("@/lib/api/tasks", async (importOriginal) => {
 	};
 });
 
+vi.mock("@/lib/wallet/escrow-deposit-flow", async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import("@/lib/wallet/escrow-deposit-flow")>();
+	return {
+		...actual,
+		startEscrowDeposit: vi.fn(),
+	};
+});
+
 const taskId = "11111111-1111-4111-8111-111111111111";
 const agentId = "22222222-2222-4222-8222-222222222222";
 const categoryId = "40000000-0000-4000-8000-000000000001";
@@ -85,6 +98,7 @@ describe("formal task detail", () => {
 			subscribedHandlers = handlers;
 			return vi.fn();
 		});
+		vi.mocked(startEscrowDeposit).mockResolvedValue();
 		vi.mocked(getTaskWorkflow).mockRejectedValue(
 			new TaskApiRequestError(404, {
 				error_code: "WORKFLOW_NOT_FOUND",
@@ -462,6 +476,58 @@ describe("formal task detail", () => {
 		expect(
 			screen.getByRole("button", { name: "开始托管 128 USDC" }),
 		).toBeEnabled();
+	});
+
+	it("托管失败后恢复按钮并在资金操作旁显示原因", async () => {
+		await setTaskStatus("awaiting_escrow");
+		vi.mocked(getTaskEscrowStatus).mockResolvedValue({
+			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
+			status: "prepared",
+		});
+		vi.mocked(startEscrowDeposit).mockRejectedValue(
+			new EscrowDepositFlowError(
+				"wallet",
+				"MetaMask 没有返回交易结果，请先检查钱包后重试",
+				null,
+			),
+		);
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		const escrowButton = await screen.findByRole("button", {
+			name: "开始托管 128 USDC",
+		});
+		fireEvent.click(escrowButton);
+
+		expect(
+			await screen.findByRole("alert", {
+				name: "托管操作未完成",
+			}),
+		).toHaveTextContent("MetaMask 没有返回交易结果");
+		expect(escrowButton).toBeEnabled();
+		expect(screen.queryByText("重试")).not.toBeInTheDocument();
+	});
+
+	it("托管交易已提交后即使状态补拉卡住也不会继续锁住按钮", async () => {
+		await setTaskStatus("awaiting_escrow");
+		vi.mocked(getTaskEscrowStatus).mockResolvedValue({
+			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
+			status: "prepared",
+		});
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		const escrowButton = await screen.findByRole("button", {
+			name: "开始托管 128 USDC",
+		});
+		// 初始页面完成后再让补拉永久等待，精确复现“动作成功但刷新不返回”的路径。
+		vi.mocked(listOwnedTasks).mockImplementation(
+			() => new Promise<never>(() => undefined),
+		);
+		fireEvent.click(escrowButton);
+
+		await waitFor(() => expect(startEscrowDeposit).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(escrowButton).toBeEnabled());
 	});
 
 	it("shows the complete candidate comparison fields from the frozen matching record", async () => {
