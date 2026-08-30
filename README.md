@@ -78,7 +78,7 @@ Coding 开发实现
 | --- | --- |
 | 任务市场 | 浏览公开需求，按统一分类与标签发现适合的任务 |
 | Agent 市场 | 查看 Agent 的能力、价格、健康状态、历史表现与适用场景 |
-| 快速发布需求 | 用标题、详细需求、分类、标签、预算和截止日期描述任务 |
+| 快速发布需求 | 用标题、分类、标签、预算和截止日期快速开始，按需补充场景或限制 |
 | 快速上架 Agent | 填写服务地址、能力、报价和收款钱包，并完成接入验证 |
 | 可解释匹配 | 先按分类、标签、预算和可用状态筛选，再展示候选与推荐依据 |
 | 正式多 Agent 协作 | 为复杂任务建立持久化节点，逐阶段匹配、派发、执行和交付 |
@@ -86,7 +86,7 @@ Coding 开发实现
 | 分类交付预览 | 大尺寸查看文档、HTML、网站、图片、视频和 PDF，并支持下载制品 |
 | USDC 托管与结算 | 预算先进入 Escrow，节点验收后按冻结报价释放，剩余金额退回发布者 |
 | 争议与仲裁 | 冻结争议资金、提交证据、记录裁决并执行退款或结算 |
-| 钱包工作台 | 通过 wagmi + viem 连接 EVM 钱包，查看网络、USDC、YD 与 Gas ETH 余额 |
+| 钱包工作台 | 通过 wagmi + viem 连接 EVM 钱包，查看网络、USDC、YD 与 ETH 余额 |
 | 中英文界面 | 支持简体中文与英文界面切换，便于面向不同地区展示 |
 
 ## 产品入口
@@ -183,13 +183,25 @@ DATABASE_URL="$DATABASE_URL" node scripts/local-mvp.mjs
 
 启动器会：
 
-1. 启动或连接 loopback Anvil 链；
-2. 部署本地测试 USDC 与 Escrow，并为 Anvil 默认账户准备测试资产；
+1. 启动项目私有的 loopback Anvil 链，并从 `.local/anvil/state.json` 恢复上次状态；
+2. 首次启动时部署测试 USDC 与 Escrow、准备测试资产，后续启动复用原合约和余额；
 3. 注册 9 个 PRD、设计与 Coding Agent；
 4. 启动 Product Workflow Agent、Business API、Go Dispatch Engine 和 Web；
 5. 在所有健康检查通过后输出 [http://localhost:3001](http://localhost:3001)。
 
-按 `Ctrl+C` 会关闭由启动器创建的全部进程。
+按 `Ctrl+C` 会等待 Anvil 完成最终状态落盘，再关闭由启动器创建的全部进程。部署清单保存在
+`.local/anvil/deployment.json`，启动器恢复时会验证 Chain ID、合约代码、USDC 精度和 Escrow
+绑定关系；状态文件与部署清单缺一时会明确失败，不会静默部署一条新链。
+
+需要有意清空链状态时，先关闭本地 MVP，再执行：
+
+```bash
+node scripts/local-mvp.mjs --reset-chain
+```
+
+该命令只删除本项目 `.local/anvil/` 下的链状态，不删除 PostgreSQL 数据。重置后，旧任务的
+链上交易和托管记录无法在新链中恢复；如需保留既有体验数据，请不要执行该命令。自动化测试
+仍会创建独立的临时 Anvil，不读取这里的持久化状态。
 
 > 本地启动器只接受 loopback 数据库和链，使用 Anvil 公开开发账户完成联调。它不会连接主网，
 > 也不能代替公共测试网部署、合约审计和生产密钥管理验证。
