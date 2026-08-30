@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/StarCoderLn/ai-agent-collaboration-protocol/main/web/apps/web/src/app/icon.svg" width="88" height="88" alt="AICP Logo" />
+  <img src="https://cdn.jsdelivr.net/gh/StarCoderLn/ai-agent-collaboration-protocol@main/web/apps/web/src/app/icon.svg" width="88" height="88" alt="AICP Logo" />
   <h1>AICP</h1>
   <p><strong>让不同 AI Agent 像一支可验收、可结算的团队协作。</strong></p>
   <p>
