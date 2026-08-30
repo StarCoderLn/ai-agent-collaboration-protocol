@@ -10,6 +10,7 @@ import {
 	Bot,
 	Check,
 	CheckCircle2,
+	ChevronDown,
 	ChevronRight,
 	Clock3,
 	FileCheck2,
@@ -417,8 +418,8 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 									<TaskOverview task={task} />
 								</div>
 								<aside className="space-y-4 xl:sticky xl:top-28">
-									<EscrowCard task={task} escrow={data.escrow} />
 									<TaskConfiguration task={task} />
+									<EscrowCard task={task} escrow={data.escrow} />
 								</aside>
 							</div>
 						) : (
@@ -452,14 +453,15 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 						{selectedFlowStage === 0 && (
 							<div className="mx-auto grid max-w-7xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
 								<div className="space-y-5">
+									{/* 高风险资金操作必须排在需求与验收信息之后，确保发布者先复核任务内容再托管。 */}
+									<TaskOverview task={task} />
 									{currentFlowStage === 0 && (
 										<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
 									)}
-									<TaskOverview task={task} />
 								</div>
 								<aside className="space-y-4 xl:sticky xl:top-28">
-									<EscrowCard task={task} escrow={data.escrow} />
 									<TaskConfiguration task={task} />
+									<EscrowCard task={task} escrow={data.escrow} />
 								</aside>
 							</div>
 						)}
@@ -792,15 +794,21 @@ function EscrowAction({
 			</Panel>
 		);
 	const failed = escrow?.status === "failed";
+	const escrowAmount =
+		task.budgetMinor === null
+			? t("任务预算")
+			: formatMinorAmount(task.budgetMinor, task.currency);
 	return (
 		<Panel
 			icon={LockKeyhole}
-			eyebrow={t("下一步 · 钱包托管")}
+			eyebrow={t("下一步 · 资金托管")}
 			title={
-				failed ? t("上次交易未完成，可以安全重试") : t("在钱包中完成两次确认")
+				failed
+					? t("托管未完成，可以安全重试")
+					: t("将 {amount} 存入托管", { amount: escrowAmount })
 			}
 			description={t(
-				"MetaMask 将依次请求两次确认：先精确授权本任务的 USDC，再存入托管合约。授权不会转走资金，只有第二笔交易成功后才算完成托管。",
+				"钱包可能会先请求 USDC 授权（不会扣款），再请求将资金存入托管；如果授权额度已满足，将直接进入存入操作。链上操作会产生网络 Gas 费。",
 			)}
 			tone="escrow"
 		>
@@ -812,44 +820,54 @@ function EscrowAction({
 				preview.minimumPlatformFeeMinor !== null && (
 					<section
 						className="mb-5 rounded-xl border border-tertiary/20 bg-background/35 p-4"
-						aria-label={t("托管与费用明细")}
+						aria-label={t("托管金额确认")}
 					>
-						<h3 className="mb-3 font-semibold text-sm">
-							{t("托管与费用明细")}
-						</h3>
-						<dl className="grid gap-3 sm:grid-cols-2">
-							<InfoRow
-								label={t("本次托管预算")}
-								value={formatMinorAmount(preview.amountMinor, task.currency)}
-							/>
-							<InfoRow label={t("预算外平台费用")} value="0 USDC" />
-							<InfoRow
-								label={t("预计平台服务费")}
-								value={formatMinorAmount(
-									preview.platformFeeMinor,
-									task.currency,
-								)}
-							/>
-							<InfoRow
-								label={t("Agent 预计最高实收")}
-								value={formatMinorAmount(
-									preview.agentReceivesMinor,
-									task.currency,
-								)}
-							/>
-						</dl>
+						<div className="flex items-center justify-between gap-4 rounded-lg bg-tertiary-container/45 px-4 py-3">
+							<p className="text-muted-foreground text-sm">{t("本次需托管")}</p>
+							<p className="shrink-0 font-semibold text-base">
+								{formatMinorAmount(preview.amountMinor, task.currency)}
+							</p>
+						</div>
 						<p className="mt-3 text-muted-foreground text-xs leading-5">
 							{t(
-								"平台服务费按当前 {rate} 费率计算，最低 {minimum}；该费用已包含在成交金额中，并在成功结算时从 Agent 收入中扣除。",
-								{
-									rate: formatBasisPoints(preview.feeBasisPoints),
-									minimum: formatMinorAmount(
-										preview.minimumPlatformFeeMinor,
-										task.currency,
-									),
-								},
+								"任务完成并通过验收前，托管资金不会支付给 Agent。",
 							)}
 						</p>
+						<details className="group mt-3 border-t pt-3">
+							<summary className="flex cursor-pointer list-none items-center justify-between gap-3 font-medium text-sm marker:hidden">
+								{t("查看费用分配")}
+								<ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+							</summary>
+							<dl className="mt-3 space-y-2 text-sm">
+								<InfoRow
+									label={t("任务完成后最多支付给 Agent")}
+									value={formatMinorAmount(
+										preview.agentReceivesMinor,
+										task.currency,
+									)}
+								/>
+								<InfoRow
+									label={t("平台服务费（{rate}）", {
+										rate: formatBasisPoints(preview.feeBasisPoints),
+									})}
+									value={formatMinorAmount(
+										preview.platformFeeMinor,
+										task.currency,
+									)}
+								/>
+							</dl>
+							<p className="mt-3 text-muted-foreground text-xs leading-5">
+								{t(
+									"平台服务费最低 {minimum}，仅在任务成功结算时从 Agent 收入中扣除；发布者不会在托管金额外被额外收费。",
+									{
+										minimum: formatMinorAmount(
+											preview.minimumPlatformFeeMinor,
+											task.currency,
+										),
+									},
+								)}
+							</p>
+						</details>
 					</section>
 				)}
 			{wallet.status !== "connected" ? (
@@ -889,13 +907,8 @@ function EscrowAction({
 						<WalletCards className="size-4" />
 					)}
 					{failed
-						? t("重新授权并托管")
-						: t("授权并托管 {amount}", {
-								amount:
-									task.budgetMinor === null
-										? t("任务预算")
-										: formatMinorAmount(task.budgetMinor, task.currency),
-							})}
+						? t("重新开始托管")
+						: t("开始托管 {amount}", { amount: escrowAmount })}
 				</Button>
 			)}
 		</Panel>
@@ -1905,13 +1918,13 @@ function TaskOverview({ task }: { task: TaskDisplay }) {
 	const { t } = useLocale();
 	return (
 		<section className="rounded-xl border bg-card p-5">
-			<h2 className="font-semibold text-lg">{t("任务说明")}</h2>
+			<h2 className="font-semibold text-base">{t("任务说明")}</h2>
 			<p className="mt-3 whitespace-pre-line text-muted-foreground text-sm leading-7">
 				{task.description || t("尚未填写")}
 			</p>
 			{task.acceptanceCriteria && (
 				<div className="mt-5 border-t pt-4">
-					<h3 className="font-semibold text-sm">{t("验收标准")}</h3>
+					<h3 className="font-semibold text-base">{t("验收标准")}</h3>
 					<p className="mt-2 whitespace-pre-line text-muted-foreground text-sm leading-6">
 						{task.acceptanceCriteria}
 					</p>

@@ -573,7 +573,6 @@ export const EN_MESSAGES = {
 	平台服务费: "Platform service fee",
 	"成功结算时从 Agent 收入中扣除":
 		"Deducted from Agent earnings after successful settlement",
-	预算外平台费用: "Platform fee beyond budget",
 	提交时由服务端计算并冻结规则版本:
 		"Calculated by the server with the rule version frozen on submission",
 	"发布时自动计算，并在付款前展示":
@@ -1175,20 +1174,22 @@ export const EN_MESSAGES = {
 	"MetaMask 已返回交易 {hash}。继续操作只会补登记同一个交易哈希，不会再次调用钱包或发送资金。":
 		"MetaMask returned transaction {hash}. Continuing only registers the same hash; it will not call the wallet or send funds again.",
 	继续登记这笔交易: "Continue transaction registration",
-	"下一步 · 钱包托管": "Next · wallet escrow",
-	"上次交易未完成，可以安全重试":
-		"The previous transaction did not complete; retry is safe",
-	在钱包中完成两次确认: "Complete two wallet confirmations",
-	"MetaMask 将依次请求两次确认：先精确授权本任务的 USDC，再存入托管合约。授权不会转走资金，只有第二笔交易成功后才算完成托管。":
-		"MetaMask will ask for two confirmations in sequence: first approve the exact USDC amount for this task, then deposit it into escrow. Approval does not move funds; escrow is complete only after the second transaction succeeds.",
-	托管与费用明细: "Escrow and fee breakdown",
-	本次托管预算: "Budget escrowed now",
-	预计平台服务费: "Estimated platform service fee",
-	"Agent 预计最高实收": "Estimated maximum Agent proceeds",
-	"平台服务费按当前 {rate} 费率计算，最低 {minimum}；该费用已包含在成交金额中，并在成功结算时从 Agent 收入中扣除。":
-		"The platform service fee uses the current {rate} rate with a {minimum} minimum. It is included in the agreed amount and deducted from Agent earnings upon successful settlement.",
-	重新授权并托管: "Approve and escrow again",
-	"授权并托管 {amount}": "Approve and escrow {amount}",
+	"下一步 · 资金托管": "Next · fund escrow",
+	"托管未完成，可以安全重试": "Escrow did not complete; retry is safe",
+	"将 {amount} 存入托管": "Deposit {amount} into escrow",
+	"钱包可能会先请求 USDC 授权（不会扣款），再请求将资金存入托管；如果授权额度已满足，将直接进入存入操作。链上操作会产生网络 Gas 费。":
+		"Your wallet may first request USDC approval (no funds are charged), followed by the escrow deposit. If the required allowance already exists, it proceeds directly to the deposit. Onchain operations incur network gas fees.",
+	托管金额确认: "Confirm escrow amount",
+	本次需托管: "Amount to escrow",
+	"任务完成并通过验收前，托管资金不会支付给 Agent。":
+		"Escrowed funds are not paid to the Agent until the task is completed and accepted.",
+	查看费用分配: "View fee allocation",
+	"任务完成后最多支付给 Agent": "Maximum paid to Agent after completion",
+	"平台服务费（{rate}）": "Platform service fee ({rate})",
+	"平台服务费最低 {minimum}，仅在任务成功结算时从 Agent 收入中扣除；发布者不会在托管金额外被额外收费。":
+		"The platform service fee has a {minimum} minimum and is deducted from Agent earnings only after successful settlement. The publisher is not charged beyond the escrow amount.",
+	重新开始托管: "Restart escrow",
+	"开始托管 {amount}": "Start escrow for {amount}",
 	任务预算: "Task budget",
 	正在生成候选: "Generating candidates",
 	匹配记录尚未就绪: "Match record not ready",

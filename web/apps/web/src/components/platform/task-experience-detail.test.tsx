@@ -419,15 +419,15 @@ describe("formal task detail", () => {
 		render(<TaskExperienceDetail taskId={taskId} />);
 
 		expect(
-			await screen.findByText("上次交易未完成，可以安全重试"),
+			await screen.findByText("托管未完成，可以安全重试"),
 		).toBeInTheDocument();
 		expect(
-			screen.getByRole("button", { name: "重新授权并托管" }),
+			screen.getByRole("button", { name: "重新开始托管" }),
 		).toBeEnabled();
 		expect(screen.getByText("钱包拒绝了上一笔交易")).toBeInTheDocument();
 	});
 
-	it("托管前明确展示预算包含平台费且发布者不会被额外收费", async () => {
+	it("先展示任务要求，再用简明摘要确认托管金额并按需展开费用分配", async () => {
 		await setTaskStatus("awaiting_escrow");
 		vi.mocked(getTaskEscrowStatus).mockResolvedValue({
 			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
@@ -436,13 +436,32 @@ describe("formal task detail", () => {
 
 		render(<TaskExperienceDetail taskId={taskId} />);
 
-		expect(await screen.findByText("托管与费用明细")).toBeInTheDocument();
-		expect(screen.getByText("本次托管预算")).toBeInTheDocument();
-		expect(screen.getByText("预算外平台费用")).toBeInTheDocument();
-		expect(screen.getByText("0 USDC")).toBeInTheDocument();
-		expect(screen.getByText("预计平台服务费")).toBeInTheDocument();
+		const escrowHeading = await screen.findByText("将 128 USDC 存入托管");
+		const taskOverviewHeading = screen.getByText("任务说明");
+		// 资金操作必须在任务要求之后出现，避免发布者尚未复核需求就先看到付款动作。
+		expect(
+			taskOverviewHeading.compareDocumentPosition(escrowHeading) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).not.toBe(0);
+
+		expect(screen.getByLabelText("托管金额确认")).toBeInTheDocument();
+		expect(screen.getByText("本次需托管")).toBeInTheDocument();
+		expect(screen.queryByText("额外收取")).not.toBeInTheDocument();
+		expect(
+			screen.getByText("任务完成并通过验收前，托管资金不会支付给 Agent。"),
+		).toBeInTheDocument();
+
+		const feeDetails = screen.getByText("查看费用分配").closest("details");
+		expect(feeDetails).not.toHaveAttribute("open");
+		fireEvent.click(screen.getByText("查看费用分配"));
+		expect(feeDetails).toHaveAttribute("open");
+		expect(screen.getByText("任务完成后最多支付给 Agent")).toBeInTheDocument();
+		expect(screen.getByText("平台服务费（0.4%）")).toBeInTheDocument();
 		expect(screen.getByText("0.512 USDC")).toBeInTheDocument();
-		expect(screen.getByText(/当前 0.4% 费率/)).toBeInTheDocument();
+		expect(screen.getByText(/仅在任务成功结算时/)).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "开始托管 128 USDC" }),
+		).toBeEnabled();
 	});
 
 	it("shows the complete candidate comparison fields from the frozen matching record", async () => {

@@ -99,7 +99,7 @@
 以下决策仍未拍板，已在对应 feature 的 requirements.md「开放问题」中标注，design.md 按当前 PRD 推荐方向设计但预留调整点。产品/合约/法务确认后，用 `/yd:prd --change {N} 说明变更` 更新：
 
 - ~~**链上交易确认条件（PRD §14 P0-2）**~~ `[2026-08-24 已确认]`：确认数是后端可配置安全参数，不在首页展示；本地/测试链默认 2 次，Ethereum 主网开发默认 6 次，生产部署必须显式配置并在高金额场景提高阈值，见 [[6.escrow-sync-and-wallet]] v5。
-- ~~平台服务费费率与承担方（PRD §14 P0-3）~~ `[2026-08-28 已确认]`：名义费率 0.4%，最低 0.05 USDC，由 Agent 提供者成交收入承担；任务预算最低 1 USDC，发布者托管额已包含服务费且预算外平台费用为 0。见 [[4.task-creation-and-preview]] `CalculatePlatformFee()` 与 [[5.escrow-contract-ethereum]] `release()` 的转账拆分。
+- ~~平台服务费费率与承担方（PRD §14 P0-3）~~ `[2026-08-28 已确认]`：名义费率 0.4%，最低 0.05 USDC，由 Agent 提供者成交收入承担；任务预算最低 1 USDC，发布者托管额已包含服务费且是最高业务支出。见 [[4.task-creation-and-preview]] `CalculatePlatformFee()` 与 [[5.escrow-contract-ethereum]] `release()` 的转账拆分。
 - 接单后取消/退款/返工/超时赔付细则（PRD §14 P0-4）
 - 仲裁执行方、是否支持部分支付/申诉（PRD §14 P0-5）
 - ~~新 Agent 沙箱评估 vs 低风险真实任务 vs 纯人工审核（PRD §14 P0-7）~~ `[2026-08-20 已确认]`：采用沙箱调用 3 次 + 清单式人工判定，见 [[15.agent-sandbox-admission]]；沙箱调用成本 `[2026-08-20 已确认]` 由平台承担，不向 Agent 提供者收费；分类专属测试任务内容仍待产品/运营补充（见该 feature 的开放问题）

@@ -120,8 +120,7 @@ describe("New task assignment mode", () => {
 			"placeholder",
 			"例如：50",
 		);
-		expect(screen.getByText("预算外平台费用")).toBeInTheDocument();
-		expect(screen.getByText("0 USDC")).toBeInTheDocument();
+		expect(screen.queryByText("预算外平台费用")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "截止时间" })).toHaveTextContent(
 			"请选择截止日期",
 		);

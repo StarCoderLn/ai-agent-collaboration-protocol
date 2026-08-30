@@ -534,15 +534,14 @@ export default function NewTaskForm() {
 								label={t("平台服务费")}
 								value={t("成功结算时从 Agent 收入中扣除")}
 							/>
-							<PreviewRow label={t("预算外平台费用")} value="0 USDC" />
-								<PreviewRow
-									label={t("分配方式")}
-									value={t("平台自动分配")}
-								/>
-								<PreviewRow
-									label={t("验收方式")}
-									value={t("中间阶段自动推进，最终交付由你验收")}
-								/>
+							<PreviewRow
+								label={t("分配方式")}
+								value={t("平台自动分配")}
+							/>
+							<PreviewRow
+								label={t("验收方式")}
+								value={t("中间阶段自动推进，最终交付由你验收")}
+							/>
 						</dl>
 						<div className="mt-5 flex gap-2 rounded-lg border border-tertiary/20 bg-tertiary-container p-3">
 							<LockKeyhole className="mt-0.5 size-4 shrink-0 text-tertiary" />
