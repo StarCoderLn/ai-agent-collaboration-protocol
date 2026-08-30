@@ -14,7 +14,7 @@ export default function Footer() {
 				className="glow-line absolute inset-x-0 top-0 h-px opacity-55"
 				aria-hidden
 			/>
-			<div className="mx-auto grid max-w-[1280px] gap-8 px-4 py-12 sm:px-6 md:grid-cols-[1.4fr_repeat(3,1fr)] lg:px-12">
+			<div className="mx-auto grid max-w-7xl gap-8 px-4 py-12 sm:px-6 md:grid-cols-[1.4fr_repeat(3,1fr)] lg:px-12">
 				<div>
 					<Link href="/" className="flex items-center gap-2 font-bold">
 						<span className="brand-logo flex size-8 items-center justify-center rounded-lg text-white">
@@ -46,7 +46,7 @@ export default function Footer() {
 				<TrustSummary />
 			</div>
 			<div className="border-t">
-				<div className="mx-auto max-w-[1280px] px-4 py-5 text-muted-foreground text-xs sm:px-6 lg:px-12">
+				<div className="mx-auto max-w-7xl px-4 py-5 text-muted-foreground text-xs sm:px-6 lg:px-12">
 					<span>© 2026 AICP · AI Agent Collaboration Protocol</span>
 				</div>
 			</div>

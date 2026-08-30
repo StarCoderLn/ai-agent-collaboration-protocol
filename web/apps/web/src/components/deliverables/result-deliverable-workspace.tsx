@@ -88,7 +88,7 @@ function NativeDeliverableWorkspace({
 	return (
 		<div
 			ref={shellRef}
-			className="fullscreen:overflow-auto overflow-hidden rounded-2xl border border-primary/20 bg-background shadow-[0_22px_70px_rgb(0_0_0_/_18%)]"
+			className="fullscreen:overflow-auto overflow-hidden rounded-2xl border border-primary/20 bg-background shadow-[0_22px_70px_rgb(0_0_0/18%)]"
 		>
 			<header className="flex flex-wrap items-center justify-between gap-4 border-primary/15 border-b bg-card/95 px-4 py-4 sm:px-5">
 				<div className="min-w-0">
@@ -148,7 +148,7 @@ function NativePreviewBody({
 		return (
 			<iframe
 				title={t("{title} 网站交互预览", { title })}
-				className="h-[72vh] min-h-[620px] w-full rounded-xl border bg-white"
+				className="h-[72vh] min-h-155 w-full rounded-xl border bg-white"
 				sandbox="allow-scripts"
 				referrerPolicy="no-referrer"
 				srcDoc={sandboxInlineHtml(preview.content)}
@@ -192,7 +192,7 @@ function NativePreviewBody({
 		return (
 			<iframe
 				title={t("{title} PDF 预览", { title })}
-				className="h-[76vh] min-h-[680px] w-full rounded-xl border bg-white"
+				className="h-[76vh] min-h-170 w-full rounded-xl border bg-white"
 				referrerPolicy="no-referrer"
 				sandbox=""
 				src={preview.source}

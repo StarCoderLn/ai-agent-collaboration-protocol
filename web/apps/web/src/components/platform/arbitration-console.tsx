@@ -198,7 +198,7 @@ export default function ArbitrationConsole({
 	return (
 		<main className="min-h-[70vh] bg-accent">
 			<section className="border-b bg-card">
-				<div className="mx-auto max-w-[1180px] px-4 py-8 sm:px-6 lg:px-10">
+				<div className="mx-auto max-w-295 px-4 py-8 sm:px-6 lg:px-10">
 					<Link
 						href="/workspace/disputes"
 						className="inline-flex items-center gap-1.5 text-muted-foreground text-sm hover:text-foreground"
@@ -225,7 +225,7 @@ export default function ArbitrationConsole({
 					</div>
 				</div>
 			</section>
-			<div className="mx-auto grid max-w-[1180px] gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[1fr_420px] lg:px-10">
+			<div className="mx-auto grid max-w-295 gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[1fr_420px] lg:px-10">
 				<section className="space-y-5">
 					<article className="rounded-xl border bg-card p-5">
 						<p className="font-semibold">{t("争议事实")}</p>

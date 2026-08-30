@@ -698,7 +698,7 @@ function IntegrationExampleDialog({ onClose }: { onClose(): void }) {
 	}
 
 	return (
-		<div className="fixed inset-0 z-[80] flex items-end justify-center bg-background/75 p-0 backdrop-blur-md sm:items-center sm:p-6">
+		<div className="fixed inset-0 z-80 flex items-end justify-center bg-background/75 p-0 backdrop-blur-md sm:items-center sm:p-6">
 			<section
 				role="dialog"
 				aria-modal="true"

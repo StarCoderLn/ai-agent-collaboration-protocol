@@ -28,7 +28,7 @@ describe("FormalWorkflowView", () => {
 		expect(screen.getByTestId(`formal-stage-${prdNodeId}`)).toBeInTheDocument();
 		expect(screen.getByTestId(`formal-stage-${designNodeId}`)).toBeInTheDocument();
 		expect(screen.getByTestId(`formal-stage-${codingNodeId}`)).toBeInTheDocument();
-		expect(screen.getByTestId("formal-workflow-root")).toHaveClass("h-[164px]");
+		expect(screen.getByTestId("formal-workflow-root")).toHaveClass("h-41");
 		expect(screen.getAllByText("PRD Specialist").length).toBeGreaterThan(0);
 		expect(screen.getAllByText("Design Candidate").length).toBeGreaterThan(0);
 		expect(screen.getAllByText("3").length).toBeGreaterThan(0);

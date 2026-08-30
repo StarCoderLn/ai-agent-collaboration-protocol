@@ -261,7 +261,7 @@ export default function NewTaskForm() {
 		<main>
 			<section className="page-hero border-b">
 				<div className="scan-beam" aria-hidden />
-				<div className="relative mx-auto max-w-[1280px] px-4 py-9 sm:px-6 lg:px-12">
+				<div className="relative mx-auto max-w-7xl px-4 py-9 sm:px-6 lg:px-12">
 					<div>
 						<p className="cyber-kicker font-semibold text-secondary text-xs">
 							POST A REQUEST · FIND YOUR AGENT
@@ -292,7 +292,7 @@ export default function NewTaskForm() {
 			</section>
 			<form
 				onSubmit={handleSubmit}
-				className="mx-auto grid max-w-[1280px] items-start gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-12"
+				className="mx-auto grid max-w-7xl items-start gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-12"
 			>
 				<div className="space-y-5">
 					<FormSection

@@ -250,7 +250,7 @@ export default function FormalWorkflowView({
 function WorkflowRootNode({ data }: NodeProps<RootGraphNode>) {
 	const { t } = useLocale();
 	return (
-		<article data-testid="formal-workflow-root" className="allocation-task-node relative h-[164px] w-[238px] rounded-2xl border p-4">
+		<article data-testid="formal-workflow-root" className="allocation-task-node relative h-41 w-59.5 rounded-2xl border p-4">
 			<div className="flex items-start justify-between gap-3">
 				<span className="flex size-9 items-center justify-center rounded-xl bg-secondary-container text-secondary"><Target className="size-4" /></span>
 				<span className="rounded-full border border-secondary/25 bg-secondary-container/30 px-2.5 py-1 text-[10px] text-secondary">{data.status}</span>
@@ -270,7 +270,7 @@ function WorkflowStageNode({ data }: NodeProps<StageGraphNode>) {
 		<button
 			type="button"
 			onClick={() => data.onSelect(node.id)}
-			className={`relative h-[164px] w-[246px] cursor-pointer rounded-2xl border p-4 text-left transition ${data.selected ? "border-primary bg-primary-container/45 shadow-[0_0_30px_var(--brand-glow)]" : "border-primary/20 bg-card/95 hover:border-primary/50"}`}
+			className={`relative h-41 w-61.5 cursor-pointer rounded-2xl border p-4 text-left transition ${data.selected ? "border-primary bg-primary-container/45 shadow-[0_0_30px_var(--brand-glow)]" : "border-primary/20 bg-card/95 hover:border-primary/50"}`}
 			data-testid={`formal-stage-${node.id}`}
 		>
 			<Handle type="target" position={Position.Left} isConnectable={false} className="allocation-flow-handle" />
@@ -295,7 +295,7 @@ function WorkflowStageNode({ data }: NodeProps<StageGraphNode>) {
 
 function WorkflowAgentNode({ data }: NodeProps<AgentGraphNode>) {
 	return (
-		<article className={`relative h-[88px] w-[218px] rounded-xl border px-3.5 py-3 ${data.selected ? "border-secondary bg-secondary-container/35 shadow-[0_0_24px_var(--brand-glow)]" : "border-border bg-card/85 opacity-80"}`}>
+		<article className={`relative h-22 w-54.5 rounded-xl border px-3.5 py-3 ${data.selected ? "border-secondary bg-secondary-container/35 shadow-[0_0_24px_var(--brand-glow)]" : "border-border bg-card/85 opacity-80"}`}>
 			<Handle type="target" position={Position.Top} isConnectable={false} className="allocation-flow-handle" />
 			<div className="flex items-center gap-3">
 				<span className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${data.selected ? "bg-secondary text-secondary-foreground" : "bg-accent text-muted-foreground"}`}><Bot className="size-4" /></span>
@@ -413,7 +413,7 @@ function WorkflowNodeWorkspace({
 	}, [node.id, node.status, selectedArtifact?.id, taskId, viewMode]);
 
 	return (
-		<section className="overflow-hidden rounded-2xl border border-primary/20 bg-card shadow-[0_20px_70px_rgb(0_0_0_/_16%)]">
+		<section className="overflow-hidden rounded-2xl border border-primary/20 bg-card shadow-[0_20px_70px_rgb(0_0_0/16%)]">
 			<header className="flex flex-wrap items-start justify-between gap-5 border-b border-primary/15 bg-accent/55 px-5 py-5 sm:px-6">
 				<div>
 					<p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">{workflowWorkspaceEyebrow(viewMode, t)}</p>
@@ -445,7 +445,7 @@ function WorkflowNodeWorkspace({
 			)}
 
 			{viewMode === "review" && (artifacts.length === 0 ? (
-				<div className={`flex items-center justify-center px-6 py-12 text-center ${producingArtifact ? "min-h-[320px]" : "min-h-[420px]"}`}>
+				<div className={`flex items-center justify-center px-6 py-12 text-center ${producingArtifact ? "min-h-80" : "min-h-105"}`}>
 					<div className="max-w-lg">
 						{producingArtifact ? (
 							<Loader2 className="mx-auto size-10 animate-spin text-primary" />
@@ -528,7 +528,7 @@ function WorkflowNodeWorkspace({
 function WorkflowAllocationSummary({ node }: { node: FormalWorkflowNode }) {
 	const { t } = useLocale();
 	return (
-		<div className="flex min-h-[260px] items-center justify-center px-6 py-10 text-center">
+		<div className="flex min-h-65 items-center justify-center px-6 py-10 text-center">
 			<div className="max-w-lg">
 				<Bot className="mx-auto size-10 text-secondary" />
 				<h3 className="mt-4 font-semibold text-xl">
@@ -549,7 +549,7 @@ function WorkflowExecutionSummary({ node }: { node: FormalWorkflowNode }) {
 	const { t } = useLocale();
 	const completed = node.latestResultBatch !== null || ["awaiting_review", "accepted"].includes(node.status);
 	return (
-		<div className="flex min-h-[320px] items-center justify-center px-6 py-10 text-center">
+		<div className="flex min-h-80 items-center justify-center px-6 py-10 text-center">
 			<div className="w-full max-w-2xl">
 				{!completed && ["executing", "rework"].includes(node.status) ? (
 					<Loader2 className="mx-auto size-10 animate-spin text-primary" />
@@ -584,7 +584,7 @@ function WorkflowSettlementSummary({ node, currency }: { node: FormalWorkflowNod
 	const { t } = useLocale();
 	if (node.acceptance === null) {
 		return (
-			<div className="flex min-h-[300px] items-center justify-center px-6 py-10 text-center">
+			<div className="flex min-h-75 items-center justify-center px-6 py-10 text-center">
 				<div className="max-w-lg">
 					<WalletCards className="mx-auto size-10 text-muted-foreground" />
 					<h3 className="mt-4 font-semibold text-xl">{t("该阶段暂无结算记录")}</h3>
@@ -866,7 +866,7 @@ function Metric({ value, label }: { value: string; label: string }) {
 }
 
 function SummaryValue({ label, value }: { label: string; value: string }) {
-	return <div className="min-w-36 rounded-xl border border-primary/20 bg-primary-container/20 px-4 py-3 text-center shadow-[inset_0_1px_0_rgb(255_255_255_/_4%)]"><p className="font-medium text-[10px] text-primary/80">{label}</p><p className="mt-1 font-semibold text-base text-foreground">{value}</p></div>;
+	return <div className="min-w-36 rounded-xl border border-primary/20 bg-primary-container/20 px-4 py-3 text-center shadow-[inset_0_1px_0_rgb(255_255_255/4%)]"><p className="font-medium text-[10px] text-primary/80">{label}</p><p className="mt-1 font-semibold text-base text-foreground">{value}</p></div>;
 }
 
 /** 不同阶段使用具体动作描述，让用户无需理解内部 kind 也能判断 Agent 正在做什么。 */

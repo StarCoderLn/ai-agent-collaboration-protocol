@@ -82,7 +82,7 @@ export default function WorkspaceDashboard() {
 		<main className="min-h-[70vh]">
 			<section className="page-hero border-b">
 				<div className="scan-beam" aria-hidden />
-				<div className="relative mx-auto max-w-[1280px] px-4 py-9 sm:px-6 lg:px-12">
+				<div className="relative mx-auto max-w-7xl px-4 py-9 sm:px-6 lg:px-12">
 					<WorkspaceBackLink />
 					<div className="mt-5">
 						<p className="cyber-kicker font-medium text-secondary text-xs">
@@ -138,7 +138,7 @@ export default function WorkspaceDashboard() {
 			{/* “我的任务”快捷入口始终落到这块钱包归属视图；未登录时先完成连接，登录后显示真实任务。 */}
 			<div
 				id="my-tasks"
-				className="mx-auto max-w-[1280px] scroll-mt-24 px-4 py-8 sm:px-6 lg:px-12"
+				className="mx-auto max-w-7xl scroll-mt-24 px-4 py-8 sm:px-6 lg:px-12"
 			>
 				{wallet.status === "checking" || state.kind === "loading" ? (
 					<WorkspaceSkeleton />

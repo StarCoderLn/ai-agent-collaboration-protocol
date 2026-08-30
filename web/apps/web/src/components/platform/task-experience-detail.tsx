@@ -341,7 +341,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 	return (
 		<main className="min-h-[75vh] bg-accent">
 			<section className="border-b bg-card">
-				<div className="mx-auto max-w-[1280px] px-4 py-7 sm:px-6 lg:px-12">
+				<div className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-12">
 					<div className="flex flex-wrap items-start justify-between gap-5">
 						<div>
 							<Link
@@ -383,7 +383,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 				</div>
 			</section>
 			{/* 任务标题、阶段导航和阶段内容共用 1280px 内容轨道，避免上下模块左右边界跳动。 */}
-			<div className="mx-auto max-w-[1280px] px-4 py-8 sm:px-6 lg:px-12">
+			<div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-12">
 				{error && (
 					<div className="mb-6">
 						<ErrorNotice
@@ -412,7 +412,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 						className="task-stage-panel"
 					>
 						{selectedFlowStage === 0 ? (
-							<div className="mx-auto grid max-w-[1280px] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+							<div className="mx-auto grid max-w-7xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
 								<div className="space-y-5">
 									<TaskOverview task={task} />
 								</div>
@@ -450,7 +450,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 						className="task-stage-panel"
 					>
 						{selectedFlowStage === 0 && (
-							<div className="mx-auto grid max-w-[1280px] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+							<div className="mx-auto grid max-w-7xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
 								<div className="space-y-5">
 									{currentFlowStage === 0 && (
 										<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
@@ -476,7 +476,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 								{/* 只有任务仍处于匹配阶段时才展示可操作面板和本次派发状态。
 								    回看历史匹配结果时，关系图已经完整表达结果，不再堆叠失效操作。 */}
 								{currentFlowStage === 1 && (
-									<div className="mx-auto grid max-w-[1280px] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+									<div className="mx-auto grid max-w-7xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
 										<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
 										<aside className="xl:sticky xl:top-28">
 											<AssignmentCard assignment={data.assignment} candidates={data.candidates} currency={task.currency} />
@@ -487,7 +487,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 						)}
 
 						{selectedFlowStage === 2 && (
-							<div className="mx-auto grid max-w-[1280px] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+							<div className="mx-auto grid max-w-7xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
 								<div className="space-y-5">
 									{currentFlowStage === 2 ? (
 										<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
@@ -506,7 +506,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 									<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
 								)}
 								{data.results.length > 0 ? (
-									<div className="mx-auto max-w-[1280px]">
+									<div className="mx-auto max-w-7xl">
 										<ResultsHistory results={data.results} />
 									</div>
 								) : currentFlowStage !== 3 ? (
@@ -516,7 +516,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 						)}
 
 						{selectedFlowStage === 4 && (
-							<div className="mx-auto grid max-w-[1280px] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+							<div className="mx-auto grid max-w-7xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
 								<div className="space-y-5">
 									<CurrentAction task={task} data={data} wallet={wallet} busy={busy !== null} run={run} dispute={dispute} />
 									<EventTimeline events={events} statusVersion={task.statusVersion} syncMode={eventSyncMode} />
@@ -2019,7 +2019,7 @@ function EventTimeline({
 							className="relative flex gap-3 pb-5 last:pb-0"
 						>
 							{index < events.length - 1 && (
-								<span className="absolute top-8 left-[15px] h-[calc(100%-1rem)] w-px bg-border" />
+								<span className="absolute top-8 left-3.75 h-[calc(100%-1rem)] w-px bg-border" />
 							)}
 							<span className="relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border bg-card font-mono text-[10px]">
 								{event.statusVersion}
@@ -2196,7 +2196,7 @@ function FlowProgress({
 			<div
 				role="tablist"
 				aria-label={t("任务阶段")}
-				className="grid min-w-[720px] grid-cols-5"
+				className="grid min-w-180 grid-cols-5"
 			>
 				{FLOW.map((step, index) => {
 					const occurred = index <= activeStage;
@@ -2436,7 +2436,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 	return (
 		<div className="flex justify-between gap-4">
 			<dt className="shrink-0 text-muted-foreground">{label}</dt>
-			<dd className="break-words text-right">{value}</dd>
+			<dd className="wrap-break-word text-right">{value}</dd>
 		</div>
 	);
 }

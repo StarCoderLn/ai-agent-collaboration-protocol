@@ -176,10 +176,10 @@ export function DatePicker({
 						aria-label={t("选择截止日期")}
 						tabIndex={-1}
 						style={dialogPosition}
-						className="fixed z-[100] overflow-y-auto rounded-2xl border border-primary/30 bg-[linear-gradient(145deg,rgba(26,17,45,0.99),rgba(10,7,19,0.99))] shadow-[0_24px_80px_rgba(0,0,0,0.55),0_0_42px_var(--brand-glow)] outline-none backdrop-blur-xl"
+						className="fixed z-100 overflow-y-auto rounded-2xl border border-primary/30 bg-[linear-gradient(145deg,rgba(26,17,45,0.99),rgba(10,7,19,0.99))] shadow-[0_24px_80px_rgba(0,0,0,0.55),0_0_42px_var(--brand-glow)] outline-none backdrop-blur-xl"
 					>
 						<div className="relative border-primary/15 border-b px-4 py-3">
-							<div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-primary to-transparent" />
+							<div className="absolute inset-x-8 top-0 h-px bg-linear-to-r from-transparent via-primary to-transparent" />
 							<div className="flex items-center justify-between gap-3">
 								<button
 									type="button"

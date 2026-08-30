@@ -45,8 +45,8 @@ export default function Header() {
 	}, [pathname]);
 
 	return (
-		<header className="sticky top-0 z-50 border-b bg-background/80 shadow-[0_12px_40px_rgba(20,8,42,0.08)] backdrop-blur-xl supports-[backdrop-filter]:bg-background/72">
-			<div className="mx-auto flex h-17 max-w-[1280px] items-center gap-2 px-4 sm:gap-3 sm:px-6 lg:px-12">
+		<header className="sticky top-0 z-50 border-b bg-background/80 shadow-[0_12px_40px_rgba(20,8,42,0.08)] backdrop-blur-xl supports-backdrop-filter:bg-background/72">
+			<div className="mx-auto flex h-17 max-w-7xl items-center gap-2 px-4 sm:gap-3 sm:px-6 lg:px-12">
 				<Link
 					href="/"
 					className="flex min-h-11 shrink-0 items-center gap-2.5 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-primary"

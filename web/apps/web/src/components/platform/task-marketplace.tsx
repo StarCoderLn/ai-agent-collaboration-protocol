@@ -142,7 +142,7 @@ export default function TaskMarketplace() {
 		<main className="min-h-[70vh]">
 			<section className="page-hero border-b">
 				<div className="scan-beam" aria-hidden />
-				<div className="mx-auto max-w-[1280px] px-4 py-10 sm:px-6 lg:px-12">
+				<div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-12">
 					<div className="flex flex-wrap items-start justify-between gap-5">
 						<div className="min-w-0 flex-1">
 							<span className="cyber-kicker inline-flex items-center gap-1.5 rounded-full border border-secondary/25 bg-secondary-container/65 px-3 py-1.5 font-medium text-[11px] text-secondary-container-foreground">
@@ -198,7 +198,7 @@ export default function TaskMarketplace() {
 				</div>
 			</section>
 
-			<div className="mx-auto max-w-[1280px] px-4 py-8 sm:px-6 lg:px-12">
+			<div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-12">
 				<div className="cyber-panel cyber-corner grid gap-3 rounded-xl border p-3 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_220px_220px_220px]">
 					<label className="relative" htmlFor="task-market-search">
 						<Search className="absolute top-3.5 left-3 size-4 text-muted-foreground" />
@@ -340,7 +340,7 @@ function TaskCard({
 				<h3 className="mt-4 font-semibold text-lg leading-6 transition-colors group-hover/card:text-primary">
 					{task.title}
 				</h3>
-				<p className="mt-2 line-clamp-2 min-h-11 text-muted-foreground text-sm leading-[22px]">
+				<p className="mt-2 line-clamp-2 min-h-11 text-muted-foreground text-sm leading-5.5">
 					{task.description}
 				</p>
 				<div className="mt-4 flex flex-wrap gap-2">

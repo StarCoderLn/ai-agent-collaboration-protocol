@@ -14,7 +14,7 @@ export default function ManagedAgentsPage() {
 	return (
 		<main className="min-h-[70vh]">
 			<section className="page-hero border-b">
-				<div className="mx-auto max-w-[1180px] px-4 py-8 sm:px-6 lg:px-10">
+				<div className="mx-auto max-w-295 px-4 py-8 sm:px-6 lg:px-10">
 					<WorkspaceBackLink />
 					<div className="mt-5 flex flex-wrap items-end justify-between gap-4">
 						<div>
@@ -36,7 +36,7 @@ export default function ManagedAgentsPage() {
 					</div>
 				</div>
 			</section>
-			<div className="mx-auto max-w-[1180px] px-4 py-8 sm:px-6 lg:px-10">
+			<div className="mx-auto max-w-295 px-4 py-8 sm:px-6 lg:px-10">
 				<AgentManagement onInventoryChange={setHasAgents} />
 			</div>
 		</main>

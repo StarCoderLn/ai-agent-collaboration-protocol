@@ -9,7 +9,7 @@ export default function AgentRegistrationPage() {
 		<main>
 			<section className="page-hero border-b">
 				<div className="scan-beam" aria-hidden />
-				<header className="relative mx-auto max-w-[1280px] px-4 py-9 sm:px-6 lg:px-12">
+				<header className="relative mx-auto max-w-7xl px-4 py-9 sm:px-6 lg:px-12">
 					{/* 这是产品入口说明，不是协议版本标识；避免把页面误解为只支持某个 API 版本。 */}
 					<p className="cyber-kicker font-semibold text-secondary text-xs">
 						LIST YOUR AGENT · JOIN THE NETWORK
@@ -24,7 +24,7 @@ export default function AgentRegistrationPage() {
 					</p>
 				</header>
 			</section>
-			<div className="mx-auto w-full max-w-[1280px] px-4 py-8 sm:px-6 lg:px-12">
+			<div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-12">
 				<AgentRegistrationForm />
 			</div>
 		</main>

@@ -289,7 +289,7 @@ export default function TaskAgentAllocationGraph({
 
 function AllocationTaskNode({ data }: NodeProps<TaskGraphNode>) {
 	return (
-		<article className="allocation-task-node relative h-[136px] w-[248px] rounded-2xl border p-4">
+		<article className="allocation-task-node relative h-34 w-62 rounded-2xl border p-4">
 			<div className="flex items-start justify-between gap-3">
 				<span className="flex size-9 items-center justify-center rounded-xl bg-secondary-container text-secondary">
 					<Target className="size-4" aria-hidden />
@@ -321,7 +321,7 @@ function AllocationAgentNode({ data }: NodeProps<AgentGraphNode>) {
 			data-testid={`allocation-agent-${agent.id}`}
 			data-selected={data.selected ? "true" : "false"}
 			data-inspected={data.inspected ? "true" : "false"}
-			className="allocation-agent-node relative h-[116px] w-[260px] rounded-2xl border"
+			className="allocation-agent-node relative h-29 w-65 rounded-2xl border"
 		>
 			<Handle
 				type="target"
@@ -358,7 +358,7 @@ function AllocationAgentNode({ data }: NodeProps<AgentGraphNode>) {
 						<Star className="size-3 fill-warning text-warning" aria-hidden />
 						{agent.score === null ? "--" : agent.score.toFixed(1)}
 					</span>
-					<span className="max-w-[92px] truncate text-muted-foreground">{agent.matchedTags.join(" · ") || "MATCHED"}</span>
+					<span className="max-w-23 truncate text-muted-foreground">{agent.matchedTags.join(" · ") || "MATCHED"}</span>
 					<span className="font-semibold text-foreground">{data.quoteLabel}</span>
 				</span>
 			</button>

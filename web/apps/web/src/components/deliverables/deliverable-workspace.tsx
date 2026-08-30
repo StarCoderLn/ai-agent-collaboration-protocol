@@ -121,7 +121,7 @@ export default function DeliverableWorkspace({
 	return (
 		<div
 			ref={shellRef}
-			className="fullscreen:overflow-auto overflow-hidden rounded-2xl border border-primary/20 bg-background shadow-[0_22px_70px_rgb(0_0_0_/_18%)]"
+			className="fullscreen:overflow-auto overflow-hidden rounded-2xl border border-primary/20 bg-background shadow-[0_22px_70px_rgb(0_0_0/18%)]"
 		>
 			<header className="flex flex-wrap items-center justify-between gap-4 border-primary/15 border-b bg-card/95 px-4 py-4 sm:px-5">
 				<div className="min-w-0">
@@ -404,7 +404,7 @@ function RunnablePreviewFrame({
 				<iframe
 					ref={iframeRef}
 					title={t("{title} 网站交互预览", { title: artifact.title })}
-					className="h-[72vh] min-h-[620px] w-full bg-white"
+					className="h-[72vh] min-h-155 w-full bg-white"
 					sandbox="allow-scripts"
 					referrerPolicy="no-referrer"
 					srcDoc={state.html}
@@ -453,7 +453,7 @@ function CodeFiles({ artifact }: { artifact: CodeArtifact }) {
 				<div className="flex min-h-12 items-center border-b bg-accent px-4 font-mono text-xs">
 					{selected?.path ?? t("未选择文件")}
 				</div>
-				<pre className="h-[calc(66vh-3rem)] min-h-[572px] overflow-auto p-5 font-mono text-xs leading-6">
+				<pre className="h-[calc(66vh-3rem)] min-h-143 overflow-auto p-5 font-mono text-xs leading-6">
 					<code>{selected?.content ?? t("Agent 未返回可预览文件。")}</code>
 				</pre>
 			</div>

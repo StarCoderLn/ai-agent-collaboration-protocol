@@ -12,7 +12,7 @@ export default function WorkspaceDisputesPage() {
 	return (
 		<main className="min-h-[70vh]">
 			<section className="page-hero border-b">
-				<div className="mx-auto max-w-[1280px] px-4 py-9 sm:px-6 lg:px-12">
+				<div className="mx-auto max-w-7xl px-4 py-9 sm:px-6 lg:px-12">
 					<WorkspaceBackLink />
 					<div className="mt-5 flex items-start gap-3">
 						<span className="flex size-11 items-center justify-center rounded-xl bg-destructive-container text-destructive">
@@ -31,7 +31,7 @@ export default function WorkspaceDisputesPage() {
 					</div>
 				</div>
 			</section>
-			<section className="mx-auto max-w-[1280px] px-4 py-10 sm:px-6 lg:px-12">
+			<section className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-12">
 				<div className="cyber-panel rounded-2xl border p-6">
 					<p className="font-medium text-primary text-xs">
 						{t("打开争议卷宗")}

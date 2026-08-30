@@ -71,16 +71,16 @@ function SelectField({
 
 			<Select.Portal>
 				<Select.Positioner
-					className="z-[100] select-none outline-none"
+					className="z-100 select-none outline-none"
 					sideOffset={7}
 					alignItemWithTrigger={false}
 				>
-					<Select.Popup className="min-w-[var(--anchor-width)] origin-[var(--transform-origin)] overflow-hidden rounded-xl border border-primary/30 bg-popover/95 p-1.5 text-popover-foreground shadow-[0_18px_55px_rgb(0_0_0/0.48),0_0_30px_var(--brand-glow),inset_0_1px_0_rgb(255_255_255/0.08)] outline-none backdrop-blur-xl transition-[transform,scale,opacity] duration-150 data-ending-style:translate-y-1 data-starting-style:-translate-y-1 data-ending-style:scale-95 data-starting-style:scale-95 data-ending-style:opacity-0 data-starting-style:opacity-0">
+					<Select.Popup className="min-w-(--anchor-width) origin-(--transform-origin) overflow-hidden rounded-xl border border-primary/30 bg-popover/95 p-1.5 text-popover-foreground shadow-[0_18px_55px_rgb(0_0_0/0.48),0_0_30px_var(--brand-glow),inset_0_1px_0_rgb(255_255_255/0.08)] outline-none backdrop-blur-xl transition-[transform,scale,opacity] duration-150 data-ending-style:translate-y-1 data-starting-style:-translate-y-1 data-ending-style:scale-95 data-starting-style:scale-95 data-ending-style:opacity-0 data-starting-style:opacity-0">
 						<Select.ScrollUpArrow className="flex h-7 w-full cursor-default items-center justify-center rounded-md bg-popover text-primary shadow-[0_8px_12px_rgb(0_0_0/0.2)]">
 							<ChevronUp className="size-4" aria-hidden />
 						</Select.ScrollUpArrow>
 
-						<Select.List className="max-h-[min(20rem,var(--available-height))] scroll-py-1 overflow-y-auto overscroll-contain py-0.5 [scrollbar-color:var(--primary)_transparent] [scrollbar-width:thin]">
+						<Select.List className="max-h-[min(20rem,var(--available-height))] scroll-py-1 overflow-y-auto overscroll-contain py-0.5 [scrollbar-color:var(--primary)_transparent] scrollbar-thin">
 							{options.map((option) => (
 								<Select.Item
 									key={option.value}

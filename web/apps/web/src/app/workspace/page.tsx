@@ -60,7 +60,7 @@ export default function WorkspacePage() {
 				className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,var(--brand-glow),transparent_30%),radial-gradient(circle_at_82%_58%,color-mix(in_oklab,var(--secondary)_13%,transparent),transparent_32%)]"
 				aria-hidden
 			/>
-			<section className="relative mx-auto max-w-[1280px] px-4 py-14 sm:px-6 sm:py-18 lg:px-12 lg:py-22">
+			<section className="relative mx-auto max-w-7xl px-4 py-14 sm:px-6 sm:py-18 lg:px-12 lg:py-22">
 				<div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
 					<div className="max-w-3xl">
 						<p className="cyber-kicker inline-flex items-center gap-2 font-medium text-secondary text-xs">
@@ -108,7 +108,7 @@ function WorkspaceEntryCard({ entry }: { entry: WorkspaceEntry }) {
 				aria-hidden
 			/>
 			<span
-				className="pointer-events-none absolute inset-x-7 top-0 h-px bg-gradient-to-r from-transparent via-primary/80 to-transparent opacity-70"
+				className="pointer-events-none absolute inset-x-7 top-0 h-px bg-linear-to-r from-transparent via-primary/80 to-transparent opacity-70"
 				aria-hidden
 			/>
 

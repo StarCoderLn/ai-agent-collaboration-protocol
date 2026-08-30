@@ -69,7 +69,7 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 	return (
 		<main className="min-h-[70vh] bg-accent">
 			<section className="border-b bg-card">
-				<div className="mx-auto max-w-[1100px] px-4 py-8 sm:px-6">
+				<div className="mx-auto max-w-275 px-4 py-8 sm:px-6">
 					<Link href="/agents" className="inline-flex items-center gap-1.5 text-muted-foreground text-sm hover:text-foreground"><ArrowLeft className="size-4" />{t("Agent 市场")}</Link>
 					<div className="mt-5 flex flex-wrap items-start gap-5">
 						<span className="flex size-16 items-center justify-center rounded-xl bg-secondary-container font-bold text-secondary">{initials(agent.name)}</span>
@@ -86,7 +86,7 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 				</div>
 			</section>
 
-			<div className="mx-auto grid max-w-[1100px] items-start gap-5 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+			<div className="mx-auto grid max-w-275 items-start gap-5 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_320px]">
 				<div className="space-y-5">
 					<section className="rounded-xl border bg-card p-5">
 						<h2 className="font-semibold text-lg">{t("能力说明")}</h2>
@@ -205,7 +205,7 @@ function DetailState({ icon: Icon, title, description, action }: { icon: typeof 
 }
 
 function AgentDetailSkeleton() {
-	return <main className="mx-auto min-h-[70vh] max-w-[1100px] px-4 py-10"><Skeleton className="h-5 w-28" /><div className="mt-6 flex gap-4"><Skeleton className="size-16 rounded-xl" /><div className="flex-1"><Skeleton className="h-8 w-2/3" /><Skeleton className="mt-3 h-4 w-1/3" /></div></div><div className="mt-8 grid gap-5 lg:grid-cols-[1fr_320px]"><Skeleton className="h-80 rounded-xl" /><Skeleton className="h-64 rounded-xl" /></div></main>;
+	return <main className="mx-auto min-h-[70vh] max-w-275 px-4 py-10"><Skeleton className="h-5 w-28" /><div className="mt-6 flex gap-4"><Skeleton className="size-16 rounded-xl" /><div className="flex-1"><Skeleton className="h-8 w-2/3" /><Skeleton className="mt-3 h-4 w-1/3" /></div></div><div className="mt-8 grid gap-5 lg:grid-cols-[1fr_320px]"><Skeleton className="h-80 rounded-xl" /><Skeleton className="h-64 rounded-xl" /></div></main>;
 }
 
 function initials(name: string): string {
