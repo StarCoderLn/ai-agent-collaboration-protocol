@@ -13,9 +13,9 @@ const EnvironmentSchema = z.object({
 });
 
 /**
- * Anvil 每次全新启动都会回到 genesis；同一默认部署账户又会产生相同的合约地址。
- * 若沿用 PostgreSQL 中旧链的 next_block，同地址的新链事件会被永久跳过。这里只删除
- * 精确链+合约游标，让正式同步器从 ESCROW_START_BLOCK 重建；业务记录和审计事实保留。
+ * Anvil 首次创建或用户显式重置后会回到 genesis；同一默认部署账户又会产生相同地址。
+ * 若沿用 PostgreSQL 中旧链的 next_block，同地址的新链事件会被永久跳过。启动器只在
+ * fresh 模式调用这里，恢复持久化链时绝不重置游标；业务记录和审计事实始终保留。
  */
 export async function resetFreshLocalChainCursor(environment, database) {
 	const parsed = EnvironmentSchema.parse(environment);

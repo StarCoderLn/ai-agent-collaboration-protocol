@@ -6,9 +6,122 @@ process.env.AICP_LOCAL_MVP_TEST_MODE = "true";
 const {
   advanceLocalSettlementOnce,
   assertPortsAvailable,
+  buildAnvilArguments,
   isReadyWebHtml,
+  parseLocalDeployment,
+  parseLocalMvpCommand,
+  resolveLocalChainMode,
+  terminateManagedProcesses,
+  validateLocalDeployment,
   waitForService,
 } = await import("./local-mvp.mjs");
+
+const PAYMENT_TOKEN_ADDRESS = "0x5fbdb2315678afecb367f032d93f642f64180aa3";
+const ESCROW_ADDRESS = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
+const VALID_DEPLOYMENT = Object.freeze({
+  version: 1,
+  chainId: 31_337,
+  paymentTokenAddress: PAYMENT_TOKEN_ADDRESS,
+  escrowAddress: ESCROW_ADDRESS,
+  createdAt: "2026-08-30T10:00:00.000Z",
+});
+
+test("本地链状态与部署清单必须成对出现", () => {
+  assert.equal(resolveLocalChainMode(false, false), "fresh");
+  assert.equal(resolveLocalChainMode(true, true), "restore");
+  assert.throws(() => resolveLocalChainMode(true, false), /状态文件存在.*部署清单缺失/);
+  assert.throws(() => resolveLocalChainMode(false, true), /部署清单存在.*状态文件缺失/);
+});
+
+test("Anvil 启动参数持续保存并恢复项目私有状态", () => {
+  assert.deepEqual(
+    buildAnvilArguments({ host: "127.0.0.1", port: 8545, chainId: 31_337, statePath: "/project/.local/anvil/state.json" }),
+    [
+      "--host", "127.0.0.1",
+      "--port", "8545",
+      "--chain-id", "31337",
+      "--state", "/project/.local/anvil/state.json",
+      "--state-interval", "1",
+    ],
+  );
+});
+
+test("部署清单只接受当前版本、固定链和规范合约地址", () => {
+  assert.deepEqual(parseLocalDeployment(JSON.stringify(VALID_DEPLOYMENT)), VALID_DEPLOYMENT);
+  assert.throws(
+    () => parseLocalDeployment(JSON.stringify({ ...VALID_DEPLOYMENT, chainId: 1 })),
+    /部署清单无效/,
+  );
+  assert.throws(() => parseLocalDeployment("not-json"), /部署清单不是有效 JSON/);
+});
+
+test("恢复启动会校验链、合约代码、USDC 精度和 Escrow 绑定", async () => {
+  const calls = [];
+  const rpc = async (method, params) => {
+    calls.push([method, params]);
+    if (method === "eth_chainId") return "0x7a69";
+    if (method === "eth_getCode") return "0x6001600055";
+    if (params[0].data === "0x3013ce29") return `0x${"0".repeat(24)}${PAYMENT_TOKEN_ADDRESS.slice(2)}`;
+    if (params[0].data === "0x313ce567") return `0x${"0".repeat(63)}6`;
+    throw new Error(`unexpected RPC ${method}`);
+  };
+
+  await validateLocalDeployment(VALID_DEPLOYMENT, rpc);
+  assert.deepEqual(calls.map(([method]) => method), [
+    "eth_chainId",
+    "eth_getCode",
+    "eth_getCode",
+    "eth_call",
+    "eth_call",
+  ]);
+});
+
+test("恢复启动拒绝缺失合约和绑定错误的旧链", async () => {
+  await assert.rejects(
+    validateLocalDeployment(VALID_DEPLOYMENT, async (method, params) => {
+      if (method === "eth_chainId") return "0x7a69";
+      if (method === "eth_getCode" && params[0] === ESCROW_ADDRESS) return "0x";
+      return "0x6001600055";
+    }),
+    /Escrow 合约代码不存在/,
+  );
+
+  await assert.rejects(
+    validateLocalDeployment(VALID_DEPLOYMENT, async (method, params) => {
+      if (method === "eth_chainId") return "0x7a69";
+      if (method === "eth_getCode") return "0x6001600055";
+      if (params[0].data === "0x3013ce29") return `0x${"0".repeat(24)}${"1".repeat(40)}`;
+      return `0x${"0".repeat(63)}6`;
+    }),
+    /绑定的 USDC 地址与部署清单不一致/,
+  );
+});
+
+test("本地启动器只接受启动或显式重置命令", () => {
+  assert.equal(parseLocalMvpCommand([]), "start");
+  assert.equal(parseLocalMvpCommand(["--reset-chain"]), "reset-chain");
+  assert.throws(() => parseLocalMvpCommand(["--unknown"]), /未知参数/);
+});
+
+test("关闭启动器会等待 Anvil 等子进程真正退出", async () => {
+  const events = [];
+  let finishExit;
+  const exit = new Promise((resolve) => { finishExit = resolve; });
+  const stopping = terminateManagedProcesses([{
+    child: {
+      killed: false,
+      kill: (signal) => { events.push(`kill:${signal}`); return true; },
+    },
+    exit,
+  }], 1_000);
+
+  await new Promise((resolve) => setImmediate(resolve));
+  events.push("before-exit");
+  finishExit({ code: 0, signal: "SIGTERM" });
+  await stopping;
+  events.push("after-exit");
+  assert.deepEqual(events, ["kill:SIGTERM", "before-exit", "after-exit"]);
+});
 
 test("端口门禁会列出占用服务并在启动副作用之前失败", async () => {
   const probes = [];

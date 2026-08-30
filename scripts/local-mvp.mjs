@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import process from "node:process";
@@ -17,6 +17,9 @@ const NEXT_WEB = path.join(ROOT, "web/apps/web/node_modules/next/dist/bin/next")
 const NEXT_BUSINESS = path.join(ROOT, "services/business-api/node_modules/next/dist/bin/next");
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://aicp_test:aicp_test_password@127.0.0.1:55432/aicp_test";
 const INTERNAL_TOKEN = process.env.DISPATCH_INTERNAL_TOKEN ?? "aicp-local-internal-token-2026";
+const LOCAL_CHAIN_DIRECTORY = path.join(ROOT, ".local/anvil");
+const LOCAL_CHAIN_STATE_PATH = path.join(LOCAL_CHAIN_DIRECTORY, "state.json");
+const LOCAL_CHAIN_DEPLOYMENT_PATH = path.join(LOCAL_CHAIN_DIRECTORY, "deployment.json");
 const PORTS = Object.freeze({
   anvil: readPort("AICP_ANVIL_PORT", 8545),
   workflow: readPort("AICP_WORKFLOW_AGENT_PORT", 9202),
@@ -37,6 +40,7 @@ const ANVIL_PRIVATE_KEY = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784
 const children = [];
 let startupComplete = false;
 let shuttingDown = false;
+let shutdownPromise;
 
 const ServiceStatusSchema = z.object({ status: z.enum(["ok", "up"]) }).passthrough();
 const WorkflowStatusSchema = ServiceStatusSchema.extend({ service: z.literal("product-workflow-agents") });
@@ -50,16 +54,28 @@ const EscrowExecutionResultSchema = z.object({
   status: z.enum(["idle", "submitted", "retry_pending", "dead_letter"]),
 }).passthrough();
 const WorkerResultSchema = z.record(z.string(), z.unknown());
+const LocalDeploymentSchema = z.object({
+  version: z.literal(1),
+  chainId: z.literal(31_337),
+  paymentTokenAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((value) => value.toLowerCase()),
+  escrowAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((value) => value.toLowerCase()),
+  createdAt: z.iso.datetime(),
+}).strict();
 
 if (process.env.AICP_LOCAL_MVP_TEST_MODE !== "true") {
-  await main().catch((error) => {
+  await main().catch(async (error) => {
     console.error(error instanceof Error ? error.message : "local MVP startup failed");
-    shutdown(1);
+    await shutdown(1);
   });
 }
 
 async function main() {
   assertSupportedNodeVersion();
+  const command = parseLocalMvpCommand(process.argv.slice(2));
+  if (command === "reset-chain") {
+    await resetLocalChainState();
+    return;
+  }
   assertLoopbackUrl(DATABASE_URL, "DATABASE_URL");
   assertDistinctPorts(PORTS);
   const evidenceEnv = parseEnv(await readFile(path.join(ROOT, "agents/evidence-research/.env"), "utf8"));
@@ -72,23 +88,22 @@ async function main() {
   // 这项预检必须发生在启动 Anvil、部署合约或写 bootstrap 数据之前，保证失败无副作用。
   await assertApplicationPortsAvailable();
 
-  if (!(await portOpen(PORTS.anvil))) {
-    const anvil = start("Anvil", "anvil", ["--host", "127.0.0.1", "--port", String(PORTS.anvil), "--chain-id", "31337"]);
-    await waitForService(anvil, "Anvil", () => probeAnvil());
-  }
-  const chainId = await rpc("eth_chainId", []);
-  if (chainId !== "0x7a69") throw new Error(`${URLS.anvil} is not Anvil chain 31337`);
-  const { escrowAddress, paymentTokenAddress } = await deployLocalMoneyContracts();
+  const { deployment, mode } = await startPersistentLocalChain();
+  const { escrowAddress, paymentTokenAddress } = deployment;
 
-  await runOnce("本地链同步游标", NODE, [path.join(ROOT, "scripts/local-chain-bootstrap.mjs")], {
-    cwd: ROOT,
-    env: {
-      AICP_LOCAL_DEMO_MODE: "true",
-      DATABASE_URL,
-      ESCROW_CHAIN_ID: "31337",
-      ESCROW_CONTRACT_ADDRESS: escrowAddress,
-    },
-  });
+  // 只有 genesis 链需要删除同地址旧链留下的同步游标；恢复链沿用原区块高度，重置游标
+  // 会让同步器从头扫描并增加重复事件处理压力，甚至掩盖错误恢复配置。
+  if (mode === "fresh") {
+    await runOnce("本地链同步游标", NODE, [path.join(ROOT, "scripts/local-chain-bootstrap.mjs")], {
+      cwd: ROOT,
+      env: {
+        AICP_LOCAL_DEMO_MODE: "true",
+        DATABASE_URL,
+        ESCROW_CHAIN_ID: "31337",
+        ESCROW_CONTRACT_ADDRESS: escrowAddress,
+      },
+    });
+  }
 
   await runOnce("本地 9-Agent 目录", NODE, [TSX, "src/local-bootstrap.ts"], {
     cwd: path.join(ROOT, "agents/product-workflow"),
@@ -179,12 +194,13 @@ async function main() {
 
   startupComplete = true;
   console.log(`\nAICP 本地完整闭环已启动：${URLS.web}`);
+  console.log(`本地链状态：${mode === "fresh" ? "首次创建" : "已从磁盘恢复"}`);
   console.log(`Escrow 合约：${escrowAddress}`);
   console.log(`测试 USDC：${paymentTokenAddress}（默认 Anvil 账户已获得 100,000 USDC）`);
   console.log(`MetaMask 网络：Anvil 31337 / ${URLS.anvil} / 默认账户 ${ANVIL_ACCOUNT}`);
   console.log("按 Ctrl+C 会关闭本启动器创建的全部进程。\n");
-  process.on("SIGINT", () => shutdown(0));
-  process.on("SIGTERM", () => shutdown(0));
+  process.on("SIGINT", () => { void shutdown(0); });
+  process.on("SIGTERM", () => { void shutdown(0); });
   await new Promise(() => undefined);
 }
 
@@ -196,7 +212,173 @@ function assertSupportedNodeVersion() {
 }
 
 /**
- * 本地链每次启动都部署一对全新的测试 USDC 与 Escrow，并只给 Anvil 默认账户铸币。
+ * 项目私有的状态文件和部署清单共同组成一个可恢复单元。二者缺一时拒绝启动，避免把旧
+ * PostgreSQL 业务记录连接到一条新 genesis 链，也避免拿旧合约地址读取不相干的状态。
+ */
+async function startPersistentLocalChain() {
+  const [stateExists, deploymentExists] = await Promise.all([
+    fileExists(LOCAL_CHAIN_STATE_PATH),
+    fileExists(LOCAL_CHAIN_DEPLOYMENT_PATH),
+  ]);
+  const mode = resolveLocalChainMode(stateExists, deploymentExists);
+  if (await portOpen(PORTS.anvil)) {
+    throw new Error(`${URLS.anvil} 已被占用；持久化本地链必须由当前启动器独占管理，请先关闭旧进程`);
+  }
+
+  await mkdir(LOCAL_CHAIN_DIRECTORY, { recursive: true });
+  const restoredDeployment = mode === "restore"
+    ? parseLocalDeployment(await readFile(LOCAL_CHAIN_DEPLOYMENT_PATH, "utf8"))
+    : undefined;
+  const anvil = start("Anvil", "anvil", buildAnvilArguments({
+    host: "127.0.0.1",
+    port: PORTS.anvil,
+    chainId: 31_337,
+    statePath: LOCAL_CHAIN_STATE_PATH,
+  }));
+  await waitForService(anvil, "Anvil", () => probeAnvil());
+
+  if (restoredDeployment !== undefined) {
+    await validateLocalDeployment(restoredDeployment, rpc);
+    return { deployment: restoredDeployment, mode };
+  }
+
+  const deployedContracts = await deployLocalMoneyContracts();
+  const deployment = {
+    version: 1,
+    chainId: 31_337,
+    ...deployedContracts,
+    createdAt: new Date().toISOString(),
+  };
+  // Anvil 可能已在部署前写过一次 genesis 快照。必须等待部署完成后的新落盘，再写部署
+  // 清单；这样即使机器在任意时刻断电，下次也只会恢复完整状态或明确报告残缺状态。
+  await waitForStateSnapshot(LOCAL_CHAIN_STATE_PATH, Date.now());
+  await writeJsonAtomically(LOCAL_CHAIN_DEPLOYMENT_PATH, deployment);
+  await validateLocalDeployment(deployment, rpc);
+  return { deployment, mode };
+}
+
+function resolveLocalChainMode(stateExists, deploymentExists) {
+  if (!stateExists && !deploymentExists) return "fresh";
+  if (stateExists && deploymentExists) return "restore";
+  if (stateExists) {
+    throw new Error("本地 Anvil 状态文件存在，但部署清单缺失；请恢复完整的 .local/anvil 目录或执行 --reset-chain");
+  }
+  throw new Error("本地 Anvil 部署清单存在，但状态文件缺失；请恢复完整的 .local/anvil 目录或执行 --reset-chain");
+}
+
+function buildAnvilArguments({ host, port, chainId, statePath }) {
+  return [
+    "--host", host,
+    "--port", String(port),
+    "--chain-id", String(chainId),
+    "--state", statePath,
+    "--state-interval", "1",
+  ];
+}
+
+function parseLocalDeployment(source) {
+  let value;
+  try {
+    value = JSON.parse(source);
+  } catch {
+    throw new Error("本地 Anvil 部署清单不是有效 JSON；请恢复该文件或执行 --reset-chain");
+  }
+  const parsed = LocalDeploymentSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error("本地 Anvil 部署清单无效或版本不受支持；请恢复该文件或执行 --reset-chain");
+  }
+  return parsed.data;
+}
+
+/**
+ * 恢复不能只相信本地 JSON：RPC 链、两个地址的代码、Token 精度与 Escrow 的绑定关系
+ * 都必须相互印证。这里把 RPC 调用作为参数注入，让所有拒绝路径可在不启动真实链时测试。
+ */
+async function validateLocalDeployment(deployment, callRpc) {
+  const parsed = LocalDeploymentSchema.parse(deployment);
+  const chainId = await callRpc("eth_chainId", []);
+  if (chainId !== "0x7a69") throw new Error(`本地链 Chain ID 为 ${String(chainId)}，预期 31337`);
+
+  const paymentTokenCode = await callRpc("eth_getCode", [parsed.paymentTokenAddress, "latest"]);
+  if (!hasContractCode(paymentTokenCode)) throw new Error(`测试 USDC 合约代码不存在：${parsed.paymentTokenAddress}`);
+  const escrowCode = await callRpc("eth_getCode", [parsed.escrowAddress, "latest"]);
+  if (!hasContractCode(escrowCode)) throw new Error(`Escrow 合约代码不存在：${parsed.escrowAddress}`);
+
+  const paymentTokenResult = await callRpc("eth_call", [{ to: parsed.escrowAddress, data: "0x3013ce29" }, "latest"]);
+  const boundPaymentToken = decodeAddressResult(paymentTokenResult, "Escrow paymentToken() 返回值");
+  if (boundPaymentToken !== parsed.paymentTokenAddress) {
+    throw new Error(`Escrow 绑定的 USDC 地址与部署清单不一致：${boundPaymentToken}`);
+  }
+
+  const decimalsResult = await callRpc("eth_call", [{ to: parsed.paymentTokenAddress, data: "0x313ce567" }, "latest"]);
+  const decimals = decodeUnsignedIntegerResult(decimalsResult, "USDC decimals() 返回值");
+  if (decimals !== 6n) throw new Error(`测试 USDC 精度为 ${decimals}，预期 6`);
+}
+
+function hasContractCode(value) {
+  return typeof value === "string" && /^0x[0-9a-fA-F]+$/.test(value) && !/^0x0*$/.test(value);
+}
+
+function decodeAddressResult(value, label) {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value)) {
+    throw new Error(`${label}格式无效`);
+  }
+  return `0x${value.slice(-40)}`.toLowerCase();
+}
+
+function decodeUnsignedIntegerResult(value, label) {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{1,64}$/.test(value)) {
+    throw new Error(`${label}格式无效`);
+  }
+  return BigInt(value);
+}
+
+async function waitForStateSnapshot(statePath, minimumModifiedAt) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    try {
+      const metadata = await stat(statePath);
+      if (metadata.isFile() && metadata.size > 0 && metadata.mtimeMs >= minimumModifiedAt) return;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Anvil 未在部署完成后写入持久化状态，已停止启动且不会生成部署清单");
+}
+
+async function writeJsonAtomically(targetPath, value) {
+  const temporaryPath = `${targetPath}.tmp-${process.pid}`;
+  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+  await rename(temporaryPath, targetPath);
+}
+
+async function fileExists(targetPath) {
+  try {
+    await access(targetPath);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function parseLocalMvpCommand(arguments_) {
+  if (arguments_.length === 0) return "start";
+  if (arguments_.length === 1 && arguments_[0] === "--reset-chain") return "reset-chain";
+  throw new Error(`未知参数：${arguments_.join(" ")}；仅支持 --reset-chain`);
+}
+
+async function resetLocalChainState() {
+  if (await portOpen(PORTS.anvil)) {
+    throw new Error(`${URLS.anvil} 仍在运行；请先正常关闭本地 MVP，再重置持久化链`);
+  }
+  await rm(LOCAL_CHAIN_DIRECTORY, { recursive: true, force: true });
+  console.log(`已重置 AICP 本地链状态：${LOCAL_CHAIN_DIRECTORY}`);
+  console.log("下次启动会重新部署测试 USDC 与 Escrow；PostgreSQL 业务数据不会自动删除。");
+}
+
+/**
+ * 首次创建本地链时部署一对测试 USDC 与 Escrow，并只给 Anvil 默认账户铸币。
  * 测试 Token 的 mint 权限绝不能出现在公共测试网/生产部署路径；正式环境必须通过
  * ESCROW_PAYMENT_TOKEN_ADDRESS 注入官方 USDC，且不会调用本函数。
  */
@@ -438,18 +620,51 @@ function isReadyWebHtml(html) {
     && html.includes('href="/agents"');
 }
 
-function shutdown(code) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  for (const { child } of children.reverse()) {
+async function terminateManagedProcesses(managedProcesses, gracefulTimeoutMs = 10_000) {
+  const reversed = [...managedProcesses].reverse();
+  for (const { child } of reversed) {
     if (!child.killed) child.kill("SIGTERM");
   }
-  process.exit(code);
+
+  // Anvil 只会在正常退出流程完成后保证最终状态已经 dump 到磁盘。等待全部 exit 事件既
+  // 保护链状态，也避免 PostgreSQL/Next.js 子进程被父进程突然截断；超时才强制终止。
+  const exitedGracefully = await settleWithin(reversed.map(({ exit }) => exit), gracefulTimeoutMs);
+  if (exitedGracefully) return;
+
+  for (const { child } of reversed) child.kill("SIGKILL");
+  await settleWithin(reversed.map(({ exit }) => exit), 2_000);
+}
+
+async function settleWithin(promises, timeoutMs) {
+  let timeout;
+  const timedOut = new Promise((resolve) => {
+    timeout = setTimeout(() => resolve(false), timeoutMs);
+  });
+  const settled = Promise.allSettled(promises).then(() => true);
+  const result = await Promise.race([settled, timedOut]);
+  clearTimeout(timeout);
+  return result;
+}
+
+async function shutdown(code) {
+  if (shutdownPromise !== undefined) return shutdownPromise;
+  shuttingDown = true;
+  shutdownPromise = (async () => {
+    await terminateManagedProcesses(children);
+    process.exit(code);
+  })();
+  return shutdownPromise;
 }
 
 export {
   advanceLocalSettlementOnce,
   assertPortsAvailable,
+  buildAnvilArguments,
   isReadyWebHtml,
+  parseLocalDeployment,
+  parseLocalMvpCommand,
+  resolveLocalChainMode,
+  terminateManagedProcesses,
+  validateLocalDeployment,
   waitForService,
 };
