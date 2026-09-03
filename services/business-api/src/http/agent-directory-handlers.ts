@@ -24,7 +24,15 @@ async function publicList(deps: AgentDirectoryHttpDeps, request: Request): Promi
   const limit = boundedInteger(url.searchParams.get("limit"), 20, 1, 50);
   const offset = boundedInteger(url.searchParams.get("offset"), 0, 0, 10_000);
   if (limit === null || offset === null) return response(deps, 422, errorBody("VALIDATION_FAILED", "分页参数无效", false));
-  try { return response(deps, 200, { agents: await deps.directory.publicAgents(limit, offset), limit, offset }); }
+  const keyword = (url.searchParams.get("keyword") ?? "").trim();
+  if ([...keyword].length > 100) return response(deps, 422, errorBody("VALIDATION_FAILED", "关键词最多 100 个字符", false));
+  const rawCategoryId = url.searchParams.get("category");
+  const categoryId = rawCategoryId === null || rawCategoryId.trim() === "" ? null : rawCategoryId;
+  if (categoryId !== null && !isUuid(categoryId)) return response(deps, 422, errorBody("VALIDATION_FAILED", "Agent 分类格式不正确", false));
+  try {
+    const page = await deps.directory.publicAgents({ keyword, categoryId, limit, offset });
+    return response(deps, 200, { ...page, limit, offset });
+  }
   catch { return response(deps, 503, errorBody("AGENT_DIRECTORY_UNAVAILABLE", "Agent 市场暂不可用", true)); }
 }
 

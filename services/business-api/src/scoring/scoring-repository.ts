@@ -131,10 +131,16 @@ export class PgScoringRepository implements ScoringRepository {
       // 生产 worker 在单个事务 client 上运行；pg 不允许同一 client 并发 query，故这里
       // 明确串行读取三组事实。若未来按 Agent 分片并行，应在事务外分配独立连接。
       const ratings = await this.db.query<RatingRow>(
-        `SELECT id::text,task_id::text,quality,communication,created_at
-           FROM task_ratings
-          WHERE agent_id=$1
-          ORDER BY created_at,id`,
+        `SELECT rating.id::text,rating.task_id::text,rating.quality,rating.communication,rating.created_at
+           FROM (
+             SELECT legacy.id,legacy.task_id,legacy.agent_id,legacy.quality,legacy.communication,legacy.created_at
+               FROM task_ratings legacy
+             UNION ALL
+             SELECT workflow.id,workflow.task_id,workflow.agent_id,workflow.quality,workflow.communication,workflow.created_at
+               FROM workflow_node_feedback workflow
+           ) rating
+          WHERE rating.agent_id=$1
+          ORDER BY rating.created_at,rating.id`,
         [agent.id],
       );
       const assignments = await this.db.query<AssignmentEvidenceRow>(
@@ -210,6 +216,21 @@ export class PgScoringRepository implements ScoringRepository {
       const exists = await this.db.query("SELECT 1 FROM agents WHERE id=$1", [agentId]);
       if (exists.rows[0] === undefined) throw new ScoringServiceError(404, "AGENT_NOT_FOUND", "Agent 不存在");
       return { statusCode: 200, body: { agentId, score: null, sampleSize: 0, lowSample: true, message: "尚无可展示的评分快照" } };
+    }
+    // 评分 worker 会为新 Agent 生成仅含贝叶斯先验的零样本快照，以便内部排序和冷启动
+    // 风险控制保持稳定。公开详情不能把这份先验伪装成用户评分，因此零样本与“尚未生成
+    // 快照”采用同一空评分契约；原始快照仍完整保留在数据库中供排序和审计使用。
+    if (row.sample_size === 0) {
+      return {
+        statusCode: 200,
+        body: {
+          agentId: row.agent_id,
+          score: null,
+          sampleSize: 0,
+          lowSample: true,
+          message: "尚无真实用户评分",
+        },
+      };
     }
     return {
       statusCode: 200,
