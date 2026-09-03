@@ -2,6 +2,7 @@
 
 import { Button } from "@web/ui/components/button";
 import { Input } from "@web/ui/components/input";
+import { SelectField } from "@web/ui/components/select";
 import { Textarea } from "@web/ui/components/textarea";
 import {
 	AlertTriangle,
@@ -16,15 +17,13 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-
 import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import { useLocale } from "@/components/i18n/locale-provider";
-import { SelectField } from "@web/ui/components/select";
 import {
 	decideTaskDispute,
 	getTaskDispute,
-	type TaskDispute,
 	TaskApiRequestError,
+	type TaskDispute,
 } from "@/lib/api/tasks";
 import { formatDate } from "@/lib/platform/format";
 
@@ -162,6 +161,7 @@ export default function ArbitrationConsole({
 				}
 				action={
 					<Button
+						size="lg"
 						onClick={() => wallet.connect()}
 						disabled={wallet.status === "connecting"}
 					>
@@ -178,7 +178,7 @@ export default function ArbitrationConsole({
 				title={t("无法读取争议卷宗")}
 				description={state.message}
 				action={
-					<Button variant="outline" onClick={() => load()}>
+					<Button size="lg" variant="outline" onClick={() => load()}>
 						<RefreshCw className="size-4" />
 						{t("重试")}
 					</Button>
@@ -186,12 +186,32 @@ export default function ArbitrationConsole({
 			/>
 		);
 	if (dispute === null) return null;
-	if (dispute.viewerRole !== "arbitrator")
+	if (!dispute.viewerCanPlatformDecide)
 		return (
 			<ArbitrationState
 				icon={ShieldCheck}
-				title={t("当前钱包没有仲裁权限")}
-				description={t("发布者和 Agent 只能提交证据；仲裁员角色由服务端平台角色表验证。")}
+				title={
+					dispute.daoArbitration !== null && dispute.viewerRole === "arbitrator"
+						? t("请在 DAO 仲裁页提交投票")
+						: t("当前钱包没有平台仲裁权限")
+				}
+				description={
+					dispute.daoArbitration !== null && dispute.viewerRole === "arbitrator"
+						? t(
+								"DAO 小组通过独立投票形成多数裁决，不能使用平台内部的直接裁决入口。",
+							)
+						: t(
+								"发布者和 Agent 只能提交证据；平台仲裁员角色由服务端权限表验证。",
+							)
+				}
+				action={
+					dispute.daoArbitration !== null &&
+					dispute.viewerRole === "arbitrator" ? (
+						<Button size="lg" render={<Link href={{ pathname: "/dao" }} />}>
+							{t("前往 DAO 投票")}
+						</Button>
+					) : undefined
+				}
 			/>
 		);
 
@@ -248,7 +268,9 @@ export default function ArbitrationConsole({
 						<header className="border-b px-5 py-4">
 							<h2 className="font-semibold">{t("双方证据")}</h2>
 							<p className="mt-1 text-muted-foreground text-xs">
-								{t("按提交时间排序，共 {count} 条", { count: dispute.evidence.length })}
+								{t("按提交时间排序，共 {count} 条", {
+									count: dispute.evidence.length,
+								})}
 							</p>
 						</header>
 						<ol className="divide-y">
@@ -268,7 +290,10 @@ export default function ArbitrationConsole({
 										{entry.description}
 									</p>
 									<p className="mt-2 text-muted-foreground text-xs">
-										{t("附件 {count} 个 · 提交者 {submitter}", { count: entry.attachments.length, submitter: entry.submittedBy })}
+										{t("附件 {count} 个 · 提交者 {submitter}", {
+											count: entry.attachments.length,
+											submitter: entry.submittedBy,
+										})}
 									</p>
 								</li>
 							))}
@@ -282,13 +307,17 @@ export default function ArbitrationConsole({
 				</section>
 				<aside>
 					<div className="sticky top-24 rounded-xl border bg-card p-5">
-						<p className="font-medium text-warning text-xs">{t("不可逆资金决定")}</p>
+						<p className="font-medium text-warning text-xs">
+							{t("不可逆资金决定")}
+						</p>
 						<h2 className="mt-1 font-semibold text-xl">{t("记录仲裁结论")}</h2>
 						{dispute.decision ? (
 							<div className="mt-5 rounded-lg border bg-accent p-4">
 								<CheckCircle2 className="size-5 text-success" />
 								<p className="mt-3 font-semibold">
-									{t("决定已记录：{decision}", { decision: decisionLabel(dispute.decision.type, t) })}
+									{t("决定已记录：{decision}", {
+										decision: decisionLabel(dispute.decision.type, t),
+									})}
 								</p>
 								<p className="mt-2 text-muted-foreground text-sm">
 									{dispute.decision.reason}
@@ -376,10 +405,13 @@ export default function ArbitrationConsole({
 									placeholder={t("引用具体验收标准和证据，至少 10 个字符。")}
 								/>
 								<div className="mt-4 rounded-lg border border-warning/25 bg-warning/10 p-3 text-warning text-xs leading-5">
-									{t("提交只创建经审计的链上执行任务，不代表交易已经广播或确认；页面不会提前显示退款/结算完成。")}
+									{t(
+										"提交只创建经审计的链上执行任务，不代表交易已经广播或确认；页面不会提前显示退款/结算完成。",
+									)}
 								</div>
 								<Button
 									variant="destructive"
+									size="lg"
 									className="mt-4 w-full"
 									disabled={
 										busy ||
@@ -484,7 +516,10 @@ function moneyConservation(
 		? "valid"
 		: "invalid";
 }
-function decisionLabel(type: "release" | "partial_release" | "refund", t: ReturnType<typeof useLocale>["t"]): string {
+function decisionLabel(
+	type: "release" | "partial_release" | "refund",
+	t: ReturnType<typeof useLocale>["t"],
+): string {
 	return type === "release"
 		? t("向 Agent 结算")
 		: type === "refund"
@@ -501,7 +536,10 @@ function executionStatusLabel(
 	if (status === "needs_review") return t("需要人工复核");
 	return t("执行失败，等待重试");
 }
-function apiMessage(error: unknown, t: ReturnType<typeof useLocale>["t"]): string {
+function apiMessage(
+	error: unknown,
+	t: ReturnType<typeof useLocale>["t"],
+): string {
 	return error instanceof TaskApiRequestError
 		? error.body.message
 		: error instanceof Error

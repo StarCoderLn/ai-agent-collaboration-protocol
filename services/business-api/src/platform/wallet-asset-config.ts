@@ -22,8 +22,9 @@ export type Erc20WalletAsset = Readonly<{
 export type WalletAsset = NativeWalletAsset | Erc20WalletAsset;
 export type WalletAssetRegistry = Readonly<{ assets: readonly WalletAsset[] }>;
 
-// YD 的当前公开部署来自 yd-web3-university，并已通过 Sepolia RPC 核验合约字节码、
-// symbol() 与 decimals()。部署元数据集中在资产目录边界，避免启动器、IaC 和前端重复维护。
+// 产品 YD 的当前公开部署来自 yd-web3-university，并已通过 Sepolia RPC 核验合约字节码、
+// symbol() 与 decimals()。它与本地 DAO 使用的 TestYD 是两个配置边界，启动本地闭环
+// 不能覆盖用户在 Sepolia 已经持有的产品资产。
 const DEFAULT_YD_TOKEN_CONFIG = Object.freeze({
 	chainId: "11155111",
 	address: "0xf64bE7869CAf8B00E42209A2CEc3e681a448c320",
@@ -33,8 +34,9 @@ const DEFAULT_YD_TOKEN_CONFIG = Object.freeze({
 /**
  * 钱包资产目录是“链与代币元数据”的单一权威边界。USDC 必须直接复用 Escrow 的支付
  * 代币配置，不能再增加一份前端地址；否则托管使用一个合约、余额却读取另一个合约。
- * YD 使用已核验的 Sepolia 公开部署；如将来重新部署，可用完整的 YD_TOKEN_* 环境变量
- * 覆盖。覆盖必须三项同时提供，不能让链、地址和精度来自不同部署。
+ * 产品 YD 使用已核验的 Sepolia 公开部署；如将来重新部署，可用完整的 YD_TOKEN_*
+ * 环境变量覆盖。覆盖必须三项同时提供，不能让链、地址和精度来自不同部署；DAO
+ * 质押合约绑定的代币则由 DAO 专属配置管理。
  */
 export function loadWalletAssetRegistryFromEnv(): WalletAssetRegistry {
 	const escrowChainId = safePositiveInteger(

@@ -5,7 +5,12 @@ import { getTaskDispute } from "@/lib/api/tasks";
 import ArbitrationConsole from "./arbitration-console";
 
 vi.mock("@/components/auth/wallet-session-provider", () => ({
-	useWalletSession: () => ({ status: "connected", walletAddress: "0x3333333333333333333333333333333333333333", error: null, connect: vi.fn() }),
+	useWalletSession: () => ({
+		status: "connected",
+		walletAddress: "0x3333333333333333333333333333333333333333",
+		error: null,
+		connect: vi.fn(),
+	}),
 }));
 
 vi.mock("@/lib/api/tasks", async (importOriginal) => {
@@ -13,8 +18,12 @@ vi.mock("@/lib/api/tasks", async (importOriginal) => {
 	return { ...actual, getTaskDispute: vi.fn(), decideTaskDispute: vi.fn() };
 });
 
+/** 平台角色与 DAO 小组成员共用卷宗读取权限，但必须被引导到不同的资金裁决入口。 */
 describe("arbitration console", () => {
-	afterEach(() => { cleanup(); vi.clearAllMocks(); });
+	afterEach(() => {
+		cleanup();
+		vi.clearAllMocks();
+	});
 
 	it("shows server-authorized evidence and pre-fills a money-conserving refund", async () => {
 		vi.mocked(getTaskDispute).mockResolvedValue({
@@ -27,24 +36,32 @@ describe("arbitration console", () => {
 			escrowAmountMinor: "9007199254740993",
 			evidenceDeadline: "2026-08-24T00:00:00.000Z",
 			createdAt: "2026-08-23T00:00:00.000Z",
-			evidence: [{
-				id: "a1000000-0000-4000-8000-000000000003",
-				submittedBy: "0x1111111111111111111111111111111111111111",
-				party: "publisher",
-				description: "验收日志显示失败分支没有执行。",
-				attachments: [],
-				createdAt: "2026-08-23T00:10:00.000Z",
-			}],
+			evidence: [
+				{
+					id: "a1000000-0000-4000-8000-000000000003",
+					submittedBy: "0x1111111111111111111111111111111111111111",
+					party: "publisher",
+					description: "验收日志显示失败分支没有执行。",
+					attachments: [],
+					createdAt: "2026-08-23T00:10:00.000Z",
+				},
+			],
 			decision: null,
 			viewerRole: "arbitrator",
+			viewerCanPlatformDecide: true,
+			daoArbitration: null,
 		});
 
-		render(<ArbitrationConsole disputeId="a1000000-0000-4000-8000-000000000001" />);
+		render(
+			<ArbitrationConsole disputeId="a1000000-0000-4000-8000-000000000001" />,
+		);
 
 		expect(await screen.findByText("争议卷宗与资金决定")).toBeInTheDocument();
 		expect(screen.getByDisplayValue("9007199254740993")).toBeInTheDocument();
 		expect(screen.getByText("金额守恒校验通过")).toBeInTheDocument();
-		expect(screen.getByText("验收日志显示失败分支没有执行。")).toBeInTheDocument();
+		expect(
+			screen.getByText("验收日志显示失败分支没有执行。"),
+		).toBeInTheDocument();
 		expect(screen.queryByText("本地仲裁员操作")).not.toBeInTheDocument();
 	});
 
@@ -76,11 +93,60 @@ describe("arbitration console", () => {
 				executedAt: null,
 			},
 			viewerRole: "arbitrator",
+			viewerCanPlatformDecide: true,
+			daoArbitration: null,
 		});
 
-		render(<ArbitrationConsole disputeId="a1000000-0000-4000-8000-000000000011" />);
+		render(
+			<ArbitrationConsole disputeId="a1000000-0000-4000-8000-000000000011" />,
+		);
 
-		expect(await screen.findByText("执行状态：处理中（等待链上确认）")).toBeInTheDocument();
+		expect(
+			await screen.findByText("执行状态：处理中（等待链上确认）"),
+		).toBeInTheDocument();
 		expect(screen.queryByText(/已完成（链上已确认）/)).not.toBeInTheDocument();
+	});
+
+	it("routes a DAO panel member to independent voting instead of the platform decision form", async () => {
+		vi.mocked(getTaskDispute).mockResolvedValue({
+			id: "a1000000-0000-4000-8000-000000000021",
+			taskId: "a1000000-0000-4000-8000-000000000022",
+			openedBy: "0x1111111111111111111111111111111111111111",
+			reason: "需要由无利益冲突的小组核对多 Agent 交付。",
+			status: "evidence_collection",
+			fundsFrozen: true,
+			escrowAmountMinor: "100000000",
+			evidenceDeadline: "2026-09-05T00:00:00.000Z",
+			createdAt: "2026-09-02T00:00:00.000Z",
+			evidence: [],
+			decision: null,
+			viewerRole: "arbitrator",
+			viewerCanPlatformDecide: false,
+			daoArbitration: {
+				roundId: "a1000000-0000-4000-8000-000000000023",
+				status: "voting",
+				panelSize: 3,
+				panelCount: 3,
+				quorum: 2,
+				voteCount: 1,
+				votes: { release: 0, partialRelease: 1, refund: 0 },
+				viewerHasVoted: false,
+				evidenceRoot: null,
+				votingDeadline: "2026-09-05T00:00:00.000Z",
+				decidedAt: null,
+			},
+		});
+
+		render(
+			<ArbitrationConsole disputeId="a1000000-0000-4000-8000-000000000021" />,
+		);
+
+		expect(
+			await screen.findByText("请在 DAO 仲裁页提交投票"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "前往 DAO 投票" }),
+		).toHaveAttribute("href", "/dao");
+		expect(screen.queryByText("记录仲裁结论")).not.toBeInTheDocument();
 	});
 });

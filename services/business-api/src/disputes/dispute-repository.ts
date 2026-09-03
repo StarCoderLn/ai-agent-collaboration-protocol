@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { PgAuditLogWriter } from "../audit/audit-log-writer";
+import { createDaoRoundForDispute } from "../dao/dao-service";
 import type { QueryExecutor } from "../db/pool";
 import {
   decideDispute,
@@ -12,6 +13,11 @@ import {
 import { calculatePlatformFee, type TaskStatus } from "../platform/task-state";
 import { emitTaskEvent } from "../tasks/task-event-repository";
 import type { DecideDisputeInput, OpenDisputeInput, SubmitEvidenceInput } from "./dispute-input";
+import {
+  buildArbitrationSettlementPlan,
+  loadArbitrationSettlementContext,
+  type ArbitrationSettlementPlan,
+} from "./arbitration-settlement";
 
 export type DisputeResult = Readonly<{ statusCode: number; body: Readonly<Record<string, unknown>> }>;
 
@@ -41,14 +47,14 @@ export class PgDisputeRepository implements DisputeRepository {
 
   async open(taskId: string, actorId: string, input: OpenDisputeInput, now: Date): Promise<DisputeResult> {
     const contextResult = await this.db.query<{
-      status: TaskStatus; status_version: string; publisher_id: string; agent_provider_id: string | null;
+      status: TaskStatus; status_version: string; publisher_id: string; agent_provider_ids: string[];
       evidence_window_seconds: number;
     }>(
       `SELECT task.status,task.status_version::text,task.publisher_id,
-              (SELECT agent.provider_wallet_address FROM task_assignments assignment
+              ARRAY(SELECT DISTINCT lower(agent.provider_wallet_address) FROM task_assignments assignment
                 JOIN agents agent ON agent.id=assignment.agent_id
                WHERE assignment.task_id=task.id AND assignment.status='accepted'
-               ORDER BY assignment.assigned_at DESC LIMIT 1) AS agent_provider_id,
+               ORDER BY lower(agent.provider_wallet_address)) AS agent_provider_ids,
               config.evidence_window_seconds
          FROM tasks task CROSS JOIN dispute_config config
         WHERE task.id=$1 AND config.id=TRUE FOR UPDATE OF task`,
@@ -56,12 +62,13 @@ export class PgDisputeRepository implements DisputeRepository {
     );
     const context = contextResult.rows[0];
     if (context === undefined) throw notFound("TASK_NOT_FOUND", "任务不存在");
-    if (context.agent_provider_id === null) throw new DisputeRepositoryError(409, "TASK_NOT_ASSIGNED", "任务尚无已接单 Agent");
+    if (context.agent_provider_ids.length === 0) throw new DisputeRepositoryError(409, "TASK_NOT_ASSIGNED", "任务尚无已接单 Agent");
     // 已广播的链上结算不可撤回。未广播的普通验收 outbox 在同一事务内取消，确保争议
     // 冻结后 worker 不会再领取旧任务。
     const irreversible = await this.db.query<{ status: string }>(
       `SELECT status FROM escrow_execution_jobs
-        WHERE task_id=$1 AND source='acceptance' AND status IN ('processing','submitted','executed') LIMIT 1`,
+        WHERE task_id=$1 AND source<>'arbitration'
+          AND status IN ('processing','submitted','executed') LIMIT 1`,
       [taskId],
     );
     if (irreversible.rows[0] !== undefined) {
@@ -80,7 +87,7 @@ export class PgDisputeRepository implements DisputeRepository {
           taskId,
           taskStatus: context.status,
           publisherId: context.publisher_id,
-          agentProviderId: context.agent_provider_id,
+          agentProviderIds: context.agent_provider_ids,
         },
       });
     } catch (error) { throw domainError(error); }
@@ -90,9 +97,12 @@ export class PgDisputeRepository implements DisputeRepository {
        VALUES ($1,$2,$3,$4,$5,$6,TRUE,$7,$7)`,
       [disputeId, taskId, actorId, opened.dispute.reason, opened.dispute.status, opened.dispute.evidenceDeadline, now],
     );
+    // 争议与 DAO 案件必须在同一事务产生；成员不足时明确保留等待成组状态，而不是
+    // 回退到没有审计痕迹的临时人工处理。
+    const daoRound = await createDaoRoundForDispute(this.db, disputeId, taskId, now);
     await this.db.query(
       `UPDATE escrow_execution_jobs SET status='cancelled',lock_token=NULL,lock_expires_at=NULL,updated_at=$2
-        WHERE task_id=$1 AND source='acceptance' AND status IN ('pending','prepared','failed')`,
+        WHERE task_id=$1 AND source<>'arbitration' AND status IN ('pending','prepared','failed')`,
       [taskId, now],
     );
     const version = BigInt(context.status_version) + 1n;
@@ -103,7 +113,7 @@ export class PgDisputeRepository implements DisputeRepository {
         opened.dispute,
         actorId,
         context.publisher_id,
-        context.agent_provider_id,
+        context.agent_provider_ids,
         input.initialEvidence,
         now,
       );
@@ -121,13 +131,13 @@ export class PgDisputeRepository implements DisputeRepository {
     return result(201, {
       disputeId, taskId, status: "evidence_collection", fundsFrozen: true,
       evidenceDeadline: opened.dispute.evidenceDeadline.toISOString(), taskStatus: opened.taskStatus,
-      statusVersion: version.toString(), initialEvidenceId,
+      statusVersion: version.toString(), initialEvidenceId, daoRound,
     });
   }
 
   async submitEvidence(disputeId: string, actorId: string, input: SubmitEvidenceInput, now: Date): Promise<DisputeResult> {
     const context = await this.lockDisputeContext(disputeId);
-    const evidenceId = await this.insertEvidence(context.dispute, actorId, context.publisherId, context.agentProviderId, input, now);
+    const evidenceId = await this.insertEvidence(context.dispute, actorId, context.publisherId, context.agentProviderIds, input, now);
     // status_version 是整个任务事件流的单调版本，不只表示 status 字段是否变化。
     // 证据提交虽然仍处于 disputed，但它是需要 SSE/Webhook 可靠送达的新任务事实；
     // 在已持有 task 行锁的事务里递增版本，可避免并发提交产生重复事件版本。
@@ -148,20 +158,36 @@ export class PgDisputeRepository implements DisputeRepository {
   }
 
   async read(disputeId: string, actorId: string): Promise<DisputeResult> {
-    const access = await this.db.query<DisputeRow & { publisher_id: string; agent_provider_id: string | null; arbitrator: boolean; escrow_amount_minor: string | null }>(
+    const access = await this.db.query<DisputeRow & {
+      publisher_id: string;
+      authorized_agent: boolean;
+      platform_arbitrator: boolean;
+      dao_panel_member: boolean;
+      escrow_amount_minor: string | null;
+    }>(
       `SELECT dispute.id::text,dispute.task_id::text,dispute.opened_by,dispute.reason,dispute.status,
               dispute.evidence_deadline,dispute.funds_frozen,dispute.created_at,dispute.updated_at,
               task.publisher_id,
-              (SELECT agent.provider_wallet_address FROM task_assignments assignment JOIN agents agent ON agent.id=assignment.agent_id
-                WHERE assignment.task_id=task.id AND assignment.status='accepted' ORDER BY assignment.assigned_at DESC LIMIT 1) AS agent_provider_id,
-              EXISTS(SELECT 1 FROM platform_actor_roles WHERE lower(actor_id)=lower($2) AND role='arbitrator') AS arbitrator
+              EXISTS(SELECT 1 FROM task_assignments assignment JOIN agents agent ON agent.id=assignment.agent_id
+                WHERE assignment.task_id=task.id AND assignment.status='accepted'
+                  AND lower(agent.provider_wallet_address)=lower($2)) AS authorized_agent,
+              EXISTS(SELECT 1 FROM platform_actor_roles
+                WHERE lower(actor_id)=lower($2) AND role='arbitrator') AS platform_arbitrator,
+              EXISTS(SELECT 1 FROM dao_arbitration_rounds round
+                JOIN dao_arbitration_panel_members panel ON panel.round_id=round.id
+               WHERE round.dispute_id=dispute.id AND lower(panel.actor_id)=lower($2)) AS dao_panel_member
               ,(SELECT intent.amount_minor::text FROM escrow_intents intent WHERE intent.task_id=task.id) AS escrow_amount_minor
          FROM disputes dispute JOIN tasks task ON task.id=dispute.task_id WHERE dispute.id=$1`,
       [disputeId, actorId],
     );
     const dispute = access.rows[0];
     if (dispute === undefined) throw notFound("DISPUTE_NOT_FOUND", "争议不存在");
-    if (!sameActor(actorId, dispute.publisher_id) && !sameActor(actorId, dispute.agent_provider_id ?? "") && !dispute.arbitrator) {
+    if (
+      !sameActor(actorId, dispute.publisher_id)
+      && !dispute.authorized_agent
+      && !dispute.platform_arbitrator
+      && !dispute.dao_panel_member
+    ) {
       throw notFound("DISPUTE_NOT_FOUND", "争议不存在");
     }
     const evidence = await this.db.query<{
@@ -183,6 +209,29 @@ export class PgDisputeRepository implements DisputeRepository {
          FROM arbitration_decisions WHERE dispute_id=$1`,
       [disputeId],
     );
+    const daoRound = await this.db.query<{
+      id: string; status: string; panel_size: number; quorum: number; evidence_root: string | null;
+      voting_deadline: Date; decided_at: Date | null; panel_count: string; vote_count: string;
+      release_votes: string; partial_release_votes: string; refund_votes: string; viewer_has_voted: boolean;
+    }>(
+      `SELECT round.id::text,round.status,round.panel_size,round.quorum,round.evidence_root,
+              round.voting_deadline,round.decided_at,
+              (SELECT count(*)::text FROM dao_arbitration_panel_members panel
+                WHERE panel.round_id=round.id) AS panel_count,
+              (SELECT count(*)::text FROM dao_arbitration_votes vote
+                WHERE vote.round_id=round.id) AS vote_count,
+              (SELECT count(*)::text FROM dao_arbitration_votes vote
+                WHERE vote.round_id=round.id AND vote.decision='release') AS release_votes,
+              (SELECT count(*)::text FROM dao_arbitration_votes vote
+                WHERE vote.round_id=round.id AND vote.decision='partial_release') AS partial_release_votes,
+              (SELECT count(*)::text FROM dao_arbitration_votes vote
+                WHERE vote.round_id=round.id AND vote.decision='refund') AS refund_votes,
+              EXISTS(SELECT 1 FROM dao_arbitration_votes vote
+                WHERE vote.round_id=round.id AND lower(vote.actor_id)=lower($2)) AS viewer_has_voted
+         FROM dao_arbitration_rounds round WHERE round.dispute_id=$1`,
+      [disputeId, actorId],
+    );
+    const round = daoRound.rows[0];
     return result(200, {
       id: dispute.id, taskId: dispute.task_id, openedBy: dispute.opened_by, reason: dispute.reason,
       status: dispute.status, fundsFrozen: dispute.funds_frozen,
@@ -193,7 +242,29 @@ export class PgDisputeRepository implements DisputeRepository {
         attachments: row.attachments, createdAt: row.created_at.toISOString(),
       })),
       decision: decision.rows[0] === undefined ? null : serializeDecision(decision.rows[0]),
-      viewerRole: dispute.arbitrator ? "arbitrator" : sameActor(actorId, dispute.publisher_id) ? "publisher" : "agent",
+      // 平台仲裁员与 DAO 小组成员都可读卷宗，但只有平台角色能调用后台直接裁决接口。
+      // 分开返回可防止 DAO 成员被 UI 误导到一个最终必然 403 的操作入口。
+      viewerRole: dispute.platform_arbitrator || dispute.dao_panel_member
+        ? "arbitrator"
+        : sameActor(actorId, dispute.publisher_id) ? "publisher" : "agent",
+      viewerCanPlatformDecide: dispute.platform_arbitrator,
+      daoArbitration: round === undefined ? null : {
+        roundId: round.id,
+        status: round.status,
+        panelSize: round.panel_size,
+        panelCount: Number(round.panel_count),
+        quorum: round.quorum,
+        voteCount: Number(round.vote_count),
+        votes: {
+          release: Number(round.release_votes),
+          partialRelease: Number(round.partial_release_votes),
+          refund: Number(round.refund_votes),
+        },
+        viewerHasVoted: round.viewer_has_voted,
+        evidenceRoot: round.evidence_root,
+        votingDeadline: round.voting_deadline.toISOString(),
+        decidedAt: round.decided_at?.toISOString() ?? null,
+      },
     });
   }
 
@@ -202,10 +273,11 @@ export class PgDisputeRepository implements DisputeRepository {
     const role = await this.db.query("SELECT 1 FROM platform_actor_roles WHERE lower(actor_id)=lower($1) AND role='arbitrator'", [actorId]);
     const config = await this.db.query<{
       partial_release_enabled: boolean; fee_version: string; fee_basis_points: number; gas_fallback_minor: string;
-      amount_minor: string; payee: string | null;
+      amount_minor: string; payee: string | null; has_workflow: boolean;
     }>(
       `SELECT dispute_config.partial_release_enabled,fee.version AS fee_version,fee.fee_basis_points,
               fee.gas_fallback_minor::text,intent.amount_minor::text,
+              EXISTS(SELECT 1 FROM task_workflow_runs run WHERE run.task_id=$1) AS has_workflow,
               (SELECT agent.payout_wallet_address FROM task_assignments assignment JOIN agents agent ON agent.id=assignment.agent_id
                 WHERE assignment.task_id=$1 AND assignment.status='accepted' ORDER BY assignment.assigned_at DESC LIMIT 1) AS payee
          FROM dispute_config CROSS JOIN platform_fee_config fee
@@ -214,7 +286,7 @@ export class PgDisputeRepository implements DisputeRepository {
       [context.dispute.taskId],
     );
     const money = config.rows[0];
-    if (money === undefined || money.payee === null) throw new DisputeRepositoryError(409, "ESCROW_NOT_READY", "托管或 Agent 收款信息尚未就绪");
+    if (money === undefined) throw new DisputeRepositoryError(409, "ESCROW_NOT_READY", "托管信息尚未就绪");
     let decision: ArbitrationDecision;
     try {
       decision = decideDispute({
@@ -226,27 +298,88 @@ export class PgDisputeRepository implements DisputeRepository {
         partialReleaseEnabled: money.partial_release_enabled, now,
       });
     } catch (error) { throw domainError(error); }
-    const fee = decision.type === "refund" ? null : calculatePlatformFee(decision.releaseAmountMinor, {
-      feeBasisPoints: BigInt(money.fee_basis_points), gasFallbackMinor: BigInt(money.gas_fallback_minor),
-    });
-    const agentAmount = fee === null ? null : decision.releaseAmountMinor - fee;
+
+    // 新多 Agent 任务必须复用 DAO 相同的比例分账和证据摘要；没有正式 workflow_run 的
+    // 历史单 Agent 任务继续走旧执行格式，避免迁移后改变已经存在的争议恢复路径。
+    let settlementPlan: ArbitrationSettlementPlan | null = null;
+    let settlementBasisPoints: number | null = null;
+    if (money.has_workflow) {
+      try {
+        const settlementContext = await loadArbitrationSettlementContext(this.db, context.dispute.taskId, disputeId);
+        settlementBasisPoints = decision.type === "release"
+          ? 10_000
+          : decision.type === "refund"
+            ? 0
+            : Math.max(1, Math.min(9_999,
+              Number(decision.releaseAmountMinor * 10_000n / settlementContext.escrowAmountMinor)));
+        settlementPlan = buildArbitrationSettlementPlan({
+          context: settlementContext,
+          disputeId,
+          decisionId: decision.id,
+          decision: decision.type,
+          releaseAmountMinor: decision.releaseAmountMinor,
+          refundAmountMinor: decision.refundAmountMinor,
+          releaseBasisPoints: settlementBasisPoints,
+          responsibility: decision.agentResponsibility,
+          reason: decision.reason,
+          authority: { source: "platform", arbitratorId: actorId },
+        });
+      } catch (error) {
+        throw domainError(error);
+      }
+    }
+    if (!money.has_workflow && decision.type !== "refund" && money.payee === null) {
+      throw new DisputeRepositoryError(409, "ESCROW_NOT_READY", "Agent 收款信息尚未就绪");
+    }
+    const legacyFee = settlementPlan === null && decision.type !== "refund"
+      ? calculatePlatformFee(decision.releaseAmountMinor, {
+        feeBasisPoints: BigInt(money.fee_basis_points), gasFallbackMinor: BigInt(money.gas_fallback_minor),
+      })
+      : null;
+    const fee = settlementPlan?.platformFeeMinor ?? legacyFee;
+    const agentAmount = settlementPlan?.agentAmountMinor
+      ?? (legacyFee === null ? null : decision.releaseAmountMinor - legacyFee);
     await this.db.query(
       `INSERT INTO arbitration_decisions(
          id,dispute_id,arbitrator_id,decision,release_amount_minor,refund_amount_minor,
-         platform_fee_minor,agent_amount_minor,agent_responsibility,reason,execution_status,decided_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'decided',$11)`,
+         platform_fee_minor,agent_amount_minor,agent_responsibility,reason,execution_status,decided_at,
+         decision_source,release_basis_points,decision_hash,evidence_root
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'decided',$11,'platform',$12,$13,$14)`,
       [decision.id, disputeId, actorId, decision.type, decision.releaseAmountMinor.toString(), decision.refundAmountMinor.toString(),
-        fee?.toString() ?? null, agentAmount?.toString() ?? null, decision.agentResponsibility, decision.reason, now],
+        fee?.toString() ?? null, agentAmount?.toString() ?? null, decision.agentResponsibility, decision.reason, now,
+        settlementBasisPoints,
+        settlementPlan?.decisionHash ?? null, settlementPlan?.evidenceRoot ?? null],
     );
     await this.db.query("UPDATE disputes SET status='decided',updated_at=$2 WHERE id=$1", [disputeId, now]);
-    await this.db.query(
-      `INSERT INTO escrow_execution_jobs(
-         task_id,source,source_ref,action,payee,agent_gross_amount_minor,fee_amount_minor,status,next_attempt_at
-       ) VALUES ($1,'arbitration',$2,$3,$4,$5,$6,'pending',$7)`,
-      [context.dispute.taskId, decision.id, decision.type === "refund" ? "refund" : "release",
-        decision.type === "refund" ? null : money.payee.toLowerCase(),
-        decision.type === "refund" ? null : decision.releaseAmountMinor.toString(), fee?.toString() ?? null, now],
-    );
+    if (settlementPlan !== null) {
+      if (decision.type === "refund") {
+        await this.db.query(
+          `INSERT INTO escrow_execution_jobs(
+             task_id,source,source_ref,action,evidence_root,decision_hash,status,next_attempt_at
+           ) VALUES ($1,'arbitration',$2,'dispute_refund',$3,$4,'pending',$5)`,
+          [context.dispute.taskId, decision.id, settlementPlan.evidenceRoot, settlementPlan.decisionHash, now],
+        );
+      } else {
+        if (settlementPlan.settlementManifestHash === null) throw new Error("ARBITRATION_MANIFEST_REQUIRED");
+        await this.db.query(
+          `INSERT INTO escrow_execution_jobs(
+             task_id,source,source_ref,action,workflow_payouts,settlement_manifest_hash,
+             evidence_root,decision_hash,status,next_attempt_at
+           ) VALUES ($1,'arbitration',$2,'workflow_settle',$3::jsonb,$4,$5,$6,'pending',$7)`,
+          [context.dispute.taskId, decision.id, JSON.stringify(settlementPlan.payouts),
+            settlementPlan.settlementManifestHash, settlementPlan.evidenceRoot, settlementPlan.decisionHash, now],
+        );
+      }
+    } else {
+      await this.db.query(
+        `INSERT INTO escrow_execution_jobs(
+           task_id,source,source_ref,action,payee,agent_gross_amount_minor,fee_amount_minor,status,next_attempt_at
+         ) VALUES ($1,'arbitration',$2,$3,$4,$5,$6,'pending',$7)`,
+        [context.dispute.taskId, decision.id, decision.type === "refund" ? "refund" : "release",
+          decision.type === "refund" ? null : money.payee?.toLowerCase(),
+          decision.type === "refund" ? null : decision.releaseAmountMinor.toString(), fee?.toString() ?? null, now],
+      );
+    }
     // 仲裁决定会改变任务的可执行资金事实，即使 task.status 仍是 disputed，也必须占用
     // 一个新的单调事件版本，供 SSE 续传和 Agent Webhook 精确去重。
     const version = context.statusVersion + 1n;
@@ -274,21 +407,23 @@ export class PgDisputeRepository implements DisputeRepository {
   }
 
   private async lockDisputeContext(disputeId: string): Promise<{
-    dispute: DisputeRecord; publisherId: string; agentProviderId: string; statusVersion: bigint;
+    dispute: DisputeRecord; publisherId: string; agentProviderIds: readonly string[]; statusVersion: bigint;
   }> {
-    const result = await this.db.query<DisputeRow & { publisher_id: string; agent_provider_id: string | null; status_version: string }>(
+    const result = await this.db.query<DisputeRow & { publisher_id: string; agent_provider_ids: string[]; status_version: string }>(
       `SELECT dispute.id::text,dispute.task_id::text,dispute.opened_by,dispute.reason,dispute.status,
               dispute.evidence_deadline,dispute.funds_frozen,dispute.created_at,dispute.updated_at,
               task.publisher_id,task.status_version::text,
-              (SELECT agent.provider_wallet_address FROM task_assignments assignment JOIN agents agent ON agent.id=assignment.agent_id
-                WHERE assignment.task_id=task.id AND assignment.status='accepted' ORDER BY assignment.assigned_at DESC LIMIT 1) AS agent_provider_id
+              ARRAY(SELECT DISTINCT lower(agent.provider_wallet_address)
+                FROM task_assignments assignment JOIN agents agent ON agent.id=assignment.agent_id
+               WHERE assignment.task_id=task.id AND assignment.status='accepted'
+               ORDER BY lower(agent.provider_wallet_address)) AS agent_provider_ids
          FROM disputes dispute JOIN tasks task ON task.id=dispute.task_id
         WHERE dispute.id=$1 FOR UPDATE OF dispute,task`,
       [disputeId],
     );
     const row = result.rows[0];
     if (row === undefined) throw notFound("DISPUTE_NOT_FOUND", "争议不存在");
-    if (row.agent_provider_id === null) throw new DisputeRepositoryError(409, "TASK_NOT_ASSIGNED", "任务尚无已接单 Agent");
+    if (row.agent_provider_ids.length === 0) throw new DisputeRepositoryError(409, "TASK_NOT_ASSIGNED", "任务尚无已接单 Agent");
     if (!row.funds_frozen && row.status !== "executed") throw new Error("DISPUTE_FREEZE_INVARIANT_BROKEN");
     return {
       dispute: {
@@ -296,7 +431,7 @@ export class PgDisputeRepository implements DisputeRepository {
         status: row.status, evidenceDeadline: row.evidence_deadline, fundsFrozen: true, createdAt: row.created_at,
       },
       publisherId: row.publisher_id,
-      agentProviderId: row.agent_provider_id,
+      agentProviderIds: row.agent_provider_ids,
       statusVersion: BigInt(row.status_version),
     };
   }
@@ -305,7 +440,7 @@ export class PgDisputeRepository implements DisputeRepository {
     dispute: DisputeRecord,
     actorId: string,
     publisherId: string,
-    agentProviderId: string,
+    agentProviderIds: readonly string[],
     input: SubmitEvidenceInput,
     now: Date,
   ): Promise<string> {
@@ -314,7 +449,7 @@ export class PgDisputeRepository implements DisputeRepository {
     let evidence: ReturnType<typeof submitDisputeEvidence>;
     try {
       evidence = submitDisputeEvidence({
-        evidenceId, dispute, actorId, publisherId, agentProviderId,
+        evidenceId, dispute, actorId, publisherId, agentProviderIds,
         description: input.description, attachmentRefs: input.attachments.map((attachment) => attachment.storageRef), now,
       });
     } catch (error) { throw domainError(error); }

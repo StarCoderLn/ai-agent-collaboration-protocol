@@ -23,7 +23,7 @@ function makeOpenDispute() {
       taskId: "task-1",
       taskStatus: "awaiting_review",
       publisherId: "publisher",
-      agentProviderId: "agent-provider",
+      agentProviderIds: ["agent-provider"],
     },
   });
 }
@@ -43,7 +43,7 @@ describe("dispute lifecycle", () => {
       dispute,
       actorId: "agent-provider",
       publisherId: "publisher",
-      agentProviderId: "agent-provider",
+      agentProviderIds: ["agent-provider"],
       description: "附上执行日志与结果校验记录",
       attachmentRefs: ["attachment-1"],
       now: NOW,
@@ -54,7 +54,7 @@ describe("dispute lifecycle", () => {
       dispute,
       actorId: "publisher",
       publisherId: "publisher",
-      agentProviderId: "agent-provider",
+      agentProviderIds: ["agent-provider"],
       description: "迟到证据",
       attachmentRefs: [],
       now: new Date(dispute.evidenceDeadline.getTime() + 1),

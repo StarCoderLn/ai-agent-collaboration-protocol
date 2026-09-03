@@ -8,6 +8,7 @@ const ENV_KEYS = [
 	"YD_TOKEN_CHAIN_ID",
 	"YD_TOKEN_ADDRESS",
 	"YD_TOKEN_DECIMALS",
+	"ARBITRATION_DAO_YD_TOKEN_ADDRESS",
 ] as const;
 
 const originalEnv = Object.fromEntries(
@@ -22,6 +23,7 @@ describe("wallet asset config", () => {
 		delete process.env.YD_TOKEN_CHAIN_ID;
 		delete process.env.YD_TOKEN_ADDRESS;
 		delete process.env.YD_TOKEN_DECIMALS;
+		delete process.env.ARBITRATION_DAO_YD_TOKEN_ADDRESS;
 	});
 
 	afterEach(() => {
@@ -73,6 +75,20 @@ describe("wallet asset config", () => {
 			kind: "erc20",
 			chainId: 11_155_111,
 			address: "0x2222222222222222222222222222222222222222",
+			symbol: "YD",
+			decimals: 18,
+		});
+	});
+
+	it("does not let the local DAO test token override the product YD asset", () => {
+		process.env.ARBITRATION_DAO_YD_TOKEN_ADDRESS =
+			"0x2222222222222222222222222222222222222222";
+
+		expect(loadWalletAssetRegistryFromEnv().assets[1]).toEqual({
+			assetId: "yd",
+			kind: "erc20",
+			chainId: 11_155_111,
+			address: "0xf64bE7869CAf8B00E42209A2CEc3e681a448c320",
 			symbol: "YD",
 			decimals: 18,
 		});

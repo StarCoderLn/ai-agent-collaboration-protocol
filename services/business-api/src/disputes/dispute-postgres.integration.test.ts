@@ -204,6 +204,20 @@ async function cleanupFixture(
   await pool.query("DELETE FROM escrow_sync WHERE task_id=$1", [taskId]);
   await pool.query("DELETE FROM escrow_execution_jobs WHERE task_id=$1", [taskId]);
   await pool.query("DELETE FROM arbitration_decisions WHERE dispute_id IN (SELECT id FROM disputes WHERE task_id=$1)", [taskId]);
+  // 每个新争议都会同步建立 DAO 轮次。先按外键逆序清理投票、小组和轮次，避免旧版
+  // 测试夹具只认识 disputes 表，在新增 DAO 聚合后把清理失败误报成业务失败。
+  await pool.query(
+    "DELETE FROM dao_arbitration_votes WHERE round_id IN (SELECT round.id FROM dao_arbitration_rounds round JOIN disputes dispute ON dispute.id=round.dispute_id WHERE dispute.task_id=$1)",
+    [taskId],
+  );
+  await pool.query(
+    "DELETE FROM dao_arbitration_panel_members WHERE round_id IN (SELECT round.id FROM dao_arbitration_rounds round JOIN disputes dispute ON dispute.id=round.dispute_id WHERE dispute.task_id=$1)",
+    [taskId],
+  );
+  await pool.query(
+    "DELETE FROM dao_arbitration_rounds WHERE dispute_id IN (SELECT id FROM disputes WHERE task_id=$1)",
+    [taskId],
+  );
   await pool.query("DELETE FROM dispute_evidence WHERE dispute_id IN (SELECT id FROM disputes WHERE task_id=$1)", [taskId]);
   await pool.query("DELETE FROM disputes WHERE task_id=$1", [taskId]);
   await pool.query("DELETE FROM escrow_intents WHERE task_id=$1", [taskId]);

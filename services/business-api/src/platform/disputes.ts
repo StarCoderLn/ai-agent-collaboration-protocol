@@ -46,7 +46,7 @@ export type DisputeContext = Readonly<{
   taskId: string;
   taskStatus: TaskStatus;
   publisherId: string;
-  agentProviderId: string;
+  agentProviderIds: readonly string[];
 }>;
 
 /** 创建争议与任务迁移在同一个业务事务中提交，返回的新状态是资金冻结的唯一依据。 */
@@ -58,7 +58,10 @@ export function openDispute(input: Readonly<{
   evidenceWindowMs: number;
   context: DisputeContext;
 }>): { dispute: DisputeRecord; taskStatus: TaskStatus } {
-  if (!sameActor(input.actorId, input.context.publisherId) && !sameActor(input.actorId, input.context.agentProviderId)) {
+  if (
+    !sameActor(input.actorId, input.context.publisherId)
+    && !input.context.agentProviderIds.some((providerId) => sameActor(input.actorId, providerId))
+  ) {
     throw new Error("DISPUTE_FORBIDDEN");
   }
   if (input.reason.trim().length < 10 || input.evidenceWindowMs <= 0) throw new Error("INVALID_DISPUTE_INPUT");
@@ -84,12 +87,12 @@ export function submitDisputeEvidence(input: Readonly<{
   dispute: DisputeRecord;
   actorId: string;
   publisherId: string;
-  agentProviderId: string;
+  agentProviderIds: readonly string[];
   description: string;
   attachmentRefs: readonly string[];
   now: Date;
 }>): DisputeEvidence {
-  const party = resolveParty(input.actorId, input.publisherId, input.agentProviderId);
+  const party = resolveParty(input.actorId, input.publisherId, input.agentProviderIds);
   if (input.dispute.status !== "evidence_collection") throw new Error("EVIDENCE_COLLECTION_CLOSED");
   if (input.now > input.dispute.evidenceDeadline) throw new Error("EVIDENCE_DEADLINE_PASSED");
   if (input.description.trim().length === 0) throw new Error("EVIDENCE_DESCRIPTION_REQUIRED");
@@ -173,9 +176,9 @@ export function assertNormalEscrowOperationAllowed(taskStatus: TaskStatus): void
   if (taskStatus === "disputed") throw new Error("ESCROW_FROZEN_BY_DISPUTE");
 }
 
-function resolveParty(actorId: string, publisherId: string, agentProviderId: string): DisputeParty {
+function resolveParty(actorId: string, publisherId: string, agentProviderIds: readonly string[]): DisputeParty {
   if (sameActor(actorId, publisherId)) return "publisher";
-  if (sameActor(actorId, agentProviderId)) return "agent";
+  if (agentProviderIds.some((providerId) => sameActor(actorId, providerId))) return "agent";
   throw new Error("DISPUTE_EVIDENCE_FORBIDDEN");
 }
 
