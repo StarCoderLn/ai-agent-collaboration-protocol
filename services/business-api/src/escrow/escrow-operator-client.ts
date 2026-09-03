@@ -1,19 +1,26 @@
 import { JsonRpcProvider, keccak256 } from "ethers";
 
 import {
+  encodeDisputeRefundCall,
   encodeFinalizeCall,
   encodeMilestoneReleaseCall,
   encodeRefundCall,
   encodeReleaseCall,
+  encodeWorkflowSettlementCall,
+  type WorkflowSettlementPayout,
 } from "./escrow-chain-client";
 
 export type EscrowOperatorJob = Readonly<{
   taskKey: string;
   contractAddress: string;
-  action: "release" | "milestone_release" | "finalize" | "refund";
+  action: "release" | "milestone_release" | "finalize" | "workflow_settle" | "refund" | "dispute_refund";
   payee: string | null;
   agentGrossAmountMinor: bigint | null;
   feeAmountMinor: bigint | null;
+  workflowPayouts?: readonly WorkflowSettlementPayout[] | null;
+  settlementManifestHash?: string | null;
+  evidenceRoot?: string | null;
+  decisionHash?: string | null;
 }>;
 
 export type PreparedOperatorTransaction = Readonly<{ txHash: string; rawTransaction: string }>;
@@ -79,7 +86,22 @@ export class LocalUnlockedEscrowOperatorClient implements EscrowOperatorClient {
 
 function encodeOperatorCall(job: EscrowOperatorJob): string {
   if (job.action === "refund") return encodeRefundCall(job.taskKey);
+  if (job.action === "dispute_refund") {
+    return encodeDisputeRefundCall(
+      job.taskKey,
+      required(job.decisionHash ?? null, "DISPUTE_DECISION_HASH_REQUIRED"),
+      required(job.evidenceRoot ?? null, "DISPUTE_EVIDENCE_ROOT_REQUIRED"),
+    );
+  }
   if (job.action === "finalize") return encodeFinalizeCall(job.taskKey);
+  if (job.action === "workflow_settle") {
+    return encodeWorkflowSettlementCall(
+      job.taskKey,
+      required(job.workflowPayouts ?? null, "WORKFLOW_PAYOUTS_REQUIRED"),
+      required(job.settlementManifestHash ?? null, "SETTLEMENT_MANIFEST_HASH_REQUIRED"),
+      required(job.evidenceRoot ?? null, "SETTLEMENT_EVIDENCE_ROOT_REQUIRED"),
+    );
+  }
   const payee = required(job.payee, "RELEASE_PAYEE_REQUIRED");
   const gross = required(job.agentGrossAmountMinor, "RELEASE_GROSS_REQUIRED");
   const fee = required(job.feeAmountMinor, "RELEASE_FEE_REQUIRED");

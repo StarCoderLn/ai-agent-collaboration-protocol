@@ -12,12 +12,16 @@ const ESCROW_ABI = [
   "event Released(bytes32 indexed taskId,address indexed payee,uint256 escrowAmount,uint256 agentGrossAmount,uint256 feeAmount,uint256 payerRefundAmount)",
   "event MilestoneReleased(bytes32 indexed taskId,address indexed payee,uint256 escrowAmount,uint256 milestoneGrossAmount,uint256 feeAmount,uint256 totalReleasedAmount,uint256 remainingAmount)",
   "event Finalized(bytes32 indexed taskId,address indexed payer,uint256 escrowAmount,uint256 releasedAmount,uint256 payerRefundAmount)",
+  "event WorkflowSettled(bytes32 indexed taskId,bytes32 indexed settlementManifestHash,bytes32 indexed evidenceRoot,address payer,uint256 escrowAmount,uint256 totalGrossAmount,uint256 totalFeeAmount,uint256 payerRefundAmount)",
   "event Refunded(bytes32 indexed taskId,address indexed payer,uint256 escrowAmount,uint256 releasedAmount,uint256 payerRefundAmount)",
+  "event DisputeRefunded(bytes32 indexed taskId,bytes32 indexed decisionHash,bytes32 indexed evidenceRoot,address payer,uint256 escrowAmount,uint256 payerRefundAmount)",
   "function deposit(bytes32 taskId,uint256 amount)",
   "function release(bytes32 taskId,address payee,uint256 agentGrossAmount,uint256 feeAmount)",
   "function releaseMilestone(bytes32 taskId,address payee,uint256 agentGrossAmount,uint256 feeAmount)",
   "function finalize(bytes32 taskId)",
+  "function settleWorkflow(bytes32 taskId,(address payee,uint256 grossAmount,uint256 feeAmount)[] payouts,bytes32 settlementManifestHash,bytes32 evidenceRoot)",
   "function refund(bytes32 taskId)",
+  "function refundDispute(bytes32 taskId,bytes32 decisionHash,bytes32 evidenceRoot)",
   "function escrowOf(bytes32 taskId) view returns ((address payer,uint256 amount,uint256 releasedAmount,uint8 state))",
 ] as const;
 const ERC20_ABI = ["function approve(address spender,uint256 amount) returns (bool)"] as const;
@@ -52,10 +56,28 @@ export type EscrowEventPayload =
     payerRefundAmountMinor: bigint;
   }>
   | Readonly<{
+    type: "WorkflowSettled";
+    settlementManifestHash: string;
+    evidenceRoot: string;
+    payer: string;
+    escrowAmountMinor: bigint;
+    totalGrossAmountMinor: bigint;
+    totalFeeAmountMinor: bigint;
+    payerRefundAmountMinor: bigint;
+  }>
+  | Readonly<{
     type: "Refunded";
     payer: string;
     escrowAmountMinor: bigint;
     releasedAmountMinor: bigint;
+    payerRefundAmountMinor: bigint;
+  }>
+  | Readonly<{
+    type: "DisputeRefunded";
+    decisionHash: string;
+    evidenceRoot: string;
+    payer: string;
+    escrowAmountMinor: bigint;
     payerRefundAmountMinor: bigint;
   }>;
 
@@ -124,7 +146,9 @@ export class EthersEscrowChainClient implements EscrowChainClient {
         eventTopic("Released"),
         eventTopic("MilestoneReleased"),
         eventTopic("Finalized"),
+        eventTopic("WorkflowSettled"),
         eventTopic("Refunded"),
+        eventTopic("DisputeRefunded"),
       ]],
     });
     return logs.map((log) => parseEscrowLog(log, this.chainId, this.contractAddress));
@@ -191,9 +215,51 @@ export function encodeFinalizeCall(taskKey: string): string {
   return escrowInterface.encodeFunctionData("finalize", [taskKey]);
 }
 
+export type WorkflowSettlementPayout = Readonly<{
+  payee: string;
+  grossAmountMinor: bigint;
+  feeAmountMinor: bigint;
+}>;
+
+/**
+ * 统一结算 calldata 只接受已经在业务事务中固化的清单和哈希。这里再次校验地址、金额
+ * 与最大项数，避免损坏的 outbox 记录进入签名边界后才由链上回滚。
+ */
+export function encodeWorkflowSettlementCall(
+  taskKey: string,
+  payouts: readonly WorkflowSettlementPayout[],
+  settlementManifestHash: string,
+  evidenceRoot: string,
+): string {
+  assertBytes32(taskKey, "INVALID_TASK_KEY");
+  assertBytes32(settlementManifestHash, "INVALID_SETTLEMENT_MANIFEST_HASH");
+  assertBytes32(evidenceRoot, "INVALID_EVIDENCE_ROOT");
+  if (payouts.length === 0 || payouts.length > 32) throw new Error("INVALID_WORKFLOW_PAYOUT_COUNT");
+  const encodedPayouts = payouts.map((payout) => {
+    if (payout.grossAmountMinor <= 0n || payout.feeAmountMinor < 0n || payout.feeAmountMinor > payout.grossAmountMinor) {
+      throw new Error("INVALID_WORKFLOW_PAYOUT_AMOUNT");
+    }
+    return [normalizeAddress(payout.payee), payout.grossAmountMinor, payout.feeAmountMinor] as const;
+  });
+  return escrowInterface.encodeFunctionData("settleWorkflow", [
+    taskKey,
+    encodedPayouts,
+    settlementManifestHash,
+    evidenceRoot,
+  ]);
+}
+
 export function encodeRefundCall(taskKey: string): string {
   assertBytes32(taskKey, "INVALID_TASK_KEY");
   return escrowInterface.encodeFunctionData("refund", [taskKey]);
+}
+
+/** DAO 全额退款必须把裁决与证据摘要随资金交易一起写入链上，不能退化成普通退款。 */
+export function encodeDisputeRefundCall(taskKey: string, decisionHash: string, evidenceRoot: string): string {
+  assertBytes32(taskKey, "INVALID_TASK_KEY");
+  assertBytes32(decisionHash, "INVALID_DECISION_HASH");
+  assertBytes32(evidenceRoot, "INVALID_EVIDENCE_ROOT");
+  return escrowInterface.encodeFunctionData("refundDispute", [taskKey, decisionHash, evidenceRoot]);
 }
 
 function parseEscrowLog(log: Log, chainId: bigint, contractAddress: string): ObservedEscrowEvent {
@@ -252,6 +318,21 @@ function parseEscrowLog(log: Log, chainId: bigint, contractAddress: string): Obs
       },
     };
   }
+  if (parsed.name === "WorkflowSettled") {
+    return {
+      ...common,
+      payload: {
+        type: "WorkflowSettled",
+        settlementManifestHash: normalizedHash(String(parsed.args[1])),
+        evidenceRoot: normalizedHash(String(parsed.args[2])),
+        payer: normalizeAddress(String(parsed.args[3])),
+        escrowAmountMinor: BigInt(String(parsed.args[4])),
+        totalGrossAmountMinor: BigInt(String(parsed.args[5])),
+        totalFeeAmountMinor: BigInt(String(parsed.args[6])),
+        payerRefundAmountMinor: BigInt(String(parsed.args[7])),
+      },
+    };
+  }
   if (parsed.name === "Refunded") {
     return {
       ...common,
@@ -261,6 +342,19 @@ function parseEscrowLog(log: Log, chainId: bigint, contractAddress: string): Obs
         escrowAmountMinor: BigInt(String(parsed.args[2])),
         releasedAmountMinor: BigInt(String(parsed.args[3])),
         payerRefundAmountMinor: BigInt(String(parsed.args[4])),
+      },
+    };
+  }
+  if (parsed.name === "DisputeRefunded") {
+    return {
+      ...common,
+      payload: {
+        type: "DisputeRefunded",
+        decisionHash: normalizedHash(String(parsed.args[1])),
+        evidenceRoot: normalizedHash(String(parsed.args[2])),
+        payer: normalizeAddress(String(parsed.args[3])),
+        escrowAmountMinor: BigInt(String(parsed.args[4])),
+        payerRefundAmountMinor: BigInt(String(parsed.args[5])),
       },
     };
   }
@@ -289,7 +383,7 @@ function toEscrowState(value: number): OnchainEscrowRecord["state"] {
   throw new Error("INVALID_ESCROW_STATE");
 }
 
-function eventTopic(name: "Deposited" | "Released" | "MilestoneReleased" | "Finalized" | "Refunded"): string {
+function eventTopic(name: "Deposited" | "Released" | "MilestoneReleased" | "Finalized" | "WorkflowSettled" | "Refunded" | "DisputeRefunded"): string {
   const fragment = escrowInterface.getEvent(name);
   if (fragment === null) throw new Error("ESCROW_ABI_EVENT_NOT_FOUND");
   return fragment.topicHash;

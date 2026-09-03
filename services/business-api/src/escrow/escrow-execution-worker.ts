@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 
 import { PgAuditLogWriter } from "../audit/audit-log-writer";
 import type { PoolLike, QueryExecutor } from "../db/pool";
@@ -17,6 +18,12 @@ type ClaimedJob = EscrowOperatorJob & Readonly<{
   id: string; taskId: string; source: "acceptance" | "workflow_acceptance" | "workflow_run" | "arbitration"; sourceRef: string;
   attemptNo: number; token: string; rawTransaction: string | null; txHash: string | null;
 }>;
+
+const WorkflowPayoutsSchema = z.array(z.object({
+  payee: z.string().regex(/^0x[0-9a-f]{40}$/),
+  grossAmountMinor: z.string().regex(/^\d+$/).transform(BigInt),
+  feeAmountMinor: z.string().regex(/^\d+$/).transform(BigInt),
+}).strict()).min(1).max(32);
 
 export class EscrowExecutionWorker {
   constructor(
@@ -54,13 +61,15 @@ export class EscrowExecutionWorker {
 async function claimJob(db: QueryExecutor, now: Date, leaseMs: number): Promise<ClaimedJob | null> {
   const selected = await db.query<{
     id: string; task_id: string; source: "acceptance" | "workflow_acceptance" | "workflow_run" | "arbitration"; source_ref: string;
-    action: "release" | "milestone_release" | "finalize" | "refund"; payee: string | null; agent_gross_amount_minor: string | null;
+    action: "release" | "milestone_release" | "finalize" | "workflow_settle" | "refund" | "dispute_refund"; payee: string | null; agent_gross_amount_minor: string | null;
     fee_amount_minor: string | null; attempt_no: number; raw_transaction: string | null; tx_hash: string | null;
+    workflow_payouts: unknown; settlement_manifest_hash: string | null; evidence_root: string | null; decision_hash: string | null;
     task_key: string; contract_address: string; task_status: string; alert_open: boolean; workflow_source_valid: boolean;
   }>(
     `SELECT job.id::text,job.task_id::text,job.source,job.source_ref::text,job.action,job.payee,
             job.agent_gross_amount_minor::text,job.fee_amount_minor::text,job.attempt_no,
-            job.raw_transaction,job.tx_hash,intent.task_key,intent.contract_address,
+            job.raw_transaction,job.tx_hash,job.workflow_payouts,job.settlement_manifest_hash,
+            job.evidence_root,job.decision_hash,intent.task_key,intent.contract_address,
             task.status AS task_status,
             EXISTS(SELECT 1 FROM reconciliation_alerts alert WHERE alert.task_id=task.id
                     AND alert.resolved_at IS NULL AND alert.operations_frozen=TRUE) AS alert_open,
@@ -100,12 +109,35 @@ async function claimJob(db: QueryExecutor, now: Date, leaseMs: number): Promise<
     ? row.task_status === "pending_settlement"
     : row.source === "arbitration"
       ? row.task_status === "disputed"
-      : row.workflow_source_valid && !["disputed", "refunded", "settled"].includes(row.task_status);
+      : row.source === "workflow_run"
+        // 新工作流只有在发布者完成最终验收、任务显式进入等待结算后才能广播统一分账。
+        // 旧版仅凭 run.completed 就允许 finalize，会把内部质量门禁错误提升为资金授权。
+        ? row.workflow_source_valid && row.task_status === "pending_settlement"
+        : row.workflow_source_valid && !["disputed", "refunded", "settled"].includes(row.task_status);
   if (!allowed || row.alert_open) {
     await db.query(
       `UPDATE escrow_execution_jobs SET status=$2,last_error_code=$3,lock_token=NULL,
               lock_expires_at=NULL,updated_at=$4 WHERE id=$1`,
       [row.id, allowed ? "dead_letter" : "cancelled", row.alert_open ? "ESCROW_OPERATIONS_FROZEN" : "TASK_STATE_CHANGED", now],
+    );
+    return null;
+  }
+  let workflowPayouts;
+  try {
+    workflowPayouts = parseWorkflowPayouts(row.action, row.workflow_payouts);
+  } catch {
+    // JSONB 可能来自迁移、人工恢复或旧版本，不能因为损坏清单让 worker 每轮崩溃。
+    // 进入死信并冻结该任务，等待运营核对原始验收事实后显式修复。
+    await db.query(
+      "UPDATE escrow_execution_jobs SET status='dead_letter',last_error_code='INVALID_WORKFLOW_PAYOUTS',updated_at=$2 WHERE id=$1",
+      [row.id, now],
+    );
+    await db.query(
+      `INSERT INTO reconciliation_alerts(task_id,discrepancy_summary,operations_frozen)
+       VALUES ($1,$2::jsonb,TRUE)
+       ON CONFLICT (task_id) WHERE resolved_at IS NULL
+       DO UPDATE SET discrepancy_summary=EXCLUDED.discrepancy_summary,operations_frozen=TRUE`,
+      [row.task_id, JSON.stringify({ code: "INVALID_WORKFLOW_PAYOUTS", jobId: row.id })],
     );
     return null;
   }
@@ -121,6 +153,10 @@ async function claimJob(db: QueryExecutor, now: Date, leaseMs: number): Promise<
     action: row.action, payee: row.payee,
     agentGrossAmountMinor: row.agent_gross_amount_minor === null ? null : BigInt(row.agent_gross_amount_minor),
     feeAmountMinor: row.fee_amount_minor === null ? null : BigInt(row.fee_amount_minor),
+    workflowPayouts,
+    settlementManifestHash: row.settlement_manifest_hash,
+    evidenceRoot: row.evidence_root,
+    decisionHash: row.decision_hash,
     taskKey: row.task_key, contractAddress: row.contract_address,
     attemptNo: required(updated.rows[0], "ESCROW_JOB_NOT_CLAIMED").attempt_no,
     token, rawTransaction: row.raw_transaction, txHash: row.tx_hash,
@@ -184,13 +220,17 @@ async function markSubmitted(db: QueryExecutor, job: ClaimedJob, txHash: string,
 function submittedEventType(job: ClaimedJob): string {
   if (job.source === "arbitration") return "task.arbitration_execution_submitted";
   if (job.source === "workflow_acceptance") return "task.workflow_milestone_submitted";
-  if (job.source === "workflow_run") return "task.workflow_finalize_submitted";
+  // 新工作流广播的是包含全部 Agent 分账和证据根的一次性结算，不再是旧版先逐阶段
+  // 打款、最后仅退余额的 finalize。事件名称必须反映真实资金语义，避免审计消费者把
+  // “统一分账已提交”误解成“历史里程碑付款后的收尾退款”。
+  if (job.source === "workflow_run") return "task.workflow_settlement_submitted";
   return "task.settlement_submitted";
 }
 
 function submittedTaskStatus(job: ClaimedJob): string {
   if (job.source === "arbitration") return "disputed";
   if (job.source === "acceptance") return "pending_settlement";
+  if (job.source === "workflow_run") return "pending_settlement";
   return "executing";
 }
 
@@ -228,7 +268,7 @@ async function recordFailure(
       });
     }
   }
-  if (job.action === "refund") {
+  if (job.action === "refund" || job.action === "dispute_refund") {
     await db.query(
       `INSERT INTO refund_attempts(
          task_id,attempt_no,status,idempotency_key,error_message,next_attempt_at,attempted_at
@@ -258,4 +298,17 @@ function errorCode(error: unknown): string {
 function required<T>(value: T | undefined, code: string): T {
   if (value === undefined) throw new Error(code);
   return value;
+}
+
+/** 数据库 JSONB 仍是不可信边界；损坏清单必须在签名前停止，绝不能传给 Operator。 */
+function parseWorkflowPayouts(action: ClaimedJob["action"], value: unknown) {
+  if (action !== "workflow_settle") return null;
+  const parsed = WorkflowPayoutsSchema.safeParse(value);
+  if (!parsed.success) throw new Error("INVALID_WORKFLOW_PAYOUTS");
+  for (const payout of parsed.data) {
+    if (payout.grossAmountMinor <= 0n || payout.feeAmountMinor > payout.grossAmountMinor) {
+      throw new Error("INVALID_WORKFLOW_PAYOUTS");
+    }
+  }
+  return parsed.data;
 }

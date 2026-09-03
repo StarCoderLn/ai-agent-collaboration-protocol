@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  type EscrowChainClient,
   encodeDepositCall,
   encodeUsdcApprovalCall,
   taskKeyForTaskId,
-  type EscrowChainClient,
 } from "./escrow-chain-client";
 import {
   type EscrowIntent,
@@ -43,7 +43,9 @@ export class EscrowService {
     private readonly repository: EscrowRepository,
     private readonly chain: EscrowChainClient,
     private readonly config: EscrowRuntimeConfig,
-  ) { validateConfig(config); }
+  ) {
+    validateConfig(config);
+  }
 
   async prepare(taskId: string, publisherId: string) {
     const intent = await this.repository.prepareIntent({
@@ -76,12 +78,18 @@ export class EscrowService {
     };
   }
 
-  async recordSubmitted(taskId: string, publisherId: string, txHash: string) {
-    return presentIntent(await this.repository.recordSubmission(taskId, publisherId, txHash), this.config.requiredConfirmations);
+  async recordSubmitted(taskId: string, publisherId: string, txHash: string, expectedAmountMinor: bigint) {
+    return presentIntent(
+      await this.repository.recordSubmission(taskId, publisherId, txHash, expectedAmountMinor),
+      this.config.requiredConfirmations,
+    );
   }
 
   async recordFailed(taskId: string, publisherId: string, reason: string) {
-    return presentIntent(await this.repository.markSubmissionFailed(taskId, publisherId, reason), this.config.requiredConfirmations);
+    return presentIntent(
+      await this.repository.markSubmissionFailed(taskId, publisherId, reason),
+      this.config.requiredConfirmations,
+    );
   }
 
   async status(taskId: string, publisherId: string) {
@@ -167,7 +175,10 @@ export class EscrowService {
     }
   }
 
-  private async processPending(head: bigint, now: Date): Promise<Readonly<{ confirmed: number; orphaned: number; needsReview: number }>> {
+  private async processPending(
+    head: bigint,
+    now: Date,
+  ): Promise<Readonly<{ confirmed: number; orphaned: number; needsReview: number }>> {
     const pending = await this.repository.listPending(this.config.eventBatchSize);
     let confirmed = 0;
     let orphaned = 0;
@@ -176,7 +187,12 @@ export class EscrowService {
       const confirmations = head >= event.blockNumber ? head - event.blockNumber + 1n : 0n;
       const canonicalHash = await this.chain.getBlockHash(event.blockNumber);
       if (confirmations < this.config.requiredConfirmations) {
-        const state = await this.repository.recordPendingCheck({ eventId: event.id, canonicalBlockHash: canonicalHash, confirmations, now });
+        const state = await this.repository.recordPendingCheck({
+          eventId: event.id,
+          canonicalBlockHash: canonicalHash,
+          confirmations,
+          now,
+        });
         if (state === "orphaned") orphaned += 1;
         continue;
       }
@@ -198,7 +214,7 @@ export class EscrowService {
     let needsReview = 0;
     for (const event of events) {
       const hash = await this.chain.getBlockHash(event.blockNumber);
-      if (await this.repository.recordCanonicalRecheck(event.id, hash, now) === "needs_review") needsReview += 1;
+      if ((await this.repository.recordCanonicalRecheck(event.id, hash, now)) === "needs_review") needsReview += 1;
     }
     return needsReview;
   }
@@ -239,14 +255,26 @@ function presentStatus(view: EscrowStatusView, requiredConfirmations: bigint) {
 }
 
 function validateConfig(config: EscrowRuntimeConfig): void {
-  if (config.requiredConfirmations <= 0n || config.startBlock < 0n || config.maxBlockSpan <= 0n) throw new Error("INVALID_ESCROW_BLOCK_CONFIG");
+  if (config.requiredConfirmations <= 0n || config.startBlock < 0n || config.maxBlockSpan <= 0n)
+    throw new Error("INVALID_ESCROW_BLOCK_CONFIG");
   if (!Number.isInteger(config.leaseMs) || config.leaseMs < 1_000) throw new Error("INVALID_ESCROW_LEASE");
   for (const limit of [config.eventBatchSize, config.recheckBatchSize, config.reconciliationBatchSize]) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1_000) throw new Error("INVALID_ESCROW_BATCH_SIZE");
   }
 }
 
-function minBigint(left: bigint, right: bigint): bigint { return left < right ? left : right; }
+function minBigint(left: bigint, right: bigint): bigint {
+  return left < right ? left : right;
+}
 function emptyWorkerResult(leaseAcquired: boolean): EscrowWorkerResult {
-  return { leaseAcquired, fromBlock: null, toBlock: null, observed: 0, confirmed: 0, orphaned: 0, needsReview: 0, reconciled: 0 };
+  return {
+    leaseAcquired,
+    fromBlock: null,
+    toBlock: null,
+    observed: 0,
+    confirmed: 0,
+    orphaned: 0,
+    needsReview: 0,
+    reconciled: 0,
+  };
 }

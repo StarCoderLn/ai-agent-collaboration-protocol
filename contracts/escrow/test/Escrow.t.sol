@@ -16,6 +16,24 @@ contract EscrowTest is Test {
         uint256 feeAmount,
         uint256 payerRefundAmount
     );
+    event WorkflowPayoutReleased(
+        bytes32 indexed taskId,
+        uint256 indexed payoutIndex,
+        address indexed payee,
+        uint256 grossAmount,
+        uint256 feeAmount,
+        uint256 netAmount
+    );
+    event WorkflowSettled(
+        bytes32 indexed taskId,
+        bytes32 indexed settlementManifestHash,
+        bytes32 indexed evidenceRoot,
+        address payer,
+        uint256 escrowAmount,
+        uint256 totalGrossAmount,
+        uint256 totalFeeAmount,
+        uint256 payerRefundAmount
+    );
 
     Escrow private escrow;
     TestUSDC private usdc;
@@ -26,6 +44,7 @@ contract EscrowTest is Test {
     address private feeReceiver = makeAddr("feeReceiver");
     address private payer = makeAddr("payer");
     address private payee = makeAddr("payee");
+    address private secondPayee = makeAddr("second-payee");
     bytes32 private taskId = keccak256("task-1");
 
     function setUp() public {
@@ -104,57 +123,64 @@ contract EscrowTest is Test {
         escrow.release(taskId, payee, 500_000, 500_001);
     }
 
-    function testMilestonesReleaseIndependentlyAndFinalizeRefundsOnlyRemainingBudget() public {
+    function testWorkflowSettlementAtomicallyPaysEveryAgentAndAnchorsEvidence() public {
         vm.prank(payer);
         escrow.deposit(taskId, 3 * ONE_USDC);
 
-        vm.startPrank(operator);
-        escrow.releaseMilestone(taskId, payee, ONE_USDC, 10_000);
-        escrow.releaseMilestone(taskId, payee, 500_000, 5_000);
-        escrow.finalize(taskId);
-        vm.stopPrank();
+        Escrow.WorkflowPayout[] memory payouts = new Escrow.WorkflowPayout[](2);
+        payouts[0] = Escrow.WorkflowPayout({payee: payee, grossAmount: ONE_USDC, feeAmount: 10_000});
+        payouts[1] = Escrow.WorkflowPayout({payee: secondPayee, grossAmount: 500_000, feeAmount: 5_000});
+        bytes32 manifestHash = keccak256("settlement-manifest");
+        bytes32 evidenceRoot = keccak256("accepted-evidence");
+
+        vm.expectEmit(true, true, true, true, address(escrow));
+        emit WorkflowPayoutReleased(taskId, 0, payee, ONE_USDC, 10_000, 990_000);
+        vm.expectEmit(true, true, true, true, address(escrow));
+        emit WorkflowPayoutReleased(taskId, 1, secondPayee, 500_000, 5_000, 495_000);
+        vm.expectEmit(true, true, true, true, address(escrow));
+        emit WorkflowSettled(taskId, manifestHash, evidenceRoot, payer, 3 * ONE_USDC, 1_500_000, 15_000, 1_500_000);
+        vm.prank(operator);
+        escrow.settleWorkflow(taskId, payouts, manifestHash, evidenceRoot);
 
         Escrow.EscrowRecord memory record = escrow.escrowOf(taskId);
         assertEq(record.amount, 3 * ONE_USDC);
         assertEq(record.releasedAmount, 1_500_000);
         assertEq(uint256(record.state), uint256(Escrow.EscrowState.Released));
-        assertEq(usdc.balanceOf(payee), 1_485_000);
+        assertEq(usdc.balanceOf(payee), 990_000);
+        assertEq(usdc.balanceOf(secondPayee), 495_000);
         assertEq(usdc.balanceOf(feeReceiver), 15_000);
         assertEq(usdc.balanceOf(payer), 8_500_000);
         assertEq(usdc.balanceOf(address(escrow)), 0);
     }
 
-    function testMilestoneCannotExceedRemainingBudgetOrBeReleasedTwiceAfterFinalize() public {
-        _depositOneUsdc();
-        vm.prank(operator);
-        escrow.releaseMilestone(taskId, payee, 750_000, 10_000);
-
-        vm.expectRevert(Escrow.InvalidAmount.selector);
-        vm.prank(operator);
-        escrow.releaseMilestone(taskId, payee, 250_001, 0);
-
-        vm.prank(operator);
-        escrow.finalize(taskId);
-        vm.expectRevert(abi.encodeWithSelector(Escrow.EscrowNotDeposited.selector, taskId));
-        vm.prank(operator);
-        escrow.releaseMilestone(taskId, payee, 1, 0);
-    }
-
-    function testRefundAfterAcceptedMilestoneReturnsOnlyUnreleasedBalance() public {
+    function testWorkflowSettlementRejectsInvalidListAndCannotRunTwice() public {
         vm.prank(payer);
         escrow.deposit(taskId, 2 * ONE_USDC);
-        vm.startPrank(operator);
-        escrow.releaseMilestone(taskId, payee, 600_000, 10_000);
-        escrow.refund(taskId);
-        vm.stopPrank();
+        Escrow.WorkflowPayout[] memory payouts = new Escrow.WorkflowPayout[](2);
+        payouts[0] = Escrow.WorkflowPayout({payee: payee, grossAmount: ONE_USDC, feeAmount: 0});
+        payouts[1] = Escrow.WorkflowPayout({payee: secondPayee, grossAmount: ONE_USDC + 1, feeAmount: 0});
+        vm.expectRevert(Escrow.InvalidAmount.selector);
+        vm.prank(operator);
+        escrow.settleWorkflow(taskId, payouts, keccak256("manifest"), keccak256("evidence"));
 
-        Escrow.EscrowRecord memory record = escrow.escrowOf(taskId);
-        assertEq(record.releasedAmount, 600_000);
-        assertEq(uint256(record.state), uint256(Escrow.EscrowState.Refunded));
-        assertEq(usdc.balanceOf(payee), 590_000);
-        assertEq(usdc.balanceOf(feeReceiver), 10_000);
-        assertEq(usdc.balanceOf(payer), 9_400_000);
-        assertEq(usdc.balanceOf(address(escrow)), 0);
+        payouts[1].grossAmount = ONE_USDC;
+        vm.prank(operator);
+        escrow.settleWorkflow(taskId, payouts, keccak256("manifest"), keccak256("evidence"));
+        vm.expectRevert(abi.encodeWithSelector(Escrow.EscrowNotDeposited.selector, taskId));
+        vm.prank(operator);
+        escrow.settleWorkflow(taskId, payouts, keccak256("manifest"), keccak256("evidence"));
+    }
+
+    function testWorkflowSettlementRequiresNonzeroManifestAndEvidenceHashes() public {
+        _depositOneUsdc();
+        Escrow.WorkflowPayout[] memory payouts = new Escrow.WorkflowPayout[](1);
+        payouts[0] = Escrow.WorkflowPayout({payee: payee, grossAmount: ONE_USDC, feeAmount: 0});
+        vm.expectRevert(Escrow.InvalidAmount.selector);
+        vm.prank(operator);
+        escrow.settleWorkflow(taskId, payouts, bytes32(0), keccak256("evidence"));
+        vm.expectRevert(Escrow.InvalidAmount.selector);
+        vm.prank(operator);
+        escrow.settleWorkflow(taskId, payouts, keccak256("manifest"), bytes32(0));
     }
 
     function testRefundReturnsFundsAndRejectsDuplicateTerminalAction() public {
@@ -167,6 +193,27 @@ contract EscrowTest is Test {
         vm.expectRevert(abi.encodeWithSelector(Escrow.EscrowNotDeposited.selector, taskId));
         vm.prank(operator);
         escrow.refund(taskId);
+    }
+
+    function testDisputeRefundAnchorsDecisionAndEvidence() public {
+        _depositOneUsdc();
+        bytes32 decisionHash = keccak256("dao-decision");
+        bytes32 evidenceRoot = keccak256("dispute-evidence");
+        vm.prank(operator);
+        escrow.refundDispute(taskId, decisionHash, evidenceRoot);
+
+        Escrow.EscrowRecord memory record = escrow.escrowOf(taskId);
+        assertEq(uint256(record.state), uint256(Escrow.EscrowState.Refunded));
+        assertEq(record.releasedAmount, 0);
+        assertEq(usdc.balanceOf(payer), 10 * ONE_USDC);
+        assertEq(usdc.balanceOf(address(escrow)), 0);
+    }
+
+    function testDisputeRefundRejectsMissingEvidenceHash() public {
+        _depositOneUsdc();
+        vm.expectRevert(Escrow.InvalidAmount.selector);
+        vm.prank(operator);
+        escrow.refundDispute(taskId, bytes32(0), keccak256("evidence"));
     }
 
     function testRejectsDuplicateDepositAndUnauthorizedOperator() public {

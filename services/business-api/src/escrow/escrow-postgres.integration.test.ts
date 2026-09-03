@@ -15,6 +15,7 @@ const BLOCK_HASH = `0x${"55".repeat(32)}`;
 integration("escrow PostgreSQL synchronization", () => {
   let pool: Pool;
   const taskIds: string[] = [];
+  const agentIds: string[] = [];
 
   beforeAll(() => { pool = new Pool({ connectionString: requiredDatabaseUrl() }); });
   afterAll(async () => { await pool.end(); });
@@ -25,16 +26,27 @@ integration("escrow PostgreSQL synchronization", () => {
       await pool.query("DELETE FROM reconciliation_alerts WHERE task_id=$1", [taskId]);
       await pool.query("DELETE FROM escrow_sync WHERE task_id=$1", [taskId]);
       await pool.query("DELETE FROM escrow_intents WHERE task_id=$1", [taskId]);
+	  await pool.query("DELETE FROM workflow_node_events WHERE task_id=$1", [taskId]);
+	  // selection_record_id 与 workflow_node_id 构成双向事实引用；清理夹具时先断开
+	  // 节点的冻结选择，再删除候选快照，避免依赖删除顺序掩盖正式外键约束。
+	  await pool.query(
+		"UPDATE task_workflow_nodes SET selected_agent_id=NULL,selection_record_id=NULL,agreed_amount_minor=NULL WHERE task_id=$1",
+		[taskId],
+	  );
+	  await pool.query("DELETE FROM job_distribution_records WHERE task_id=$1", [taskId]);
       await pool.query("DELETE FROM task_workflow_edges WHERE workflow_run_id IN (SELECT id FROM task_workflow_runs WHERE task_id=$1)", [taskId]);
       await pool.query("DELETE FROM task_workflow_nodes WHERE task_id=$1", [taskId]);
       await pool.query("DELETE FROM task_workflow_runs WHERE task_id=$1", [taskId]);
       await pool.query("DELETE FROM tasks WHERE id=$1", [taskId]);
     }
+    for (const agentId of agentIds.splice(0)) {
+      await pool.query("DELETE FROM agents WHERE id=$1", [agentId]);
+    }
     await pool.query("DELETE FROM chain_event_cursor WHERE chain_id=$1 AND contract_address=$2", [CHAIN_ID.toString(), CONTRACT]);
   });
 
   it("deduplicates a deposit event and advances awaiting_escrow exactly once after confirmation", async () => {
-    const taskId = await insertAwaitingEscrowTask(pool, taskIds, 2n);
+    const taskId = await insertAwaitingEscrowTask(pool, taskIds, agentIds, 2n);
     const repository = new PgEscrowRepository(pool);
     await repository.prepareIntent({ taskId, publisherId: PUBLISHER, chainId: CHAIN_ID, contractAddress: CONTRACT, taskKey: taskKeyForTaskId(taskId) });
     const event = depositEvent(taskId, 2n, 10n, `0x${"66".repeat(32)}`);
@@ -77,7 +89,7 @@ integration("escrow PostgreSQL synchronization", () => {
   });
 
   it("freezes operations and keeps the task awaiting escrow when the confirmed amount differs", async () => {
-    const taskId = await insertAwaitingEscrowTask(pool, taskIds, 2n);
+    const taskId = await insertAwaitingEscrowTask(pool, taskIds, agentIds, 2n);
     const repository = new PgEscrowRepository(pool);
     await repository.prepareIntent({ taskId, publisherId: PUBLISHER, chainId: CHAIN_ID, contractAddress: CONTRACT, taskKey: taskKeyForTaskId(taskId) });
     await repository.observe(depositEvent(taskId, 3n, 11n, `0x${"77".repeat(32)}`));
@@ -111,7 +123,7 @@ integration("escrow PostgreSQL synchronization", () => {
   });
 
   it("marks a pre-transition reorg orphaned without advancing the task", async () => {
-    const taskId = await insertAwaitingEscrowTask(pool, taskIds, 2n);
+    const taskId = await insertAwaitingEscrowTask(pool, taskIds, agentIds, 2n);
     const repository = new PgEscrowRepository(pool);
     await repository.prepareIntent({ taskId, publisherId: PUBLISHER, chainId: CHAIN_ID, contractAddress: CONTRACT, taskKey: taskKeyForTaskId(taskId) });
     await repository.observe(depositEvent(taskId, 2n, 12n, `0x${"88".repeat(32)}`));
@@ -147,7 +159,7 @@ integration("escrow PostgreSQL synchronization", () => {
   });
 
   it("keeps a failed refund retryable and escalates only after the configured limit", async () => {
-    const taskId = await insertAwaitingEscrowTask(pool, taskIds, 2n);
+    const taskId = await insertAwaitingEscrowTask(pool, taskIds, agentIds, 2n);
     const repository = new PgEscrowRepository(pool);
     const now = new Date("2026-08-23T01:00:00Z");
     await expect(repository.recordRefundFailure(taskId, "RPC_TIMEOUT", now, 3, 1_000)).resolves.toMatchObject({
@@ -175,9 +187,19 @@ integration("escrow PostgreSQL synchronization", () => {
   });
 });
 
-async function insertAwaitingEscrowTask(pool: Pool, taskIds: string[], amountMinor: bigint): Promise<string> {
+async function insertAwaitingEscrowTask(
+  pool: Pool,
+  taskIds: string[],
+  agentIds: string[],
+  amountMinor: bigint,
+): Promise<string> {
   const taskId = randomUUID();
+  const runId = randomUUID();
+  const nodeId = randomUUID();
+  const agentId = randomUUID();
+  const distributionId = randomUUID();
   taskIds.push(taskId);
+  agentIds.push(agentId);
   await pool.query(
     `INSERT INTO tasks(
        id,publisher_id,title,description,acceptance_criteria,deliverable_format,category_id,
@@ -187,6 +209,52 @@ async function insertAwaitingEscrowTask(pool: Pool, taskIds: string[], amountMin
        '达到确认数且金额完全一致','链上状态和审计事件','40000000-0000-4000-8000-000000000001',
        1,'fixed',$3,$3,'USDC','2026-08-24T00:00:00Z','Ethereum','private','awaiting_escrow')`,
     [taskId, PUBLISHER, amountMinor.toString()],
+  );
+  await pool.query(
+    `INSERT INTO agents(
+       id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,
+       pricing_type,price_amount,price_currency,service_endpoint,email,status
+     ) VALUES ($1,$2,$2,'托管同步测试 Agent','40000000-0000-4000-8000-000000000001',
+       '用于证明托管确认只激活已经冻结报价的正式工作流',ARRAY['escrow'],'fixed',1000000,'USDC',
+       'http://127.0.0.1:3999/execute','escrow-test@example.com','active')`,
+    [agentId, `0x${"45".repeat(20)}`],
+  );
+  await pool.query(
+    `INSERT INTO task_workflow_runs(
+       id,task_id,status,version,currency,total_budget_minor,released_amount_minor,
+       refundable_amount_minor,quoted_total_minor,quote_confirmed_at
+     ) VALUES ($1,$2,'planning',1,'USDC',$3,0,$3,$3,now())`,
+    [runId, taskId, amountMinor.toString()],
+  );
+  await pool.query(
+    `INSERT INTO task_workflow_nodes(
+       id,workflow_run_id,task_id,node_key,kind,title,description,category_id,tags,
+       required_capability,input_contract,output_contract,budget_cap_minor,position_index,status,version
+     ) VALUES ($1,$2,$3,'requirements','requirements','需求澄清','生成可验收的需求制品',
+       '40000000-0000-4000-8000-000000000001',ARRAY['escrow'],'需求澄清',
+       'TaskBrief','RequirementsArtifact',$4,0,'selecting',1)`,
+    [nodeId, runId, taskId, amountMinor.toString()],
+  );
+  await pool.query(
+    `INSERT INTO job_distribution_records(
+       id,task_id,workflow_node_id,rule_version,input_fingerprint,input_snapshot,candidates,
+       filter_reasons,final_selection_agent_id
+     ) VALUES ($1,$2,$3,'ranking-v1',$4,'{}'::jsonb,$5::jsonb,'{}'::jsonb,$6)`,
+    [
+      distributionId,
+      taskId,
+      nodeId,
+      `escrow-sync-${randomUUID()}`,
+      JSON.stringify([{ agentId, quoteMinor: amountMinor.toString() }]),
+      agentId,
+    ],
+  );
+  await pool.query(
+    `UPDATE task_workflow_nodes
+        SET status='selected',selected_agent_id=$2,selection_record_id=$3,
+            agreed_amount_minor=$4,budget_cap_minor=$4
+      WHERE id=$1`,
+    [nodeId, agentId, distributionId, amountMinor.toString()],
   );
   return taskId;
 }

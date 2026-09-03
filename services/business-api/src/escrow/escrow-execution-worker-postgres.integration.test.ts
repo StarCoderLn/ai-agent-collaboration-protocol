@@ -15,6 +15,9 @@ const TX_HASH = `0x${"44".repeat(32)}`;
 const RAW_TRANSACTION = "0x02abcd";
 const CATEGORY_ID = "40000000-0000-4000-8000-000000000001";
 const FIRST_RUN = new Date("2090-01-01T00:00:00Z");
+const MANIFEST_HASH = `0x${"66".repeat(32)}`;
+const EVIDENCE_ROOT = `0x${"77".repeat(32)}`;
+const DECISION_HASH = `0x${"88".repeat(32)}`;
 
 integration("escrow execution worker PostgreSQL recovery", () => {
   let pool: Pool;
@@ -126,15 +129,22 @@ integration("escrow execution worker PostgreSQL recovery", () => {
     expect(operator.broadcast).not.toHaveBeenCalled();
   });
 
-  it("只有全部里程碑已确认后才领取 workflow finalize，并保留独立事件语义", async () => {
-    const fixture = await insertWorkflowFinalizeFixture(pool, taskIds);
+  it("只有发布者完成最终验收后才广播一次性工作流分账，并保留独立事件语义", async () => {
+    const fixture = await insertWorkflowSettlementFixture(pool, taskIds);
     const operator: EscrowOperatorClient = {
       prepare: vi.fn(async (job) => {
         expect(job).toMatchObject({
-          action: "finalize",
+          action: "workflow_settle",
           payee: null,
           agentGrossAmountMinor: null,
           feeAmountMinor: null,
+          workflowPayouts: [{
+            payee: PAYEE,
+            grossAmountMinor: 10_000n,
+            feeAmountMinor: 50n,
+          }],
+          settlementManifestHash: MANIFEST_HASH,
+          evidenceRoot: EVIDENCE_ROOT,
         });
         return { txHash: TX_HASH, rawTransaction: RAW_TRANSACTION };
       }),
@@ -150,23 +160,29 @@ integration("escrow execution worker PostgreSQL recovery", () => {
     });
     expect(operator.prepare).not.toHaveBeenCalled();
 
-    await pool.query("UPDATE escrow_execution_jobs SET status='executed' WHERE id=$1", [fixture.milestoneJobId]);
+    // run.completed 只是说明内部节点已经通过质量门禁；只有 task.pending_settlement 才证明
+    // 发布者对最终交付作出了资金授权。worker 必须在领取 outbox 时再次核对这一事实。
+    await pool.query(
+      "UPDATE tasks SET status='pending_settlement',status_version=status_version+1 WHERE id=$1",
+      [fixture.taskId],
+    );
+    const jobId = await insertWorkflowSettlementJob(pool, fixture.taskId, fixture.runId);
     await expect(worker.runOne(new Date(FIRST_RUN.getTime() + 1))).resolves.toEqual({
       claimed: true,
-      jobId: fixture.jobId,
+      jobId,
       status: "submitted",
       txHash: TX_HASH,
     });
     const evidence = await pool.query<{ job_status: string; event_type: string; event_action: string }>(
       `SELECT job.status AS job_status,event.event_type,event.payload->>'action' AS event_action
-         FROM escrow_execution_jobs job JOIN task_events event ON event.task_id=job.task_id
+        FROM escrow_execution_jobs job JOIN task_events event ON event.task_id=job.task_id
         WHERE job.id=$1`,
-      [fixture.jobId],
+      [jobId],
     );
     expect(evidence.rows[0]).toEqual({
       job_status: "submitted",
-      event_type: "task.workflow_finalize_submitted",
-      event_action: "finalize",
+      event_type: "task.workflow_settlement_submitted",
+      event_action: "workflow_settle",
     });
   });
 });
@@ -200,44 +216,47 @@ async function insertArbitrationRefundFixture(pool: Pool, taskIds: string[]) {
   await pool.query(
     `INSERT INTO arbitration_decisions(
        id,dispute_id,arbitrator_id,decision,release_amount_minor,refund_amount_minor,
-       agent_responsibility,reason,execution_status
-     ) VALUES ($1,$2,'integration-arbitrator','refund',0,10000,'agent_at_fault','全额退款测试','decided')`,
-    [decisionId, disputeId],
+       agent_responsibility,reason,execution_status,decision_hash,evidence_root
+     ) VALUES ($1,$2,'integration-arbitrator','refund',0,10000,'agent_at_fault',
+       '全额退款测试','decided',$3,$4)`,
+    [decisionId, disputeId, DECISION_HASH, EVIDENCE_ROOT],
   );
   await pool.query(
     `INSERT INTO escrow_execution_jobs(
-       id,task_id,source,source_ref,action,status,next_attempt_at
-     ) VALUES ($1,$2,'arbitration',$3,'refund','pending',$4)`,
-    [jobId, taskId, decisionId, FIRST_RUN],
+       id,task_id,source,source_ref,action,evidence_root,decision_hash,status,next_attempt_at
+     ) VALUES ($1,$2,'arbitration',$3,'dispute_refund',$4,$5,'pending',$6)`,
+    [jobId, taskId, decisionId, EVIDENCE_ROOT, DECISION_HASH, FIRST_RUN],
   );
   return { taskId, jobId };
 }
 
-async function insertWorkflowFinalizeFixture(pool: Pool, taskIds: string[]) {
+async function insertWorkflowSettlementFixture(pool: Pool, taskIds: string[]) {
   const taskId = await insertTaskAndIntent(pool, taskIds, "executing", 9);
   const runId = randomUUID();
-  const jobId = randomUUID();
-  const milestoneJobId = randomUUID();
   await pool.query(
     `INSERT INTO task_workflow_runs(
        id,task_id,status,currency,total_budget_minor,released_amount_minor,refundable_amount_minor
-     ) VALUES ($1,$2,'completed','USDC',10000,9000,1000)`,
+     ) VALUES ($1,$2,'completed','USDC',10000,0,10000)`,
     [runId, taskId],
   );
+  return { taskId, runId };
+}
+
+/** 最终验收事务才允许创建统一分账 outbox；测试也不预造业务上不可能存在的早期任务。 */
+async function insertWorkflowSettlementJob(pool: Pool, taskId: string, runId: string): Promise<string> {
+  const jobId = randomUUID();
   await pool.query(
     `INSERT INTO escrow_execution_jobs(
-       id,task_id,source,source_ref,action,payee,agent_gross_amount_minor,fee_amount_minor,
-       status,next_attempt_at,tx_hash
-     ) VALUES ($1,$2,'workflow_acceptance',$3,'milestone_release',$4,9000,50,'submitted',$5,$6)`,
-    [milestoneJobId, taskId, randomUUID(), PAYEE, FIRST_RUN, `0x${"55".repeat(32)}`],
+       id,task_id,source,source_ref,action,workflow_payouts,settlement_manifest_hash,
+       evidence_root,status,next_attempt_at
+     ) VALUES ($1,$2,'workflow_run',$3,'workflow_settle',$4::jsonb,$5,$6,'pending',$7)`,
+    [jobId, taskId, runId, JSON.stringify([{
+      payee: PAYEE,
+      grossAmountMinor: "10000",
+      feeAmountMinor: "50",
+    }]), MANIFEST_HASH, EVIDENCE_ROOT, FIRST_RUN],
   );
-  await pool.query(
-    `INSERT INTO escrow_execution_jobs(
-       id,task_id,source,source_ref,action,status,next_attempt_at
-     ) VALUES ($1,$2,'workflow_run',$3,'finalize','pending',$4)`,
-    [jobId, taskId, runId, FIRST_RUN],
-  );
-  return { taskId, jobId, milestoneJobId };
+  return jobId;
 }
 
 async function insertTaskAndIntent(
