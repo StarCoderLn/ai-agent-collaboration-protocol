@@ -18,8 +18,12 @@
 | 2026-08-25 | v12  | 用户要求注册时自定义收款钱包；扩展 T-001/T-003/T-006/T-008 的既有范围，拆分所有者与结算字段，并把接入示例升级为可复制运行的 TypeScript 模板；任务结构与勾选状态不变。 |
 | 2026-08-25 | v13  | T-006/T-008 与任务发布共用服务分类、技能标签组件和受控词表，分类仅展示简明末级服务，移除 Agent 标签自由输入；任务结构与勾选状态不变。 |
 | 2026-08-25 | v14  | T-006/T-008 允许在平台推荐外添加规范化自定义标签，并扩充推荐词表；任务结构与勾选状态不变。 |
-| 2026-08-31 | v15  | T-006/T-008 取消无上下文推荐标签墙，保留共用分类、用户标签输入及服务端规范化；任务结构与勾选状态不变。 |
 | 2026-08-28 | v15  | T-001/T-003/T-004/T-006/T-008 同步 USDC 最低报价、数据库约束、钱包门禁和单次服务报价文案；任务结构与勾选状态不变。 |
+| 2026-08-31 | v16  | T-006/T-008 取消无上下文推荐标签墙，保留共用分类、用户标签输入及服务端规范化；任务结构与勾选状态不变。 |
+| 2026-08-31 | v17  | T-001/T-003/T-006/T-008 增加最多 3 条公开案例及双来源候选证据；任务结构与勾选状态不变。 |
+| 2026-09-03 | v18  | T-001/T-003/T-006/T-007/T-008 移除邮箱上架门槛，新增可空兼容 migration；任务结构与勾选状态不变。 |
+| 2026-09-03 | v19  | T-006/T-008 将长协议模板替换为快速 HTTP JSON 单一简短接入示例；任务结构不变。 |
+| 2026-09-03 | v20  | 新增并完成 T-013：默认快速接入、可选访问密钥、真实连接测试与历史 HMAC 兼容。 |
 
 ## 项目信息
 
@@ -31,7 +35,7 @@
 
 ### 功能 1: 数据模型
 
-- [x] T-001: 编写 `agents`（含独立所有者/收款钱包与邮箱）、`agent_credentials`、`audit_logs` 三张表及后续兼容 migration ~30min
+- [x] T-001: 编写 `agents`（含独立所有者/收款钱包与可空历史邮箱）、`agent_credentials`、`audit_logs` 及 `[v17]` `agent_portfolio_cases` 表与后续兼容 migration ~30min
 
 ### 功能 2: 凭证加密
 
@@ -39,18 +43,18 @@
 
 ### 功能 3: 注册与配置 API
 
-- [x] T-003: 实现 `POST /api/agents` 创建接口，含所有者/收款钱包、邮箱等服务端字段校验与幂等键接入 ~30min
+- [x] T-003: 实现 `POST /api/agents` 创建接口，含所有者/收款钱包、旧客户端可选邮箱、最多 3 条 HTTP(S) 公开案例的服务端校验与幂等事务 ~30min
 - [x] T-004: 实现 `PATCH /api/agents/:id` 编辑接口（钱包地址字段拒绝修改） ~15min
 - [x] T-005: 实现 `PUT /api/agents/:id/credentials` 凭证替换接口，接入 T-002 加密工具并写审计日志 ~30min
 
 ### 功能 4: 前端页面
 
-- [x] T-006: 实现 Agent 注册表单页（含与任务发布共用的服务分类及用户直接添加/移除的技能标签组件、最低 1 USDC 的单次服务报价、未连接时先建立 SIWE 会话的主操作、可编辑收款钱包、可复制运行的 AICP TypeScript 模板与字段级校验） ~30min
-- [x] T-007: 实现 Agent 配置编辑页（`[v3 新增]` 支持编辑邮箱；含凭证替换入口，提交后清空本地明文状态） ~30min
+- [x] T-006: 实现 Agent 注册表单页（含共用分类/标签、最低 1 USDC 报价、SIWE 门禁、可编辑收款钱包、快速 HTTP JSON 接入模板、字段级校验及 `[v17]` 可选公开案例编辑器） ~30min
+- [x] T-007: 实现 Agent 配置编辑页（`[v18]` 不再展示历史邮箱；含凭证替换入口，提交后清空本地明文状态） ~30min
 
 ### 集成与测试
 
-- [x] T-008: 编写集成测试：必填与最低报价校验、钱包未连接门禁、分类选择、用户标签规范化及提交、输入法组合态回车保护、独立收款钱包与结算对象、凭证隔离、审计日志、重复提交幂等 ~30min
+- [x] T-008: 编写集成测试：必填与最低报价、钱包门禁、分类标签、输入法组合态、独立收款钱包、凭证隔离、审计与幂等，以及 `[v17]` 案例数量/协议校验、同事务写入和候选来源隔离 ~30min
 
 ### 功能 5: 部署脚手架与提供者钱包认证（`[v6 新增]`）
 
@@ -58,6 +62,10 @@
 - [x] T-010: 新增 `auth_nonces`/`auth_sessions` migration；实现 SIWE（EIP-4361）认证：`GET /api/auth/nonce`、`POST /api/auth/verify`、`DELETE /api/auth/session` 显式退出，以及单一权威的 `resolveActorId` 会话解析中间件 ~45min
 - [x] T-011: 把 T-003/T-004/T-005 的 handler 挂载到 T-009 脚手架的真实路由，接入 T-010 的 `resolveActorId`（不信任请求体/Header 自报身份），并把创建/编辑/凭证替换各自的业务写入+审计+幂等提交收敛进同一 PostgreSQL 事务 ~45min
 - [x] T-012: 实现 `GET /api/agents/:id` 读取接口（挂载真实路由，接入 T-010 认证，仅归属该 `provider_wallet_address` 的 session 可读，返回字段不含 `encrypted_secret`），供 T-007 编辑页联调 ~20min
+
+### 功能 6: 快速接入 `[NEW v20]`
+
+- [x] T-013: 新上架页显式使用 `http_json`，保留`Agent 执行地址`与`访问密钥`名称，支持公开端点或 Bearer Token；实现同域 `/healthz` 连接测试、输入变化失效、提交门禁、条件加密存储及历史 `aicp_hmac` 兼容 ~90min
 
 ## 依赖关系
 
@@ -78,7 +86,7 @@
 
 ## 完成状态与外部验证边界（2026-08-30 更新）
 
-T-001～T-012 全部完成。`POST /api/agents`、`PATCH /api/agents/:id`、`PUT /api/agents/:id/credentials`、`GET /api/agents/:id`、`GET /api/auth/nonce`、`POST /api/auth/verify`、`DELETE /api/auth/session` 均已挂载到真实 Next.js Route Handler（`next build` 实测产出这些路由），接入统一的 `resolveActorId`，创建/编辑/凭证替换各自的业务写入+审计+幂等提交已收敛进同一 PostgreSQL 事务；跨源 CORS（含预检、`idempotency-key` 头放行）、SIWE 会话地址大小写归一化、非法 UUID 守卫等此前 review 命中的真实缺口均已修复并有回归测试覆盖。前端编辑页（T-007）依赖的读写路径与认证已就绪，`fetch` 已带 `credentials:"include"`，端到端可用。顶部钱包入口只在未认证时触发 SIWE，已认证时打开账户菜单并通过服务端接口显式退出。T-009 的部署方案（AWS CDK + LWA + zip，`services/business-api/infra/`）本地已验证可打包出真实能跑的 Lambda 运行时。
+T-001～T-013 全部完成。`POST /api/agents`、`POST /api/agents/connection-test`、`PATCH /api/agents/:id`、`PUT /api/agents/:id/credentials`、`GET /api/agents/:id`、`GET /api/auth/nonce`、`POST /api/auth/verify`、`DELETE /api/auth/session` 均已挂载到真实 Next.js Route Handler（`next build` 实测产出这些路由），接入统一的 `resolveActorId`，创建/编辑/凭证替换各自的业务写入+审计+幂等提交已收敛进同一 PostgreSQL 事务；快速接入连接测试只探测同域 `/healthz`，不触发模型调用。跨源 CORS（含预检、`idempotency-key` 头放行）、SIWE 会话地址大小写归一化、非法 UUID 守卫等此前 review 命中的真实缺口均已修复并有回归测试覆盖。前端编辑页（T-007）依赖的读写路径与认证已就绪，`fetch` 已带 `credentials:"include"`，端到端可用。顶部钱包入口只在未认证时触发 SIWE，已认证时打开账户菜单并通过服务端接口显式退出。T-009 的部署方案（AWS CDK + LWA + zip，`services/business-api/infra/`）本地已验证可打包出真实能跑的 Lambda 运行时。
 
 本地 PostgreSQL 垂直集成已经通过；仍未验证的项目均需要真实 AWS 账号和环境权限，
 不属于本 feature 可在本机代替完成的验收：

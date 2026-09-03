@@ -11,6 +11,7 @@
 | 2026-08-23 | v5   | `release()` 增加实际成交额参数，将未使用的预算上限差额退回发布者，修复链上与链下结算不一致 |
 | 2026-08-27 | v6   | 业务资金统一为 USDC；部署时固定支付代币，存款改为精确金额 `transferFrom`，ETH 仅保留为 Gas |
 | 2026-08-30 | v7   | 扩展累计释放账本，支持工作流节点里程碑结算、最终余额退款和部分释放后的剩余退款 |
+| 2026-09-02 | v8   | 新工作流改用 `settleWorkflow` 原子分账，并为仲裁退款增加不可替换的裁决与证据摘要 |
 
 ## 项目架构
 
@@ -36,9 +37,10 @@
 
 **涉及层及关键设计:**
 
-- `release()`、`releaseMilestone()`、`finalize()` 与 `refund()` 均要求 `OPERATOR_ROLE` 且 `state == Deposited`。一次性 `release()`、最终 `finalize()` 和 `refund()` 写入终态；`releaseMilestone()` 只增加 `releasedAmount`，保持托管打开供后续节点使用。
+- `release()`、`settleWorkflow()`、`refund()` 与 `refundDispute()` 均要求 `OPERATOR_ROLE` 且 `state == Deposited`。`releaseMilestone()` / `finalize()` 只保留给迁移前历史任务恢复，新创建的正式工作流不再调用，避免中间阶段自动验收后资金不可追回。
 - `[v5]` `release()` 的转账拆分：`payee` 收到 `agentGrossAmount - feeAmount`，`feeReceiver` 收到 `feeAmount`，发布者收到 `escrowAmount - agentGrossAmount`。任务按预算上限托管但允许 Agent 以较低报价成交，因此不能把整笔托管额都视为 Agent 应得金额。合约强制 `agentGrossAmount <= escrowAmount`、`feeAmount <= agentGrossAmount`，三笔之和严格等于托管额。
-- `[v7]` `releaseMilestone()` 强制节点成交额大于零且不超过 `amount - releasedAmount`，只向 Agent 与平台转账；`finalize()` 在全部节点完成后把 `amount - releasedAmount` 退给发布者。任一节点失败时 `refund()` 使用同一剩余金额公式，已验收里程碑不会被追回。
+- `[v8]` `settleWorkflow()` 接收最多 32 条已冻结分账，在一笔交易中依次支付 Agent 净额与平台费，最后退回未成交余额；任一步失败整笔交易回滚。`settlementManifestHash` 锚定收款清单，`evidenceRoot` 锚定全部已验收制品。
+- `[v8]` `refundDispute()` 仅处理尚未释放的正式工作流全额退款，并在 `DisputeRefunded` 中记录 `decisionHash` 与 `evidenceRoot`，使链下裁决和链上资金结果可以独立核对。
 - `[v3]` `feeReceiver` 由专设的 `TREASURY_ROLE`（不是 `PAUSER_ROLE`）更新，不是部署时写死的常量，允许平台后续更换收款地址而不需要合约升级——见模块 3 关于为什么这条不能跟暂停权限共用。
 - 遵循 checks-effects-interactions：先校验状态、更新状态变量，再执行外部转账调用；引入 OpenZeppelin `ReentrancyGuard`。
 
@@ -63,6 +65,8 @@
 - `event MilestoneReleased(bytes32 indexed taskId, address indexed payee, uint256 escrowAmount, uint256 milestoneGrossAmount, uint256 feeAmount, uint256 totalReleasedAmount, uint256 remainingAmount)`
 - `event Finalized(bytes32 indexed taskId, address indexed payer, uint256 escrowAmount, uint256 releasedAmount, uint256 payerRefundAmount)`
 - `event Refunded(bytes32 indexed taskId, address indexed payer, uint256 escrowAmount, uint256 releasedAmount, uint256 payerRefundAmount)`
+- `event WorkflowSettled(bytes32 indexed taskId, bytes32 indexed settlementManifestHash, bytes32 indexed evidenceRoot, address payer, uint256 escrowAmount, uint256 totalGrossAmount, uint256 totalFeeAmount, uint256 payerRefundAmount)`
+- `event DisputeRefunded(bytes32 indexed taskId, bytes32 indexed decisionHash, bytes32 indexed evidenceRoot, address payer, uint256 escrowAmount, uint256 payerRefundAmount)`
 - `event Paused(address account)` / `event Unpaused(address account)`（继承自 OpenZeppelin `Pausable`）
 - 事件是 [[6.escrow-sync-and-wallet]] 链下同步的唯一事实来源，链下不允许仅依赖交易 receipt 状态推断资金结果。
 
@@ -73,7 +77,9 @@ function deposit(bytes32 taskId, uint256 amount) external; // amount 是 USDC �
 function release(bytes32 taskId, address payee, uint256 agentGrossAmount, uint256 feeAmount) external onlyRole(OPERATOR_ROLE);
 function releaseMilestone(bytes32 taskId, address payee, uint256 agentGrossAmount, uint256 feeAmount) external onlyRole(OPERATOR_ROLE);
 function finalize(bytes32 taskId) external onlyRole(OPERATOR_ROLE);
+function settleWorkflow(bytes32 taskId, WorkflowPayout[] calldata payouts, bytes32 settlementManifestHash, bytes32 evidenceRoot) external onlyRole(OPERATOR_ROLE);
 function refund(bytes32 taskId) external onlyRole(OPERATOR_ROLE);
+function refundDispute(bytes32 taskId, bytes32 decisionHash, bytes32 evidenceRoot) external onlyRole(OPERATOR_ROLE);
 function pause() external onlyRole(PAUSER_ROLE);
 function unpause() external onlyRole(PAUSER_ROLE);
 function escrowOf(bytes32 taskId) external view returns (Escrow memory);

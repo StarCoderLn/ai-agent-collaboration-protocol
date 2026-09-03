@@ -6,6 +6,7 @@
 | ---------- | ---- | -------- |
 | 2026-08-20 | v1   | 初始设计 |
 | 2026-08-20 | v2   | 模块 2 的 `ValidateHardConstraints` 新增受控上线期预算上限判断，实现 [[3.agent-health-lifecycle]] 定义的 `IsInProbation()` |
+| 2026-08-31 | v3   | 取消整单预算候选过滤；受控上线期风险门禁改为比较 Agent 自身报价 |
 
 ## 项目架构
 
@@ -26,8 +27,8 @@
 **涉及层及关键设计:**
 
 - `assignment_mode_config` 存储在 [[4.task-creation-and-preview]] 定义的 `tasks` 表扩展字段：`{ enabled: boolean, priceCap: Amount, rankingBasis: string, fallbackOnFail: "manual" | "cancel" }`。
-- 硬约束声明为纯函数 `ValidateHardConstraints(candidate, task) -> boolean`（预算、健康状态、准入状态、截止时间、`[v2 新增]` 受控上线期预算上限共五项），供 [[8.matching-and-candidates]] 在生成候选集合时调用；本 feature 不执行匹配，只提供约束定义和配置读取，避免匹配算法散落两处。
-- `[v2]` 第五项的实现：调用 [[3.agent-health-lifecycle]] 定义的 `IsInProbation(candidate.agentId)`（读取 [[12.scoring-system]] 的评分样本量与 `prior_weight` 比较），若为真且 `task.budget > agent_status_config.probation_budget_cap_percentile` 对应的历史预算分位数，则该候选不满足硬约束。业务规则的定义（受控上线期是什么、上限怎么算）归属 [[3.agent-health-lifecycle]]，本 feature 只是众多约束校验函数之一的执行位置，不重新定义这条规则。
+- 硬约束声明为纯函数 `ValidateHardConstraints(candidate, task) -> reason`（健康状态、准入状态、币种、截止时间和受控上线期报价上限），供 [[8.matching-and-candidates]] 生成候选集合。发布者整单预算不再作为布尔资格条件，报价差异通过排序和准确总价比较呈现。
+- `[v3]` 风险门禁读取评分样本量、`prior_weight` 与 `probation_budget_cap_percentile`；若 Agent 仍在受控上线期且 `candidate.price > probationCap`，返回 `probation_budget_exceeded`。比较自身报价而非 `task.budget`，把产品预算偏好与平台准入安全分开建模。
 
 ### 模块 3: 验收模式
 

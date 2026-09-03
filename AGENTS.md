@@ -164,3 +164,9 @@
 - [2.agent-registration/T-007] task 完成判定以其自身声明范围内的证据(如测试通过)为准，不应因未被列为其依赖的其他缺口而无限期不勾选，但须在文档保留该已知限制说明。
 - [product-workflow] 新 Agent 通过异常输出测试和虚构任务真实模型冒烟后才能标记可用。
 - [product-workflow] 下游须消费已验收上游制品并验证继承；禁止只传摘要后重做。
+- [product-workflow] Coding 须继承设计稿视觉与结构；禁止用平台固定 CSS 覆盖。
+- [product-workflow] 返工须携带可重建完整上下文；禁止依赖 Agent 进程内首次派发缓存。
+- [escrow] 仅无 Deposit 哈希和链事件的明确失败可改选；未确认不等于未广播。
+- [9.dispatch-and-acceptance] 托管意图创建即锁定选人与总价；此前改选须事务重算。
+- [6.escrow-sync-and-wallet] 本地 Anvil 交易须读 pending nonce，避免钱包跨实例缓存造成队列空洞。
+- [13.dispute-and-arbitration] 本地 TestYD 不得覆盖钱包目录中的 Sepolia 产品 YD。

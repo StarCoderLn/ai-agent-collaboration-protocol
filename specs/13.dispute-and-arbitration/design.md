@@ -1,4 +1,4 @@
-# 争议与人工仲裁 — 技术设计
+# 争议与 DAO 仲裁 — 技术设计
 
 ## 设计版本
 
@@ -6,6 +6,7 @@
 | ---------- | ---- | -------- |
 | 2026-08-20 | v1   | 初始设计 |
 | 2026-08-23 | v2   | 落地持久化角色校验、可恢复资金执行、完整争议审计与 SSE 刷新恢复 |
+| 2026-09-02 | v3   | 增加 YD 链上成员资格、可复现无冲突分案、DAO 多数裁决和原子多 Agent 资金执行 |
 
 ## 项目架构
 
@@ -42,7 +43,21 @@
   `escrow_execution_jobs(source='arbitration')`；worker 先持久化签名交易再广播，失败按上限
   重试或进入死信；链事件同步核对交易哈希、收款地址和金额后才解除冻结并推进任务终态。
 
-### 模块 4: 审计
+### 模块 4: YD DAO 成员与分案 `[v3 新增]`
+
+- `ArbitrationDAO` 只负责最适合公开强制执行的 YD 锁仓、最低门槛和退出冷静期；争议正文、分案和投票保留在受权限保护的业务数据库，避免把敏感任务内容公开上链。
+- 产品 YD 与本地 DAO `TestYD` 使用独立配置：工作台始终按 Sepolia 产品合约读取用户资产；Anvil DAO 通过 `ARBITRATION_DAO_YD_TOKEN_ADDRESS` 绑定本地夹具。公共测试网部署时 DAO 再绑定同一产品 YD，禁止本地启动器覆盖资产目录。
+- 前端提交的交易哈希只是索引。服务端核对成功回执、目标 DAO 合约、事件中的成员钱包、确认数，并在回执区块读取 `membershipOf`、`isEligible`、`minimumStake` 与 `ydToken` 后才更新成员镜像。
+- 分案种子创建案件时一次固化，候选按 `keccak256(seed, actor)` 稳定排序。查询统一排除发布者、全部已接单 Agent 的 provider 与 payout 钱包；不足配置人数时保持 `awaiting_panel`。
+- 当前页面完成质押、退出、取消退出或领取交易后会立即同步服务端。生产上线仍需 DAO 事件索引器或分案前 latest-chain revalidation，覆盖用户绕过页面直接调用退出合约造成的短暂镜像滞后。
+
+### 模块 5: DAO 投票与统一资金计划 `[v3 新增]`
+
+- 投票事务锁定仲裁轮次，数据库唯一键阻止同一成员重复投票；只有同一裁决类型达到 quorum 才形成多数，意见分散时继续等待。
+- DAO 和平台仲裁共同调用 `buildArbitrationSettlementPlan()`：一次读取工作流、冻结报价、最新制品和争议证据，按裁决释放总额比例分配，固化 `decisionHash`、`evidenceRoot` 与 `settlementManifestHash` 后创建 outbox。
+- 全额退款创建 `dispute_refund`；部分或全部支付创建 `workflow_settle`。worker 广播后仍保持争议冻结，链同步逐项核对事件与 outbox，确认后才同时更新任务、托管、争议和裁决终态。
+
+### 模块 6: 审计
 
 **涉及层及关键设计:**
 
@@ -58,6 +73,9 @@
 - `POST /api/disputes/:id/evidence`：提交证据（双方均可调用，校验截止时间）。
 - `GET /api/disputes/:id`：查询争议状态、证据、（仲裁后的）决定。
 - `POST /api/disputes/:id/decision`：仲裁员做出决定（需要仲裁员角色权限），响应含 `decisionId`，状态为 `decided`。
+- `GET /api/dao`：返回当前钱包的链上配置、已同步成员资格和被分配案件。
+- `POST /api/dao/membership/sync`：提交成员操作交易哈希，服务端完成链上核验后同步资格。
+- `POST /api/dao/rounds/:id/votes`：仅当前仲裁小组成员提交投票，达到多数时原子生成裁决与资金 outbox。
 - 内部：链上执行完成回调将 `decision.status` 更新为 `executed`（由 [[6.escrow-sync-and-wallet]] 的确认流程触发）。
 
 ## 数据模型
@@ -65,6 +83,10 @@
 - `disputes(id PK, task_id FK, initiator_id, reason, status, evidence_deadline, created_at)`
 - `dispute_evidence(id PK, dispute_id FK, submitter_id, content_ref, submitted_at)`
 - `arbitration_decisions(id PK, dispute_id FK, arbitrator_id, decision_type, payout_breakdown JSONB, reasoning, decided_at, status, tx_hash, executed_at)`
+- `dao_memberships(actor_id PK, chain_id, contract_address, staked_amount_minor, eligible, exit_available_at, sync_tx_hash, sync_block_number)`
+- `dao_arbitration_rounds(id PK, dispute_id UNIQUE, selection_seed, panel_size, quorum, voting_deadline, status)`
+- `dao_arbitration_panel_members(round_id, actor_id, selection_order, selected_stake_minor)`
+- `dao_arbitration_votes(id PK, round_id, actor_id, decision, release_basis_points, reasoning)`
 
 ## 安全考虑
 
@@ -81,3 +103,5 @@
 | ---- | ---- | ---- |
 | 资金冻结机制 | 任务状态机「争议中」作为前置校验条件（选中）vs 独立的冻结标记表 | 复用已有状态机比新增一套冻结标记更符合「同一业务规则集中在一个权威位置」，且状态机已经是所有资金操作前必须检查的路径 |
 | 执行状态展示 | `decided`/`submitted`/`executed` 三阶段（选中）vs 决定即视为完成 | 单独记录已广播待确认状态，才能区分尚未提交与链上确认中；直接展示「已完成」会误导用户，违反 PRD 明确的验收标准（AC-003 / F-006） |
+| DAO 链上边界 | 只把资格质押上链（选中）vs 证据和投票全文上链 | 质押需要公开可验证和不可伪造；任务证据可能含商业机密，全文上链不可删除且泄露隐私。链下投票保留审计记录，最终摘要随资金结果上链 |
+| 多 Agent 仲裁分账 | 复用统一资金计划模块（选中）vs DAO/平台各自计算 | 单一权威算法保证两个入口的收款人、手续费、舍入和证据编码一致，避免争议结果取决于使用哪个仲裁入口 |

@@ -7,6 +7,8 @@
 | 2026-08-20 | v1   | 初始设计 |
 | 2026-08-20 | v2   | 新增模块 4「沙箱模式标记」 |
 | 2026-08-21 | v3   | 新增模块 5「过期记录清理」，补上此前只有设计意图、没有任务落地的 TTL 清理机制 |
+| 2026-09-03 | v4   | 新增模块 6「TypeScript Agent SDK」，收敛提供者侧重复协议实现 |
+| 2026-09-03 | v5   | 新增模块 7「快速 HTTP JSON」，将 SDK/HMAC 调整为高级兼容模式 |
 
 ## 项目架构
 
@@ -65,6 +67,22 @@
 - 两个清理函数都是纯粹的批量 DELETE，天然幂等（重复执行只会删除"当时仍然过期"的记录，不会因为重复调用产生错误或误删未过期记录），不需要额外的去重逻辑。
 - 调度方式：Go 分发引擎内的定时任务（复用模块 1/2 已有的定时任务基础设施），默认每小时执行一次，执行间隔可配置；本 feature 只提供清理函数本身，具体调度器（cron/ticker）接入点由部署时决定。
 
+### 模块 6: TypeScript Agent SDK `[v4 新增]`
+
+- `agents/agent-sdk` 作为 `@aicp/agent-sdk` 的仓库内 workspace 与未来 npm 发布源。核心包不依赖 Mastra 或 LangGraph；`./mastra`、`./langgraph` 子路径只使用结构类型适配各自的执行接口。
+- `ProtocolVerifier`、`signRequest`、Nonce 仓库接口、并发幂等注册表、Node HTTP 原始 body 适配器和安全 JSON 响应都集中在 SDK。现有 TypeScript Agent 保留薄兼容出口，但不得维护签名算法副本。
+- `serveAgent(execute)` 是高级 TypeScript 接入入口：从服务端环境变量读取密钥、平台 Agent ID 与端口，自动提供签名 `/healthz`、沙箱同步调用、正式 `202` 接单、进度及结果回调。业务函数只接收可信任务、工作流和上游制品；普通快速接入不经过此入口。
+- SDK `0.1.x` 的默认 Nonce、幂等与返工事件去重仍为单进程内存实现。接口已隐藏存储细节，但在共享持久化适配器完成前不得标记为生产稳定版；界面只保留弱提示，不把存储实现细节重新塞进业务模板。
+- Go 分发引擎继续保留跨语言协议实现；双方通过 `docs/protocol-test-vectors/signature-v1.json` 契约向量验证字节级一致，而不是建立跨语言源码依赖。
+
+### 模块 7: 快速 HTTP JSON `[v5 新增]`
+
+- `agents.integration_mode` 是接入语义的唯一权威字段：`http_json` 表示默认快速接入，`aicp_hmac` 表示高级 AICP v1。数据库默认值保持 `aicp_hmac`，确保迁移前记录和未升级客户端不会被静默改成无签名调用。
+- 快速 Agent 在同一 origin 提供 `GET /healthz` 和注册的 `POST` 执行地址。可选`访问密钥`映射为 Bearer Token；没有密钥时不创建占位凭证，也不发送认证头。
+- 正式派发正文仍由平台先持久化；快速 Agent 的同步响应由 `quickagent` 共享解析器校验并转换为现有交付契约。结果先写入 `dispatch_attempts.quick_result_payload`，再确认接单并转交 Business API；转交失败只恢复已保存结果，不重新调用外部 Agent。
+- 快速 Agent 不接收生命周期 Webhook。任务事件仍照常持久化，但 outbox 仅为 `aicp_hmac` 收件人创建，避免把平台事件误发到提供者的任务执行地址。
+- 连接测试只探测同域 `/healthz`，要求有效 SIWE 会话。生产环境拒绝非 HTTPS、私网及保留地址，并在 DNS 校验后固定目标 IP；本地体验模式才允许 loopback HTTP。
+
 ## 接口契约
 
 - 认证中间件对外暴露：`VerifySignature(req) (VerifyResult, ProtocolError)`；`Sign(req, secret, callType) SignedHeaders`（`[v2]` `callType` 默认 `production`，`[[15.agent-sandbox-admission]]` 发起沙箱调用时显式传 `sandbox`）。
@@ -87,5 +105,6 @@
 | 决策 | 选项 | 理由 |
 | ---- | ---- | ---- |
 | 签名算法 | HMAC-SHA256（选中）vs 非对称签名（Ed25519） | HMAC 实现和密钥管理更简单，满足当前对称信任模型；非对称签名的额外好处（防止平台伪造）在 MVP 阶段收益低于其运维复杂度 |
+| 普通提供者默认接入 | 同步 HTTP JSON（选中）vs 强制 SDK/HMAC | 已完成的 Agent 通常已有 HTTP 执行端点；让平台吸收状态、重试与结果保存复杂度，可显著降低接入门槛。HMAC/SDK 仍为需要异步回调和防重放的高级模式，不删除能力 |
 | 幂等存储 | PostgreSQL 唯一约束（选中）vs Redis TTL | 项目数据库统一用 PostgreSQL 存业务状态和审计记录（AGENTS.md 要求单一权威位置），幂等记录需要与业务事务一致地提交，Redis 的最终一致性会引入额外的对账复杂度 |
 | 沙箱标记默认值 `[v2]` | 默认 `production`，沙箱需显式声明（选中）vs 默认 `sandbox` | 遗漏标记时应该更保守——把未声明的调用当正式任务处理，而不是让沙箱调用因遗漏标记被误算进正式历史；后者的后果（污染评分/历史数据且难以事后区分）比前者（个别测试调用被计入历史）更难恢复 |

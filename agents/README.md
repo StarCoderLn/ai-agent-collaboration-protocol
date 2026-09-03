@@ -2,6 +2,18 @@
 
 本目录承载平台自建、可真实执行任务的 Agent。它们用于协议联调、质量评估和演示，不改变第三方 Agent 通过框架无关协议接入平台的边界。
 
+## 高级 Agent 接入 SDK
+
+`agent-sdk/` 是 `@aicp/agent-sdk` 的仓库内发布源。它集中实现 AICP v1 验签、Nonce、
+并发幂等、Node HTTP 传输、健康检查、正式 `202` 接单和签名结果回调，并提供 Mastra、
+LangGraph 可选适配器。`product-workflow/` 与 `evidence-research/` 已复用同一协议、幂等和
+HTTP 边界；新增独立 Agent 不得再复制 `protocol.ts` 或原生 HTTP 服务壳。
+
+普通第三方提供者在产品上架页默认使用“`Agent 执行地址` + 可选`访问密钥`”的快速 HTTP
+JSON 方式，不需要安装此 SDK。SDK 面向平台自建 Agent，以及需要异步接单、签名回调、
+防重放和自管幂等的高级接入方。完整用法与产物格式见 [`agent-sdk/README.md`](agent-sdk/README.md)。当前 `0.1.x`
+作为 workspace package 验证，尚未发布 npm，多实例共享持久化适配器仍是生产发布前置项。
+
 ## PRD → 设计 → Coding 九个候选 Agent
 
 `product-workflow/` 提供三类能力，每类恰好三个真实执行策略：
@@ -32,9 +44,10 @@
 5. `product-workflow/src/agents/coding/`：三个 Coding Agent 的独立核心实现。
 6. `product-workflow/src/executors.ts`：只按九个稳定 Agent ID 路由，不包含模型策略分支。
 7. `product-workflow/src/model-client.ts`：DeepSeek JSON/TSX 客户端与代码安全校验。
-8. `product-workflow/src/formal-dispatch.ts`：正式接单、进度、结果和返工回调。
-9. `product-workflow/src/api.ts`：协议验签、幂等、输入校验、超时和执行路由。
-10. `product-workflow/src/index.ts`：配置、执行器、API 与 HTTP 服务的组合根。
+8. `agent-sdk/src/`：共用验签、幂等、HTTP、正式接单和结果回传基础设施。
+9. `product-workflow/src/formal-dispatch.ts`：工作流特有的制品适配、进度阶段和返工恢复。
+10. `product-workflow/src/api.ts`：工作流输入校验、错误分类和执行路由。
+11. `product-workflow/src/index.ts`：配置、执行器、API 与 HTTP 服务的组合根。
 
 每个 Agent 的展示名、实现方式和核心文件完整对应表见
 [`product-workflow/README.md`](product-workflow/README.md)。
@@ -117,8 +130,7 @@ DeepSeek 模式已在 2026-08-22 通过 500 字、3 个来源的真实页面闭�
 
 `evidence-research/` 是项目第一条 Mastra 纵向切片：
 
-- 独立实现协议 v1.0 的 HMAC-SHA256 验签、时间窗口、nonce 防重放和 `X-Call-Type`。
-- 通过 `Idempotency-Key` 防止同一研究请求重复执行。
+- 通过 `@aicp/agent-sdk` 复用协议 v1.0 的验签、时间窗口、Nonce、防重放、HTTP 和并发幂等边界。
 - 使用两个职责分离的 Mastra `Agent`：第一个规划一次检索，第二个只基于冻结证据生成
   Zod Structured Output；支持 Ollama 本地推理和 DeepSeek 云端推理。
 - 使用 OpenAlex 检索真实学术元数据与摘要。
@@ -129,8 +141,8 @@ DeepSeek 模式已在 2026-08-22 通过 500 字、3 个来源的真实页面闭�
 第一次阅读建议按一次真实请求经过系统的顺序看：
 
 1. `src/example-client.ts`：调用方如何构造任务、签名并发送请求。
-2. `src/protocol.ts`：签名基串、时间窗口、nonce 防重放和调用类型。
-3. `src/server.ts`：Node HTTP 请求如何转换成框架无关的 API 请求。
+2. `../agent-sdk/src/`：共享签名、Nonce、幂等和 Node HTTP 边界。
+3. `src/protocol.ts` / `src/server.ts`：保留旧导入路径的薄兼容出口与服务组合名称。
 4. `src/api.ts`：路由、验签、幂等、输入校验、超时和错误映射。
 5. `src/domain.ts`：论文任务输入、模型草稿和最终报告的数据契约。
 6. `src/mastra-executor.ts`：Mastra 如何调用检索工具并生成结构化报告。

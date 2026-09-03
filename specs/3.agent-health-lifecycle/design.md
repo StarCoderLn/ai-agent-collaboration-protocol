@@ -10,6 +10,8 @@
 | 2026-08-20 | v4   | 新增自动恢复逻辑（模块 2）与提供者手动恢复接口（模块 3）；确定阈值/间隔默认值 |
 | 2026-08-20 | v5   | 新增模块 4「受控上线期风险上限」，替换此前语义矛盾的「试运行风险上限」提法；`agent_status_config` 字段调整 |
 | 2026-08-23 | v6   | 对齐 PLAN：Feature 15 延后期间使用有角色校验、理由必填和审计留痕的 MVP 人工审核入口，并补驳回终态 |
+| 2026-08-31 | v7   | 受控上线期门禁改为 Agent 单次报价上限，与用户规划预算候选过滤解耦 |
+| 2026-09-03 | v8   | 健康探测读取 `integration_mode`，支持默认快速 HTTP JSON 与历史 HMAC |
 
 ## 项目架构
 
@@ -31,7 +33,7 @@
 
 **涉及层及关键设计:**
 
-- Go 侧定时任务按 Agent 独立调度，调用其 `service_endpoint` 的健康检查端点，复用 [[1.agent-protocol-contract]] 的签名与超时分类。
+- Go 侧定时任务按 Agent 独立调度，调用其 `service_endpoint` 同域 `/healthz`。`aicp_hmac` 使用 AICP v1 签名；`http_json` 使用可选 Bearer Token。未知模式直接归类为协议不兼容，不能为了“尽量可用”静默发送无认证请求。两种模式继续复用同一超时分类和生命周期状态机。
 - 检查结果写入 `agent_health_checks` 表（滚动保留最近 N 条），连续失败计数在应用层维护，达到阈值触发 `AutoPauseHealthCheck` 事件。
 - 阈值、检查间隔均从配置表读取（非硬编码常量），便于产品在待确认数值敲定后直接调整而无需改代码。
 - `[v3]` 连续失败计数的精确规则（`CountConsecutiveFailures()`，与 `Agent 内部错误`/真实任务失败严格隔离的判断逻辑集中在这一处，避免各调用方各自理解口径）：
@@ -78,9 +80,9 @@
 - 本模块描述的是业务规则本身（受控上线期是什么、怎么判定、上限怎么算），**不在本 feature 单独实现一个 `IsInProbation()` 服务**——它的代码实现并入 [[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()`（那里已经是五项硬约束的统一校验入口，两个函数都在 Go 分发引擎同进程执行，拆成两个跨服务调用没有必要）。这里只是规则的权威文档位置，不是代码的物理位置。
 - `IsInProbation(agentId) bool`：只读查询逻辑，比较 [[12.scoring-system]] 的 `agent_score_snapshots.sample_size`（该 Agent 当前评分样本量）与 `scoring_rule_versions.bayesian_prior.prior_weight`（当前生效规则版本的先验权重）——`sample_size < prior_weight` 即判定为受控上线期。若该 Agent 尚无任何 `agent_score_snapshots` 记录（刚转正、一单未完成），视为 `sample_size = 0`，天然满足受控上线期条件，不需要为"从未有过快照"这种边界单独写分支。
 - 这是运行时判定，不在 `agents` 表存储一个需要手动维护的"是否受控中"布尔字段——避免引入一份需要和评分快照保持同步的冗余状态（同步遗漏本身就是一类常见 bug 来源）。
-- 受控上线期内的预算上限 = 平台历史任务预算分布的第 30 百分位数（可配置分位数，存于 `agent_status_config.probation_budget_cap_percentile`），由 [[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()` 在做资格过滤时调用 `IsInProbation()` 并应用这个上限，与预算/健康状态/准入状态/截止时间等其它硬约束走同一条判断路径，不额外开分支（[[7.task-visibility-and-mode]] 需要相应更新，见该 feature 的 design.md）。
+- 受控上线期内的报价上限 = 平台历史成交金额分布的第 30 百分位数（可配置分位数，存于 `agent_status_config.probation_budget_cap_percentile`）。[[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()` 在资格过滤时比较 `candidate.price` 与该上限；发布者预算偏好不参与比较。这样预算偏好不隐藏普通候选时，新入驻 Agent 的单次成交风险仍受控制。
 - 候选列表展示的"新入驻"标识直接复用 `IsInProbation()` 的结果，不重新定义一套判断逻辑。
-- `[v5 修改]` 候选列表查询（供 feature 8 使用）只返回 `status = active` 的 Agent；受控上线期的预算上限判断不在这一层做过滤（不满足预算上限的受控期 Agent 直接被 [[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()` 排除，属于资格过滤的一部分，不是 Agent 状态查询的一部分——两者关注点不同，不混在同一个查询里）。
+- `[2026-08-31 修改]` 候选列表查询只返回 `status = active` 的 Agent；受控上线期的单次报价风险上限由 [[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()` 执行，状态查询只提供样本和额度事实，不混入匹配判断。
 
 ## 数据模型
 

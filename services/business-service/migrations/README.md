@@ -64,3 +64,12 @@ migrate -path services/business-service/migrations \
 - `0026_formal_multi_agent_workflows`：正式任务工作流、节点依赖、节点级候选/分配、
   执行/制品/验收证据与 USDC 分阶段释放账本；旧任务继续使用 NULL 节点的单 Agent 路径。
 - `0027_workflow_milestone_settlement`：为工作流节点增加幂等里程碑结算意图、释放金额与最终余额退款记录。
+- `0028_pre_escrow_agent_selection`：先拆分和选择 Agent、冻结准确报价，再托管并按依赖派发。
+- `0029_deferred_workflow_pricing`：发布时允许价格为空；匹配阶段的预算偏好与最终冻结报价、托管金额分列存储。
+- `0030_task_soft_archive`：为规划前任务增加可审计软删除；市场、详情、工作台和统计统一忽略已归档任务。
+- `0031_workflow_node_failure_stage`：记录正式工作流节点的模型失败阶段，使页面可以展示真实故障位置并安全重试。
+- `0032_workflow_node_feedback`：按已验收工作流节点记录发布者评分、文字反馈、优点标签与独立模型训练许可；原始反馈与未来脱敏向量/训练派生数据分离。
+- `0033_atomic_workflow_settlement`：新工作流停止逐阶段付款，最终验收后固化最多 32 条 Agent 分账、清单摘要与交付证据根，并由一笔链上交易原子执行。
+- `0034_dao_arbitration`：增加 YD 成员镜像、DAO 仲裁轮次/小组/投票，以及带裁决摘要的专用争议退款和平台/DAO 共用的多 Agent 资金 outbox。
+- `0035_optional_agent_email`：联系邮箱改为历史兼容的可空字段；新 Agent 不再因缺少邮箱而无法上架，已有非空数据保持不变。
+- `0036_quick_agent_integration`：新增默认快速 HTTP JSON 接入模式和可恢复的同步结果暂存；历史 Agent 继续使用 AICP HMAC，不改变既有认证与回调语义。

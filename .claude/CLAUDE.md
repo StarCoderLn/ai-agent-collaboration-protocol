@@ -4,20 +4,21 @@ AI 原生任务协作平台，连接任务发布者与独立部署的 AI Agent�
 
 ## 当前阶段
 
-项目已进入开发阶段，MVP 技术栈已经冻结。必须区分“技术栈已确定”和“具体模块尚未实现”，不得因路由、认证或适配器未完成而另建平行脚手架。
+项目已进入完整闭环验收阶段，MVP 技术栈已经冻结。当前代码已覆盖 Agent 注册、任务发布、多 Agent 匹配与串行执行、交付验收、USDC 托管与统一结算、反馈以及 DAO 争议仲裁。必须区分“本地自动化验证通过”与“公共测试网/AWS 生产环境已验证”，未完成外部环境验收时不得声称已上线。
 
 ## 技术栈
 
-`services/dispatch-engine`（Go，`go.mod` 已确认）已落地，实现 Agent 接入协议（feature 1）的签名认证、幂等、错误码与沙箱标记。
+`services/dispatch-engine`（Go）实现 Agent 接入协议、候选匹配、正式派发、回调与失败恢复。
 
-feature 2（Agent 注册与凭证管理）12 项任务已全部完成，真实路由、读取接口和 SIWE 认证装配均已落地，仍需真实 AWS/PostgreSQL 环境验证：
-- `services/business-service/migrations`（SQL，`golang-migrate` 风格）— `agents`/`agent_credentials`/`audit_logs`，与 dispatch-engine 共享 PostgreSQL 但用独立追踪表 `business_service_schema_migrations`。
-- `services/business-api`（TypeScript + Vitest，独立 Next.js API-only 应用）— 信封加密、Agent 创建/编辑/凭证替换领域逻辑，已挂载为真实 Route Handlers 并接入 SIWE 认证与 PostgreSQL 事务；AWS Lambda 部署配置（CDK + Lambda Web Adapter + zip 打包）见 `services/business-api/infra/README.md`，尚未在真实 AWS 环境验证。
-- `web/`（better-t-stack pnpm workspace，`packageManager: pnpm@11.18.0`）— 唯一正式 Web 工程；`apps/web` 使用 Next.js 16、React 19、App Router、Tailwind CSS 和 Zod，`packages/ui` 提供共享 UI，测试使用 Vitest + Testing Library，lint/格式化使用 Biome。注册页与编辑页均已迁入并接入真实读取/写入接口与认证，端到端可用（真实环境验证仍待执行）。
+`services/business-api`（TypeScript + Next.js API-only）是任务、Agent、工作流、托管、评分与仲裁的权威业务边界；`services/business-service/migrations` 维护与派发引擎共享的 PostgreSQL 结构。
 
-项目级固定边界：用户面业务 API 使用 Next.js App Router Route Handlers，部署方向为 AWS Lambda；Go 只负责分发引擎；数据使用 PostgreSQL 与 AWS SQS/SNS；MVP 链为 Ethereum + Solidity + MetaMask。提供者钱包认证方案已冻结为 SIWE（EIP-4361），2026-08-22 由用户确认，详见 `specs/PLAN.md` 与 `specs/2.agent-registration/design.md` 模块 5。
+`agents/product-workflow` 提供 PRD、设计和 Coding 三个阶段、每阶段三种实现的真实 Agent；`agents/evidence-research` 保留为独立的论文检索与协议联调 Agent。
 
-其余服务（AWS SQS/SNS、Ethereum 合约，见 `specs/1.agent-protocol-contract/requirements.md` 架构类型）尚未落地，不得在缺少用户决策或工作流产出的情况下虚构。
+`contracts/escrow` 实现 USDC 托管、多 Agent 原子分账、争议退款和 YD 质押型 DAO 仲裁；资金终态只能在链上确认后回写数据库。
+
+`web/`（better-t-stack pnpm workspace，`packageManager: pnpm@11.18.0`）是唯一正式 Web 工程；`apps/web` 使用 Next.js 16、React 19、App Router、Tailwind CSS 和 Zod，`packages/ui` 提供共享 UI，测试使用 Vitest + Testing Library，lint/格式化使用 Biome。
+
+项目级固定边界：用户面业务 API 使用 Next.js App Router Route Handlers，部署方向为 AWS Lambda；Go 只负责分发引擎；数据使用 PostgreSQL 与 AWS SQS/SNS；业务结算资产只使用 USDC，ETH 仅支付 EVM Gas；钱包认证使用 SIWE（EIP-4361）。权威决策见 `docs/prd.md` 与 `specs/PLAN.md`。
 
 ## 常用命令
 
@@ -26,8 +27,9 @@ feature 2（Agent 注册与凭证管理）12 项任务已全部完成，真实�
 - migration 见 `services/dispatch-engine/migrations/README.md`（业务库 migration 见 `services/business-service/migrations/README.md`，含独立追踪表参数）
 - `cd services/business-api && pnpm test` / `pnpm typecheck` / `pnpm build` — 业务 API 单元测试、类型检查、构建
 - `cd web && pnpm dev:web` / `pnpm test` / `pnpm check-types` / `pnpm check` / `pnpm build` — 正式 Web 前端开发与验证
-
-其余服务（交易队列、合约）的 install/dev/build/lint 命令尚未确定，由后续 feature 落地时补充。
+- `cd agents && pnpm check && pnpm test && pnpm build` — 验证平台自建 Agent
+- `cd contracts/escrow && forge test` — 验证托管、分账和 DAO 合约
+- `node scripts/local-mvp.mjs` — 恢复或初始化持久化 Anvil 链并启动完整本地闭环
 
 ## 规则加载顺序
 
@@ -73,7 +75,9 @@ feature 2（Agent 注册与凭证管理）12 项任务已全部完成，真实�
 ├── services/
 │   ├── dispatch-engine/     # Go 派发引擎；internal/protocol 为 Agent 接入协议实现
 │   ├── business-service/    # 业务库 SQL migration（agents/agent_credentials/audit_logs）
-│   └── business-api/        # TS 业务逻辑：信封加密、Agent 编辑/凭证替换
+│   └── business-api/        # TS 权威业务 API 与工作流/资金协调
+├── agents/                   # 正式产品工作流与论文调研 Agent
+├── contracts/escrow/         # USDC 托管、原子分账和 DAO 仲裁合约
 ├── web/                     # 唯一正式 Web 工程（better-t-stack / Next.js 16）
 ├── specs/                   # 16 个 feature 的 requirements/design/tasks 及 PLAN.md
 ├── AGENTS.md                # 跨 Agent 稳定工程规则

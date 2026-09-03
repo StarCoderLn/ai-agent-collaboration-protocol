@@ -7,6 +7,8 @@
 | 2026-08-20 | v1   | 初始设计 |
 | 2026-08-20 | v2   | 补充说明：`agent_score_snapshots`/`scoring_rule_versions` 被 [[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()` 只读查询，用于判定受控上线期（[[3.agent-health-lifecycle]] F-006），不需要本 feature 反过来做任何改动 |
 | 2026-08-23 | v3   | 落地系统响应时间、快照输入证据、最旧优先批处理和 EventBridge 定时调用 |
+| 2026-08-31 | v4   | 将五维快照、样本置信度和同分类履约统计接入正式工作流候选证据 |
+| 2026-09-02 | v5   | 增加逐工作流节点反馈事实、终态反馈界面与脱敏派生数据边界 |
 
 ## 项目架构
 
@@ -23,6 +25,11 @@
 - 早期 migration 已创建但评分公式从未读取的 `timeliness`、`requirement_fit`、`compliance`
   列由 `0020_subjective_rating_boundary` 保留为可空历史字段；新接口严格拒绝这些字段，也
   不再写入。这样纠正输入边界而不删除已有记录。
+- 旧单 Agent 任务继续使用 `task_ratings`；正式多 Agent 任务使用 `workflow_node_feedback`。
+  评分快照在仓储边界通过 `UNION ALL` 读取两种历史事实，避免页面或调用方理解兼容分支。
+- `workflow_node_feedback` 同时固化 `task_id`、`workflow_node_id`、`assignment_id` 和
+  `agent_id`。这些归属全部由服务端在事务内从已验收节点解析，浏览器只提交节点 ID 与
+  反馈内容，不能把评分伪造到另一个 Agent 名下。
 
 ### 模块 2: 小样本校正与时间衰减
 
@@ -54,9 +61,32 @@
   从未计算或最久未更新的 100 个 Agent，避免固定 `ORDER BY id LIMIT N` 造成尾部饥饿。
   Bearer token 通过 Secrets Manager 动态引用注入 Lambda 与 Connection，不进入 synth 模板。
 
+### 模块 6: 候选选择证据 `[v4 新增]`
+
+**涉及层及关键设计:**
+
+- 分发引擎在生成 `JobDistributionRecord` 时读取最新 `agent_score_snapshots`，把 `score`、`sample_size`、`dimensions` 和 `dispute_rate` 固化进候选快照；浏览器切换比较偏好时不重新查询或现算评分。
+- 置信度由样本量相对规则版本中的贝叶斯 `priorWeight` 计算，映射为高、中、低三档。它表达证据充分程度，不参与伪装成精确概率，也不改变原始综合评分。
+- 相似任务统计从同分类、已验收的正式 workflow assignment 计算完成量、按时率和返工率；未分配候选、沙箱调用和未验收结果都不能进入统计。候选卡展示全周期五维值，Agent 详情仍保留近期/全周期并列视图。
+
+### 模块 7: 逐阶段反馈与后续数据复用 `[v5 新增]`
+
+**涉及层及关键设计:**
+
+- 已结算、已退款或争议中的正式任务只允许评价状态为 `accepted` 且存在已接单
+  assignment 的节点；每个 `workflow_node_id + publisher_id` 唯一，幂等记录、反馈事实、
+  `status_version` 与任务事件在同一事务提交。
+- 页面在“结算或争议”阶段按工作流节点展示 Agent、交付质量、沟通体验、优点标签、
+  文字反馈和改进建议。每阶段独立回执，避免一条总评分掩盖 PRD、设计和 Coding 的差异。
+- 结构化评分与标签可用于履约统计和后续检索特征。原始文字是受控业务事实，不直接写入
+  向量库或训练集；未来派生任务必须先脱敏、保留来源与 schema 版本，并在模型训练场景
+  过滤 `allow_model_training=false` 的记录。任务正文、附件、钱包与凭据永不进入派生样本。
+
 ## 接口契约
 
 - `POST /api/tasks/:id/rating`：发布者提交质量反馈与沟通体验评分（仅验收后可提交一次）。
+- `GET /api/tasks/:id/workflow-feedback`：发布者读取自己正式任务的逐阶段反馈。
+- `POST /api/tasks/:id/workflow-nodes/:nodeId/feedback`：发布者评价一个已验收节点；请求必须携带幂等键，Agent 与 assignment 由服务端解析。
 - `GET /api/agents/:id/score`：返回五维评分（含近期/全周期、样本量、规则版本）、系统
   响应时间和公开证据数量。
 - 内部：`ComputeAgentScoreSnapshot(agentId, ruleVersion) snapshot`（纯函数，给定相同输入和规则版本可复现）。
@@ -64,6 +94,7 @@
 ## 数据模型
 
 - `task_ratings(id PK, task_id FK, agent_id FK, quality_score, communication_score, submitted_at)`
+- `workflow_node_feedback(id PK, task_id FK, workflow_node_id FK, assignment_id FK, agent_id FK, publisher_id, quality, communication, feedback_text, strengths, improvement_text, allow_model_training, schema_version, created_at)`
 - `agent_score_snapshots(id PK, agent_id FK, score, sample_size, dispute_rate, completed_scale, dimensions JSONB, input_evidence JSONB, rule_version, computed_at)`
 - `scoring_rule_versions(id PK, version, weights JSONB, bayesian_prior JSONB, decay_function JSONB, created_at, deprecated_at)`
 
@@ -71,6 +102,8 @@
 
 - 评分提交接口校验请求者是该任务的发布者且任务已验收，防止重复评分或越权评分。
 - 系统计算维度（争议率、历史完成规模、响应速度）不对外暴露任何写接口。
+- 原始逐阶段反馈只允许任务发布者读取；公开任务详情和 Agent Webhook 不包含反馈正文。
+- 模型训练许可是独立布尔值，并要求存在有效文字反馈；许可不扩展到任务正文、附件、钱包或密钥。
 
 ## 前端视觉规范
 

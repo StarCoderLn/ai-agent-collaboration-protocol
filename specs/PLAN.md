@@ -4,11 +4,15 @@
 
 来源需求文档：`docs/prd.md`（AI Agent 协作协议平台 MVP）。范围：完整 MVP（对应 PRD 第 11 节 P1-P4），链选型：**Ethereum**（用户已确认，Solana 不在 MVP 范围）。`[2026-08-22 变更]` 14.ops-backend-and-metrics、15.agent-sandbox-admission、16.agent-wallet-rebind 被移出 MVP 主闭环；当前 MVP 范围为 **13 个 feature**（1-13）。15 后续重新启动并已完成 T-001/T-002，但仍属于 P5 能力；三个 feature 的 requirements/design/tasks 均保留且不重新编号。
 
-`[2026-08-30 当前基线]` 早期 PRD、设计、Coding 三步同步比较体验已经完成验证使命并删除。
-现在由正式任务承载多 Agent 流程：USDC 托管确认后创建持久化工作流，每个节点从最多
-3 个候选中分配 1 个 Agent，上游已验收完整制品成为下游输入，节点验收后按里程碑结算。
-工作台已经展示当前网络、ETH、USDC 和 YD 余额；YD 是否用于 DAO 质押仍需独立完成
-合约地址、权限和经济模型审计。当前制品与状态契约见
+`[2026-08-31 当前基线]` 早期 PRD、设计、Coding 三步同步比较体验已经完成验证使命并删除。
+现在由正式任务承载多 Agent 流程：发布需求后立即创建持久化工作流并为每个节点生成候选；
+用户先查看候选价格区间，可选填写预算上限调整排序，并修正平台从自然语言识别出的能力；
+随后比较履约证据、选择 Agent 并冻结节点报价，所有节点选择完成后才按准确报价总和托管
+USDC。托管确认后按 DAG 依赖创建正式 assignment 并派发，上游已验收完整制品成为下游
+输入，中间节点验收只负责质量门禁和解锁下游，全部阶段完成并由发布者最终验收后才
+一次性原子结算。选择不占用 Agent、不触发派发，assignment 才代表执行事实。
+工作台已经展示当前网络、ETH、USDC 和 YD 余额；用户可质押 YD 成为 DAO 仲裁候选成员，
+平台按固化种子分案并排除任务参与方。奖励罚没、申诉、公共测试网部署和经济模型审计仍待完成。当前制品与状态契约见
 [`docs/workflow-artifacts.md`](../docs/workflow-artifacts.md)。
 
 ## 项目级技术栈决策（已冻结）
@@ -19,24 +23,24 @@
 - 用户面业务 API 采用 Next.js Route Handlers 并以 AWS Lambda 为部署方向；Go 只承担分发引擎与 Agent 接入协议职责。Lambda 打包与 IaC 方案（2026-08-22 由用户确认）：AWS Lambda Web Adapter + zip 打包（不用容器镜像）+ AWS CDK（不用 SAM——本项目已知会有多个 Lambda，包括未来 feature 9/10 的 SQS 消费者、feature 12 的定时评分任务，CDK 用真正的编程语言表达共享配置更合适）。具体实现与部署命令见 `services/business-api/infra/README.md`；后续新增 Lambda（不限于 business-api）默认沿用同一 IaC 工具，除非有真实理由需要偏离（如 Go 分发引擎若改用 ECS/Fargate 等非 serverless 资源，仍可用 CDK 表达，不需要引入第二套工具）。
 - PostgreSQL、AWS SQS/SNS、Ethereum + Solidity + MetaMask 是 MVP 已选技术边界；不实现 Solana/Phantom 路径。
 - “技术栈已确定”不代表所有实现已完成。路由装配、数据库适配器、认证协议或部署配置缺失时，必须准确记录为实现缺口，不得另建技术栈替代。
-- 提供者钱包认证方案已冻结为 SIWE（EIP-4361）：`GET /api/auth/nonce` 签发一次性 nonce（PostgreSQL 存储，短 TTL，单次使用）→ 前端 `personal_sign` 签署标准 SIWE 消息 → `POST /api/auth/verify` 校验签名与 nonce 后写入 `auth_sessions`（session_id、wallet_address、expires_at）并下发 httpOnly+Secure+SameSite=Lax 的不透明 session cookie → 后续接口从 session 解析 `actorId`，不信任请求体/Header 自报的钱包地址。会话 TTL 24 小时，过期需重新签名；多端会话管理与 refresh 轮换体验不在本轮范围。详细设计与实现见 [[2.agent-registration]] design.md 模块 5。（2026-08-22 由用户确认冻结）
+- 提供者钱包认证方案已冻结为 SIWE（EIP-4361）：`GET /api/auth/nonce` 签发一次性 nonce（PostgreSQL 存储，短 TTL，单次使用）→ 前端 `personal_sign` 签署标准 SIWE 消息 → `POST /api/auth/verify` 校验签名与 nonce 后写入 `auth_sessions`（session_id、wallet_address、expires_at）并下发 httpOnly+Secure+SameSite=Lax 的不透明 session cookie → 后续接口从 session 解析 `actorId`，不信任请求体/Header 自报的钱包地址。会话 TTL 为固定 7 天，过期需重新签名；多端会话管理与 refresh 轮换体验不在本轮范围。详细设计与实现见 [[2.agent-registration]] design.md 模块 5。（2026-08-22 确认 SIWE 方案，2026-09-01 将会话期限由 24 小时调整为 7 天）
 - Mastra、LangChain、LangGraph 仅用于第三方或自建测试 Agent 的内部编排，不是平台 Web/API 技术栈替代项；自建测试 Agent 的生产选型仍需样例工作流验证后单独冻结。
 
 | 序号 | feature | 说明 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
 | 1 | agent-protocol-contract | Agent 接入协议基础设施：认证签名、幂等键、错误码、超时重试语义 | - | 已实现 |
-| 2 | agent-registration | Agent 注册、凭证加密存储、必填校验、审计日志 | 1 | 已完成（T-001～T-012；本地 PostgreSQL 已验证，真实 AWS KMS/CDK 部署仍待环境级验证） |
+| 2 | agent-registration | Agent 注册、凭证加密存储、必填校验、审计日志 | 1 | 已完成（T-001～T-013；本地 PostgreSQL 已验证，真实 AWS KMS/CDK 部署仍待环境级验证） |
 | 3 | agent-health-lifecycle | 健康检查、上下架状态机、试运行准入、运营审核 | 1, 2 | 已完成（T-001～T-008） |
-| 4 | task-creation-and-preview | 任务创建表单、字段校验、分类标签联动、发布前预览 | - | 已完成（T-001～T-008） |
-| 5 | escrow-contract-ethereum | Ethereum 智能合约：USDC 托管、里程碑/一次性结算、退款、暂停、事件 | - | 已实现 T-001～T-007（Foundry 14/14）；T-008 公共测试网部署待外部验收 |
+| 4 | task-creation-and-preview | 任务创建表单、字段校验、分类标签联动、发布前预览 | - | 已完成（T-001～T-009） |
+| 5 | escrow-contract-ethereum | Ethereum 智能合约：USDC 托管、原子多 Agent 结算、争议退款、暂停、事件 | - | 已实现 T-001～T-007（Escrow + DAO Foundry 20/20）；T-008 公共测试网部署待外部验收 |
 | 6 | escrow-sync-and-wallet | 链上事件同步/确认/对账/恢复、钱包交互与托管状态前端 | 4, 5 | 本地 MVP 已完成（T-001～T-008；USDC、Anvil 与 MetaMask 已验证）；生产 KMS/HSM operator client 尚未实现 |
 | 7 | task-visibility-and-mode | 可见性（私密/公开）、分配模式（手动/自动）、市场与工作台分离 | 4；T-004 另有对 3、12 的**表结构级**轻依赖（见下方说明） | 已完成（T-001～T-008） |
 | 8 | matching-and-candidates | V0 匹配（分类→资格→标签→排序）、JobDistributionRecord、候选列表/可视化 | 3, 6, 7 | 已完成（T-001～T-008） |
 | 9 | dispatch-and-acceptance | 原子占用分配、SQS 派发、Agent 接单/拒单确认、接单超时处理 | 1, 8 | 已完成（T-001～T-007） |
 | 10 | notification-and-sync | Webhook 签名异步通知、退避重试与死信队列、SSE 进度推送、状态补拉接口 | 1, 9 | 已完成（T-001～T-008；真实 PostgreSQL、SSE 续传与正式构建已验证） |
 | 11 | execution-tracking-and-delivery | Agent 进度上报、1~3 个候选结果提交与版本管理、验收/返工 | 1, 10 | 已完成（T-001～T-008；真实 PostgreSQL、权威验收预览、过期条件保护与正式构建已验证） |
-| 12 | scoring-system | 五维评分计算（贝叶斯平滑/时间衰减）、规则版本化、评分页面 | 11 | 已完成（T-001～T-008；证据快照、系统响应时间、生产定时任务、PostgreSQL 与正式构建已验证） |
-| 13 | dispute-and-arbitration | 争议发起、证据提交、资金冻结、人工仲裁决定、结算/退款执行 | 6, 11 | 已完成（T-001～T-008；权限、资金冻结、执行确认、完整审计、PostgreSQL 与正式构建已验证） |
+| 12 | scoring-system | 五维评分计算（贝叶斯平滑/时间衰减）、规则版本化、评分页面 | 11 | 已完成（T-001～T-010；证据快照、系统响应时间、阶段反馈、生产定时任务、PostgreSQL 与正式构建已验证） |
+| 13 | dispute-and-arbitration | 争议、证据、资金冻结、平台/DAO 仲裁、多 Agent 结算或退款 | 6, 11 | 本地功能已完成（T-001～T-012；DAO 分案投票、资金守恒与链确认已验证）；公共测试网与审计待外部验收 |
 | 14 | ops-backend-and-metrics | 运营后台（审核/查询/超时处理/交易核对）、核心指标埋点看板 | 2, 3, 8, 9, 13 | **延后至 P5**（用户确认，2026-08-22；MVP 阶段运营操作走直接数据库操作/人工介入） |
 | 15 | agent-sandbox-admission | 新 Agent 沙箱调用（3 次标准化测试）+ 清单式人工判定，驱动试运行→可接单准入 | 1, 2, 3, 14 | **P5 进行中**（T-001/T-002 已完成；T-003～T-006 等待 14.T-001 RBAC） |
 | 16 | agent-wallet-rebind | 钱包换绑：新钱包签名验证所有权 + 站外通知 + 冷静期，冷静期内结算仍走旧地址 | 1, 2 | **延后至 P5**（用户确认，2026-08-22；不阻塞其他 feature，无 feature 反向依赖 16） |
@@ -52,8 +56,12 @@
 ### 正式多 Agent 基线（2026-08-30）
 
 - PostgreSQL 中的 workflow run、node、candidate、assignment、artifact、acceptance 与 settlement ledger 是唯一权威状态；浏览器只读投影，不维护第二套 `sessionStorage` 工作流。
-- PRD、设计与 Coding 节点逐级继承完整上游制品；中间节点通过版本化机器门禁自动推进，最终交付由发布者人工验收。
-- 任务详情用五个阶段 Tab 展示匹配、执行、交付和里程碑结算；React Flow 关系图只在匹配与接单阶段展示候选或有效分配，不允许拖拽修改交易事实。
+- 任务提交后进入 `planning`：发布页不收集预算或技能标签，服务端从标题、说明和能力描述识别规范能力并拆分工作流。匹配阶段可选预算上限只影响排序，用户也可在选人前增删节点能力；两者都不能修改冻结报价或托管金额。用户只能提交候选 Agent ID，服务端从候选快照读取报价并在事务内冻结，全部节点选完后才进入 `awaiting_escrow`。
+- 候选页提供综合推荐、质量优先、性价比优先三种视角，并展示任务匹配度、样本量、相似任务、按时率、返工率、责任争议率、五维评分与置信度。交付案例严格区分平台已验证结果与 Agent 自行提供材料。
+- 托管 intent 只读取 workflow run 的准确总价；普通准备状态锁定选择，只有明确失败且无 Deposit 哈希/链事件时才允许改选并原子同步 intent 金额，旧页面按旧金额登记会被拒绝。链上托管确认后根节点进入匹配、下游节点阻塞，分发引擎复用已选 Agent 创建 assignment 并按 DAG 依赖推进，不重新匹配覆盖用户选择。
+- PRD、设计与 Coding 节点逐级继承完整上游制品；中间节点通过版本化机器门禁自动推进但不付款，最终交付由发布者人工验收后统一结算。
+- 任务详情用五个阶段 Tab 展示匹配、执行、交付和结算/争议；React Flow 关系图只在匹配与接单阶段展示候选或有效分配，不允许拖拽修改交易事实。
+- 最终验收可选择返工、发起争议或结算。争议自动建立 DAO 轮次，三人小组两票多数形成裁决；DAO 与平台仲裁复用同一多 Agent 分账规则，裁决、证据和分账摘要随资金结果锚定链上。
 - 公共测试网 USDC Escrow 部署、生产 `OPERATOR_ROLE` KMS/HSM 签名适配器、真实 AWS Lambda/KMS 环境与上线前合约安全审计仍是上线阻塞项，不能由本地测试替代。
 
 ### 本地开发环境稳定性（2026-08-30）
@@ -85,6 +93,8 @@
 > 变更记录（2026-08-20，本条）：[[4.task-creation-and-preview]] 最短执行周期默认值从 2 小时改为 30 分钟（v5），明确其只保证调度流水线跑得完，不重复"预计时长 vs 截止时间"硬约束的职责；同时修正 [[11.execution-tracking-and-delivery]] 超时检测（v3）此前只扫描「执行中」状态的漏洞，扩大到「待匹配、待接单、执行中」三个状态，避免 deadline 设置偏短的任务卡在中间状态导致资金滞留。
 > 变更记录（2026-08-20，本条）：合约私钥管理方案确认为角色分离 + 多签分级参考表（[[5.escrow-contract-ethereum]] v5），拆出独立 `TREASURY_ROLE`。全量核对 16 个 feature 的开放问题，确认无阻塞开发的项目；补记此前遗漏的 PRD §14 P0-2（已在 6 落地，仅补文档）、P1-3（补进 14 的开放问题）、P1-4（合规工作，单独跟踪，不塞进某个 feature）。[[15.agent-sandbox-admission]] 沙箱调用成本确认由平台承担；[[2.agent-registration]] 邮箱字段确认为必填（支撑 [[16.agent-wallet-rebind]] 的站外通知）。
 
+> 变更记录（2026-09-03）：[[2.agent-registration]] 取消联系邮箱上架门槛。[[16.agent-wallet-rebind]] 继续延后，其站外确认渠道在实施前独立选型和验证，不再依赖 `agents.email` 必填。
+
 > 变更记录：
 > - 拆分原「9.dispatch-and-acceptance」为 9（分配与接单）与 10（通知与状态同步）两个 feature，因合并后任务数超过单 feature 8 个上限（Step 5.5/9 强制要求）；10 之后的原 10-13 顺延为 11-14。
 > - 2026-08-20 `--change`：新增 15.agent-sandbox-admission，落实 PRD §14 P0-7「新 Agent 沙箱调用 3 次 + 清单式人工判定」的确认方案。同步更新了 1.agent-protocol-contract（新增 F-006 沙箱模式标记位，v1→v2）与 3.agent-health-lifecycle（F-007 触发条件明确为 15 的判定结果，v1→v2），两个 feature 均未变更任务数量，任务结构不受影响。
@@ -110,7 +120,7 @@
 以下决策仍未拍板，已在对应 feature 的 requirements.md「开放问题」中标注，design.md 按当前 PRD 推荐方向设计但预留调整点。产品/合约/法务确认后，用 `/yd:prd --change {N} 说明变更` 更新：
 
 - ~~**链上交易确认条件（PRD §14 P0-2）**~~ `[2026-08-24 已确认]`：确认数是后端可配置安全参数，不在首页展示；本地/测试链默认 2 次，Ethereum 主网开发默认 6 次，生产部署必须显式配置并在高金额场景提高阈值，见 [[6.escrow-sync-and-wallet]] v5。
-- ~~平台服务费费率与承担方（PRD §14 P0-3）~~ `[2026-08-28 已确认]`：名义费率 0.4%，最低 0.05 USDC，由 Agent 提供者成交收入承担；任务预算最低 1 USDC，发布者托管额已包含服务费且是最高业务支出。见 [[4.task-creation-and-preview]] `CalculatePlatformFee()` 与 [[5.escrow-contract-ethereum]] `release()` 的转账拆分。
+- ~~平台服务费费率与承担方（PRD §14 P0-3）~~ `[2026-08-31 已确认]`：名义费率 0.4%，最低 0.05 USDC，由 Agent 提供者成交收入承担；发布者按全部节点冻结报价总和托管，金额已包含服务费。匹配阶段预算上限只作排序偏好。见 [[4.task-creation-and-preview]] `CalculatePlatformFee()` 与 [[5.escrow-contract-ethereum]] `release()`。
 - 接单后取消/退款/返工/超时赔付细则（PRD §14 P0-4）
 - 仲裁执行方、是否支持部分支付/申诉（PRD §14 P0-5）
 - ~~新 Agent 沙箱评估 vs 低风险真实任务 vs 纯人工审核（PRD §14 P0-7）~~ `[2026-08-20 已确认]`：采用沙箱调用 3 次 + 清单式人工判定，见 [[15.agent-sandbox-admission]]；沙箱调用成本 `[2026-08-20 已确认]` 由平台承担，不向 Agent 提供者收费；分类专属测试任务内容仍待产品/运营补充（见该 feature 的开放问题）
