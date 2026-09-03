@@ -49,6 +49,10 @@ YD 不属于资金结算配置：Business API 内置了经 Sepolia RPC 核验的
 只把它作为余额目录返回。将来 YD 重新部署时，才需要同时提供 `YD_TOKEN_CHAIN_ID`、
 `YD_TOKEN_ADDRESS` 和 `YD_TOKEN_DECIMALS` 覆盖默认值。
 
+DAO 质押使用独立的 `ARBITRATION_DAO_YD_TOKEN_ADDRESS`，并由服务端核对它与
+`ArbitrationDAO.ydToken()` 一致。本地 Anvil 可将该变量指向 `TestYD`，但不得通过
+`YD_TOKEN_*` 覆盖工作台展示的 Sepolia 产品 YD；正式 Sepolia 部署时两者才指向同一合约。
+
 该 secret 的 **SecretString 必须就是 token 原文**（不是 JSON，也不要包含 `Bearer ` 前缀），
 并与分发引擎配置使用同一个值。`DISPATCH_INTERNAL_TOKEN` 仍是本地运行 Business API 时的
 环境变量名；只有 CDK synth/deploy 输入改为 secret ARN，以免凭据落入 `cdk.out`。

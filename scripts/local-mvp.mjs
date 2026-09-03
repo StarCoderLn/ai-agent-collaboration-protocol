@@ -13,6 +13,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // nvm 绝对路径写进仓库。入口处的版本门禁负责确保当前进程满足 Node 22 要求。
 const NODE = process.execPath;
 const TSX = path.join(ROOT, "agents/product-workflow/node_modules/tsx/dist/cli.mjs");
+const SDK_TSC = path.join(ROOT, "agents/agent-sdk/node_modules/typescript/bin/tsc");
 const NEXT_WEB = path.join(ROOT, "web/apps/web/node_modules/next/dist/bin/next");
 const NEXT_BUSINESS = path.join(ROOT, "services/business-api/node_modules/next/dist/bin/next");
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://aicp_test:aicp_test_password@127.0.0.1:55432/aicp_test";
@@ -54,13 +55,27 @@ const EscrowExecutionResultSchema = z.object({
   status: z.enum(["idle", "submitted", "retry_pending", "dead_letter"]),
 }).passthrough();
 const WorkerResultSchema = z.record(z.string(), z.unknown());
-const LocalDeploymentSchema = z.object({
+const LegacyLocalDeploymentSchema = z.object({
   version: z.literal(1),
   chainId: z.literal(31_337),
   paymentTokenAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((value) => value.toLowerCase()),
   escrowAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((value) => value.toLowerCase()),
   createdAt: z.iso.datetime(),
 }).strict();
+const LocalDeploymentSchema = z.object({
+  version: z.literal(2),
+  chainId: z.literal(31_337),
+  paymentTokenAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((value) => value.toLowerCase()),
+  escrowAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((value) => value.toLowerCase()),
+  ydTokenAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((value) => value.toLowerCase()),
+  arbitrationDaoAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((value) => value.toLowerCase()),
+  daoMinimumStakeMinor: z.string().regex(/^[1-9]\d*$/),
+  createdAt: z.iso.datetime(),
+}).strict();
+const SupportedLocalDeploymentSchema = z.discriminatedUnion("version", [
+  LegacyLocalDeploymentSchema,
+  LocalDeploymentSchema,
+]);
 
 if (process.env.AICP_LOCAL_MVP_TEST_MODE !== "true") {
   await main().catch(async (error) => {
@@ -89,11 +104,11 @@ async function main() {
   await assertApplicationPortsAvailable();
 
   const { deployment, mode } = await startPersistentLocalChain();
-  const { escrowAddress, paymentTokenAddress } = deployment;
+  const { escrowAddress, paymentTokenAddress, ydTokenAddress, arbitrationDaoAddress, daoMinimumStakeMinor } = deployment;
 
   // 只有 genesis 链需要删除同地址旧链留下的同步游标；恢复链沿用原区块高度，重置游标
   // 会让同步器从头扫描并增加重复事件处理压力，甚至掩盖错误恢复配置。
-  if (mode === "fresh") {
+  if (mode === "fresh" || mode === "upgrade") {
     await runOnce("本地链同步游标", NODE, [path.join(ROOT, "scripts/local-chain-bootstrap.mjs")], {
       cwd: ROOT,
       env: {
@@ -104,6 +119,12 @@ async function main() {
       },
     });
   }
+
+  // 内置 Agent 通过 workspace 依赖消费与第三方相同的 SDK。启动器先编译 SDK，保证
+  // 全新 clone 不依赖未提交的 dist 目录，同时让 watch 进程始终加载当前协议实现。
+  await runOnce("Agent SDK", NODE, [SDK_TSC, "-p", "tsconfig.build.json"], {
+    cwd: path.join(ROOT, "agents/agent-sdk"),
+  });
 
   await runOnce("本地 9-Agent 目录", NODE, [TSX, "src/local-bootstrap.ts"], {
     cwd: path.join(ROOT, "agents/product-workflow"),
@@ -141,6 +162,12 @@ async function main() {
       ESCROW_CHAIN_ID: "31337",
       ESCROW_CONTRACT_ADDRESS: escrowAddress,
       ESCROW_PAYMENT_TOKEN_ADDRESS: paymentTokenAddress,
+      ARBITRATION_DAO_CHAIN_ID: "31337",
+      ARBITRATION_DAO_CONTRACT_ADDRESS: arbitrationDaoAddress,
+      // 本地 DAO 必须与 Anvil Escrow 同链，因此使用专属 TestYD；不要写入
+      // YD_TOKEN_*，后者属于工作台展示的 Sepolia 产品 YD 配置。
+      ARBITRATION_DAO_YD_TOKEN_ADDRESS: ydTokenAddress,
+      ARBITRATION_DAO_MINIMUM_STAKE_MINOR: daoMinimumStakeMinor,
       ESCROW_START_BLOCK: "0",
       // Anvil 的区块只由本地操作推进，不存在自然出块带来的等待价值。保留 2 次确认
       // 可验证 pending -> confirmed 边界，又不会让产品体验被底层演示参数拖慢。
@@ -180,6 +207,8 @@ async function main() {
       NEXT_PUBLIC_SERVER_URL: URLS.web,
       NEXT_PUBLIC_BUSINESS_API_URL: `${URLS.business}/api`,
       NEXT_PUBLIC_ETHEREUM_RPC_URL: URLS.anvil,
+      NEXT_PUBLIC_ARBITRATION_DAO_ADDRESS: arbitrationDaoAddress,
+      NEXT_PUBLIC_ARBITRATION_DAO_MINIMUM_STAKE_MINOR: daoMinimumStakeMinor,
       NEXT_PUBLIC_AICP_LOCAL_DEMO_MODE: "true",
       AICP_LOCAL_DEMO_MODE: "true",
       LOCAL_DEMO_BUSINESS_API_URL: URLS.business,
@@ -197,6 +226,8 @@ async function main() {
   console.log(`本地链状态：${mode === "fresh" ? "首次创建" : "已从磁盘恢复"}`);
   console.log(`Escrow 合约：${escrowAddress}`);
   console.log(`测试 USDC：${paymentTokenAddress}（默认 Anvil 账户已获得 100,000 USDC）`);
+  console.log(`本地 DAO TestYD：${ydTokenAddress}（默认 Anvil 账户已获得 10,000 TestYD）`);
+  console.log(`DAO 仲裁质押：${arbitrationDaoAddress}（最低 1,000 YD）`);
   console.log(`MetaMask 网络：Anvil 31337 / ${URLS.anvil} / 默认账户 ${ANVIL_ACCOUNT}`);
   console.log("按 Ctrl+C 会关闭本启动器创建的全部进程。\n");
   process.on("SIGINT", () => { void shutdown(0); });
@@ -239,12 +270,26 @@ async function startPersistentLocalChain() {
 
   if (restoredDeployment !== undefined) {
     await validateLocalDeployment(restoredDeployment, rpc);
-    return { deployment: restoredDeployment, mode };
+    if (restoredDeployment.version === 2) return { deployment: restoredDeployment, mode };
+
+    // v1 持久化链包含真实历史任务，不能为了升级合约删除 state.json。新部署的 Escrow
+    // 与 DAO 使用新地址，旧任务仍按各自 escrow_intents 中固化的旧地址完成历史审计。
+    const upgradedContracts = await deployLocalMoneyContracts(restoredDeployment.paymentTokenAddress);
+    const upgradedDeployment = {
+      version: 2,
+      chainId: 31_337,
+      ...upgradedContracts,
+      createdAt: new Date().toISOString(),
+    };
+    await waitForStateSnapshot(LOCAL_CHAIN_STATE_PATH, Date.now());
+    await writeJsonAtomically(LOCAL_CHAIN_DEPLOYMENT_PATH, upgradedDeployment);
+    await validateLocalDeployment(upgradedDeployment, rpc);
+    return { deployment: upgradedDeployment, mode: "upgrade" };
   }
 
   const deployedContracts = await deployLocalMoneyContracts();
   const deployment = {
-    version: 1,
+    version: 2,
     chainId: 31_337,
     ...deployedContracts,
     createdAt: new Date().toISOString(),
@@ -283,7 +328,7 @@ function parseLocalDeployment(source) {
   } catch {
     throw new Error("本地 Anvil 部署清单不是有效 JSON；请恢复该文件或执行 --reset-chain");
   }
-  const parsed = LocalDeploymentSchema.safeParse(value);
+  const parsed = SupportedLocalDeploymentSchema.safeParse(value);
   if (!parsed.success) {
     throw new Error("本地 Anvil 部署清单无效或版本不受支持；请恢复该文件或执行 --reset-chain");
   }
@@ -295,7 +340,7 @@ function parseLocalDeployment(source) {
  * 都必须相互印证。这里把 RPC 调用作为参数注入，让所有拒绝路径可在不启动真实链时测试。
  */
 async function validateLocalDeployment(deployment, callRpc) {
-  const parsed = LocalDeploymentSchema.parse(deployment);
+  const parsed = SupportedLocalDeploymentSchema.parse(deployment);
   const chainId = await callRpc("eth_chainId", []);
   if (chainId !== "0x7a69") throw new Error(`本地链 Chain ID 为 ${String(chainId)}，预期 31337`);
 
@@ -313,6 +358,21 @@ async function validateLocalDeployment(deployment, callRpc) {
   const decimalsResult = await callRpc("eth_call", [{ to: parsed.paymentTokenAddress, data: "0x313ce567" }, "latest"]);
   const decimals = decodeUnsignedIntegerResult(decimalsResult, "USDC decimals() 返回值");
   if (decimals !== 6n) throw new Error(`测试 USDC 精度为 ${decimals}，预期 6`);
+
+  if (parsed.version === 1) return;
+  const ydTokenCode = await callRpc("eth_getCode", [parsed.ydTokenAddress, "latest"]);
+  if (!hasContractCode(ydTokenCode)) throw new Error(`测试 YD 合约代码不存在：${parsed.ydTokenAddress}`);
+  const daoCode = await callRpc("eth_getCode", [parsed.arbitrationDaoAddress, "latest"]);
+  if (!hasContractCode(daoCode)) throw new Error(`DAO 质押合约代码不存在：${parsed.arbitrationDaoAddress}`);
+  const boundYdResult = await callRpc("eth_call", [{ to: parsed.arbitrationDaoAddress, data: "0xb9c5c022" }, "latest"]);
+  const boundYdToken = decodeAddressResult(boundYdResult, "ArbitrationDAO ydToken() 返回值");
+  if (boundYdToken !== parsed.ydTokenAddress) throw new Error(`DAO 绑定的 YD 地址与部署清单不一致：${boundYdToken}`);
+  const minimumStakeResult = await callRpc("eth_call", [{ to: parsed.arbitrationDaoAddress, data: "0xec5ffac2" }, "latest"]);
+  const minimumStake = decodeUnsignedIntegerResult(minimumStakeResult, "ArbitrationDAO minimumStake() 返回值");
+  if (minimumStake.toString() !== parsed.daoMinimumStakeMinor) throw new Error("DAO 最低质押额与部署清单不一致");
+  const ydDecimalsResult = await callRpc("eth_call", [{ to: parsed.ydTokenAddress, data: "0x313ce567" }, "latest"]);
+  const ydDecimals = decodeUnsignedIntegerResult(ydDecimalsResult, "YD decimals() 返回值");
+  if (ydDecimals !== 18n) throw new Error(`测试 YD 精度为 ${ydDecimals}，预期 18`);
 }
 
 function hasContractCode(value) {
@@ -382,8 +442,9 @@ async function resetLocalChainState() {
  * 测试 Token 的 mint 权限绝不能出现在公共测试网/生产部署路径；正式环境必须通过
  * ESCROW_PAYMENT_TOKEN_ADDRESS 注入官方 USDC，且不会调用本函数。
  */
-async function deployLocalMoneyContracts() {
-  const paymentTokenAddress = await deployContract("test/TestUSDC.sol:TestUSDC", []);
+async function deployLocalMoneyContracts(existingPaymentTokenAddress) {
+  const paymentTokenAddress = existingPaymentTokenAddress
+    ?? await deployContract("test/TestUSDC.sol:TestUSDC", []);
   const escrowAddress = await deployContract("src/Escrow.sol:Escrow", [
     ANVIL_ACCOUNT,
     ANVIL_ACCOUNT,
@@ -392,11 +453,27 @@ async function deployLocalMoneyContracts() {
     ANVIL_ACCOUNT,
     paymentTokenAddress,
   ]);
+  const ydTokenAddress = await deployContract("test/TestYD.sol:TestYD", []);
+  const daoMinimumStakeMinor = "1000000000000000000000";
+  const arbitrationDaoAddress = await deployContract("src/ArbitrationDAO.sol:ArbitrationDAO", [
+    ANVIL_ACCOUNT,
+    ANVIL_ACCOUNT,
+    ANVIL_ACCOUNT,
+    ydTokenAddress,
+    daoMinimumStakeMinor,
+    String(7 * 24 * 60 * 60),
+  ]);
+  if (existingPaymentTokenAddress === undefined) {
+    await capture("cast", [
+      "send", paymentTokenAddress, "mint(address,uint256)", ANVIL_ACCOUNT, "100000000000",
+      "--rpc-url", URLS.anvil, "--private-key", ANVIL_PRIVATE_KEY,
+    ], path.join(ROOT, "contracts/escrow"));
+  }
   await capture("cast", [
-    "send", paymentTokenAddress, "mint(address,uint256)", ANVIL_ACCOUNT, "100000000000",
+    "send", ydTokenAddress, "mint(address,uint256)", ANVIL_ACCOUNT, "10000000000000000000000",
     "--rpc-url", URLS.anvil, "--private-key", ANVIL_PRIVATE_KEY,
   ], path.join(ROOT, "contracts/escrow"));
-  return { escrowAddress, paymentTokenAddress };
+  return { escrowAddress, paymentTokenAddress, ydTokenAddress, arbitrationDaoAddress, daoMinimumStakeMinor };
 }
 
 async function deployContract(contract, constructorArgs) {

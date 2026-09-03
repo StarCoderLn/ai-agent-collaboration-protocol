@@ -18,11 +18,16 @@ const {
 
 const PAYMENT_TOKEN_ADDRESS = "0x5fbdb2315678afecb367f032d93f642f64180aa3";
 const ESCROW_ADDRESS = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
+const YD_TOKEN_ADDRESS = "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0";
+const DAO_ADDRESS = "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9";
 const VALID_DEPLOYMENT = Object.freeze({
-  version: 1,
+  version: 2,
   chainId: 31_337,
   paymentTokenAddress: PAYMENT_TOKEN_ADDRESS,
   escrowAddress: ESCROW_ADDRESS,
+  ydTokenAddress: YD_TOKEN_ADDRESS,
+  arbitrationDaoAddress: DAO_ADDRESS,
+  daoMinimumStakeMinor: "1000000000000000000000",
   createdAt: "2026-08-30T10:00:00.000Z",
 });
 
@@ -48,6 +53,13 @@ test("Anvil 启动参数持续保存并恢复项目私有状态", () => {
 
 test("部署清单只接受当前版本、固定链和规范合约地址", () => {
   assert.deepEqual(parseLocalDeployment(JSON.stringify(VALID_DEPLOYMENT)), VALID_DEPLOYMENT);
+  assert.equal(parseLocalDeployment(JSON.stringify({
+    version: 1,
+    chainId: 31_337,
+    paymentTokenAddress: PAYMENT_TOKEN_ADDRESS,
+    escrowAddress: ESCROW_ADDRESS,
+    createdAt: VALID_DEPLOYMENT.createdAt,
+  })).version, 1);
   assert.throws(
     () => parseLocalDeployment(JSON.stringify({ ...VALID_DEPLOYMENT, chainId: 1 })),
     /部署清单无效/,
@@ -62,7 +74,12 @@ test("恢复启动会校验链、合约代码、USDC 精度和 Escrow 绑定", a
     if (method === "eth_chainId") return "0x7a69";
     if (method === "eth_getCode") return "0x6001600055";
     if (params[0].data === "0x3013ce29") return `0x${"0".repeat(24)}${PAYMENT_TOKEN_ADDRESS.slice(2)}`;
-    if (params[0].data === "0x313ce567") return `0x${"0".repeat(63)}6`;
+    if (params[0].data === "0xb9c5c022") return `0x${"0".repeat(24)}${YD_TOKEN_ADDRESS.slice(2)}`;
+    if (params[0].data === "0xec5ffac2") return `0x${BigInt(VALID_DEPLOYMENT.daoMinimumStakeMinor).toString(16).padStart(64, "0")}`;
+    if (params[0].data === "0x313ce567") {
+      const decimals = params[0].to === YD_TOKEN_ADDRESS ? 18n : 6n;
+      return `0x${decimals.toString(16).padStart(64, "0")}`;
+    }
     throw new Error(`unexpected RPC ${method}`);
   };
 
@@ -71,6 +88,11 @@ test("恢复启动会校验链、合约代码、USDC 精度和 Escrow 绑定", a
     "eth_chainId",
     "eth_getCode",
     "eth_getCode",
+    "eth_call",
+    "eth_call",
+    "eth_getCode",
+    "eth_getCode",
+    "eth_call",
     "eth_call",
     "eth_call",
   ]);
