@@ -25,6 +25,7 @@ export class PrdMastraAgent implements WorkflowExecutor {
       }),
       generationPrompt(input, analysis),
       RequirementsDraftSchema,
+      "requirements_draft",
     );
     return finalizeArtifact(input, draft, this.deps.now());
   }

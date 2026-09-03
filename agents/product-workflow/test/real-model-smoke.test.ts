@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import {
-  extractPrototypeDesignIds,
+  extractDesignRegionIds,
   RequirementsArtifactSchema,
 } from "../src/domain.js";
 import { WorkflowExecutorRouter } from "../src/executors.js";
@@ -12,7 +12,7 @@ import { DeepSeekJsonClient } from "../src/model-client.js";
 const runRealModel = process.env.RUN_REAL_MODEL_SMOKE === "1" ? it : it.skip;
 
 describe("真实模型 Design→Coding 链路", () => {
-  runRealModel("把同一份设计原型完整传给 Coding 并保留视觉契约", async () => {
+  runRealModel("把同一份 DesignSpec 完整传给 Coding 并保留视觉契约", async () => {
     const apiKey = process.env.DEEPSEEK_API_KEY;
     if (apiKey === undefined || apiKey.length === 0) {
       throw new Error("RUN_REAL_MODEL_SMOKE=1 时必须提供 DEEPSEEK_API_KEY");
@@ -75,18 +75,21 @@ describe("真实模型 Design→Coding 链路", () => {
       userRequest,
       requirements,
     });
-    expect(design.schemaVersion).toBe("design.artifact.v0.3");
-    if (design.schemaVersion !== "design.artifact.v0.3") {
+    expect(design.schemaVersion).toBe("design.artifact.v0.4");
+    if (design.schemaVersion !== "design.artifact.v0.4") {
       throw new Error("真实设计 Agent 返回了错误制品类型");
     }
-    const designIds = extractPrototypeDesignIds(design.prototype.pageTsx);
+    const designIds = extractDesignRegionIds(design);
     expect(designIds.length).toBeGreaterThanOrEqual(4);
+		expect(design.renderedScreens.map((screen) => screen.id)).toEqual(["desktop", "mobile"]);
 
     const code = await router.run({
       schemaVersion: "workflow.execute.v0.1",
       taskId: requirements.taskId,
       step: "code",
-      agentId: "code-direct",
+	  // 真实冒烟默认验证可靠状态机：只有 TSX 验收通过后才生成 CSS，并确保下游明确
+	  // 消费同一份页面源码。direct 与 Mastra 仍由普通契约测试覆盖，保留为效果对照。
+      agentId: "code-state-machine",
       userRequest,
       requirements,
       design,
@@ -95,12 +98,16 @@ describe("真实模型 Design→Coding 链路", () => {
     if (code.schemaVersion !== "code.artifact.v0.1") {
       throw new Error("真实 Coding Agent 返回了错误制品类型");
     }
-    const pageTsx = code.files.find((file) => file.path === "app/page.tsx")?.content;
-    const globalsCss = code.files.find((file) => file.path === "app/globals.css")?.content;
-    expect(globalsCss).toBe(design.prototype.globalsCss);
-    for (const designId of designIds) {
-      expect(pageTsx).toContain(`data-design-id="${designId}"`);
-    }
+	const pageTsx = code.files.find((file) => file.path === "app/page.tsx")?.content;
+	const globalsCss = code.files.find((file) => file.path === "app/globals.css")?.content;
+		for (const color of [
+			design.tokens.primaryColor,
+			design.tokens.secondaryColor,
+			design.tokens.backgroundColor,
+			design.tokens.textColor,
+		]) expect(globalsCss?.toLowerCase()).toContain(color.toLowerCase());
+		expect(globalsCss).toMatch(/@media\s*\(/i);
+		expect(pageTsx).toContain(design.preview.hero.title);
 
     const outputPath = process.env.REAL_MODEL_SMOKE_OUTPUT;
     if (outputPath !== undefined && outputPath.length > 0) {

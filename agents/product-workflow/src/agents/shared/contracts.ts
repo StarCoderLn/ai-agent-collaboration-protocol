@@ -4,7 +4,11 @@ import type { WorkflowAgentId, WorkflowStep } from "../../catalog.js";
 import type { WorkflowArtifact, WorkflowExecutionInput } from "../../domain.js";
 import type { JsonModelClient } from "../../model-client.js";
 
-export type RunContext = Readonly<{ signal?: AbortSignal }>;
+export type RunContext = Readonly<{
+  signal?: AbortSignal;
+  // 正式平台只在节点已经执行失败后设置恢复模式；执行器据此避免重复分析上游制品。
+  recoveryMode?: boolean;
+}>;
 
 /** 每个 Agent 都实现同一个窄接口；路由器不需要了解 Mastra 或模型调用细节。 */
 export interface WorkflowExecutor {

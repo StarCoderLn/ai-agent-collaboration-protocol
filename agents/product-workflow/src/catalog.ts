@@ -84,7 +84,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     step: "design",
     strategy: "direct",
     name: "快速界面设计 Agent",
-    description: "直接生成设计决策与可运行高保真原型，作为速度和成本基线。",
+    description: "直接生成结构化设计规范，由平台渲染桌面与移动设计稿，作为速度和成本基线。",
   },
   {
     id: "design-mastra",
@@ -96,7 +96,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     step: "design",
     strategy: "mastra",
     name: "Mastra 产品设计 Agent",
-    description: "由 Mastra 规划设计并生成可运行原型，强调需求到页面的可追溯性。",
+    description: "由 Mastra 规划结构化设计，并由平台生成可验收设计稿，强调需求到视觉的可追溯性。",
   },
   {
     id: "design-state-machine",
@@ -108,7 +108,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     step: "design",
     strategy: "state-machine",
     name: "设计评审与完善 Agent",
-    description: "先分析评审设计，再生成包含状态与响应式规则的可运行原型。",
+    description: "先分析评审设计，再输出包含真实内容、状态和响应式规则的结构化设计规范。",
   },
   {
     id: "code-direct",
@@ -120,7 +120,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     step: "code",
     strategy: "direct",
     name: "快速代码生成 Agent",
-    description: "DeepSeek 直接继承设计原型并补充交互，作为速度和成本基线。",
+    description: "DeepSeek 直接继承已验收 DesignSpec 并实现交互，作为速度和成本基线。",
   },
   {
     id: "code-mastra",
@@ -132,7 +132,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     step: "code",
     strategy: "mastra",
     name: "Mastra 编程 Agent",
-    description: "使用 Mastra 规划并在既有设计原型上增量完成代码实现。",
+    description: "使用 Mastra 规划并按已验收 DesignSpec 完成代码实现。",
   },
   {
     id: "code-state-machine",
@@ -143,8 +143,8 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     priceMinor: "42000000",
     step: "code",
     strategy: "state-machine",
-    name: "规划测试修复 Coding Agent",
-    description: "显式规划、增量编码并校验设计继承，最多执行一次修复。",
+    name: "可靠前端开发 Agent",
+    description: "先验收页面结构，再基于已验收 TSX 生成样式；失败时只重做对应片段。",
   },
 ];
 

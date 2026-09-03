@@ -5,7 +5,12 @@ import { z } from "zod";
 
 import { findWorkflowAgent } from "../../catalog.js";
 import type { WorkflowExecutionInput } from "../../domain.js";
-import type { JsonModelClient } from "../../model-client.js";
+import {
+  ModelOutputError,
+  type JsonModelClient,
+  type ModelOutputIssue,
+  type ModelOutputValidationStage,
+} from "../../model-client.js";
 import { analysisPrompt, reviewPrompt, systemInstructions } from "../../prompts.js";
 import type { RunContext } from "./contracts.js";
 
@@ -28,9 +33,16 @@ type MastraGenerationResult = Readonly<{
   object?: unknown | undefined;
   text: string;
   error?: Error | undefined;
+  finishReason?: string | undefined;
 }>;
 
-type MastraGenerateAttempt = (prompt: string) => Promise<MastraGenerationResult>;
+type MastraFailureCode = "MODEL_OUTPUT_INVALID" | "MODEL_OUTPUT_TRUNCATED";
+
+type MastraGenerateAttempt = (
+  prompt: string,
+  attempt: number,
+  previousFailure: MastraFailureCode,
+) => Promise<MastraGenerationResult>;
 
 const STRUCTURED_OUTPUT_REPAIR_INSTRUCTION = [
   "A prior response failed strict schema validation.",
@@ -60,6 +72,7 @@ export async function planWithMastra(
     }),
     analysisPrompt(input),
     AnalysisSchema,
+    "analysis",
   );
 }
 
@@ -71,12 +84,15 @@ export function generateStructuredWithMastra<T>(
   generate: MastraGenerateAttempt,
   prompt: string,
   schema: z.ZodType<T>,
+  validationStage: ModelOutputValidationStage,
 ): Promise<T> {
   return generateValidatedWithMastra(
     generate,
     prompt,
     (response) => parseMastraObject(response.object, response.text, schema),
     STRUCTURED_OUTPUT_REPAIR_INSTRUCTION,
+    validationStage,
+    (error) => extractStructuredOutputIssues(error, schema),
   );
 }
 
@@ -89,12 +105,15 @@ export function generateValidatedTextWithMastra<T>(
   prompt: string,
   validate: (text: string) => T,
   repairInstruction: string,
+  validationStage: ModelOutputValidationStage,
 ): Promise<T> {
   return generateValidatedWithMastra(
     generate,
     prompt,
     (response) => validate(response.text),
     repairInstruction,
+    validationStage,
+    extractModelOutputIssues,
   );
 }
 
@@ -103,10 +122,12 @@ export function analyzeWithClient(
   client: JsonModelClient,
   input: WorkflowExecutionInput,
   context: RunContext,
+	maxAttempts: 1 | 2 = 2,
 ): Promise<AgentAnalysis> {
   return client.generateJson({
     system: systemInstructions(input.step), prompt: analysisPrompt(input), schema: AnalysisSchema,
-    maxOutputTokens: 1_200, ...(context.signal === undefined ? {} : { signal: context.signal }),
+		maxOutputTokens: 1_200, maxAttempts,
+		...(context.signal === undefined ? {} : { signal: context.signal }),
   });
 }
 
@@ -115,10 +136,12 @@ export function reviewWithClient(
   input: WorkflowExecutionInput,
   draft: unknown,
   context: RunContext,
+	maxAttempts: 1 | 2 = 2,
 ): Promise<AgentReview> {
   return client.generateJson({
     system: systemInstructions(input.step), prompt: reviewPrompt(input, draft), schema: ReviewSchema,
-    maxOutputTokens: 1_200, ...(context.signal === undefined ? {} : { signal: context.signal }),
+		maxOutputTokens: 1_200, maxAttempts,
+		...(context.signal === undefined ? {} : { signal: context.signal }),
   });
 }
 
@@ -137,26 +160,133 @@ async function generateValidatedWithMastra<T>(
   originalPrompt: string,
   validate: (response: MastraGenerationResult) => T,
   repairInstruction: string,
+  validationStage: ModelOutputValidationStage,
+  diagnose: (
+    error: SyntaxError | z.ZodError | MastraError,
+  ) => readonly ModelOutputIssue[],
 ): Promise<T> {
+  let previousIssues: readonly ModelOutputIssue[] = [];
+  let previousFailure: MastraFailureCode = "MODEL_OUTPUT_INVALID";
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    // 只把可信 Schema 的字段路径和稳定错误码带入第二次提示。禁止读取 Mastra details，
+    // 因为框架会在那里保存完整模型对象，回灌它既会泄漏内容也可能放大提示注入。
+    const issueInstruction = previousIssues.length === 0
+      ? ""
+      : ` Validation failures to eliminate: ${previousIssues
+          .map((issue) => `${issue.path}:${issue.code}`)
+          .join(", ")}.`;
     const prompt = attempt === 0
       ? originalPrompt
-      : `${originalPrompt}\n\n${repairInstruction}`;
+	  : `${originalPrompt}\n\n${repairInstruction}${issueInstruction}${previousFailure === "MODEL_OUTPUT_TRUNCATED"
+		  ? " The prior response reached the output-token limit. Keep implementation concise, but include every required closing delimiter and one complete source section."
+		  : ""}`;
+	let finishReason: string | undefined;
     try {
-      const response = await generate(prompt);
+	  const response = await generate(prompt, attempt, previousFailure);
+	  finishReason = response.finishReason;
       propagateMastraError(response.error);
       return validate(response);
     } catch (error) {
       // 只有模型内容不符合契约时才重新生成。网络故障、鉴权失败、超时和主动取消
       // 必须立即向上传播，否则隐藏基础设施问题还会制造不必要的重复计费。
-      if (attempt === 0 && isMastraOutputValidationError(error)) continue;
+	  if (isMastraOutputValidationError(error)) {
+		previousFailure = finishReason === "length"
+		  ? "MODEL_OUTPUT_TRUNCATED"
+		  : "MODEL_OUTPUT_INVALID";
+		previousIssues = diagnose(error);
+		if (attempt === 0) continue;
+		throw new ModelOutputError(previousFailure, previousIssues, validationStage);
+	  }
       throw error;
     }
   }
   throw new Error("Mastra 输出修复循环违反了固定次数不变量");
 }
 
-function isMastraOutputValidationError(error: unknown): boolean {
+/**
+ * 第一次明确因 token 上限截断时，第二次才扩大预算；普通格式错误保持原预算，避免把
+ * “多给 token”误当成通用修复并制造不必要费用。平台把单次受控上限固定为 8k，
+ * 防止供应商配置变化后重试预算无界增长。
+ */
+export function controlledMastraOutputTokenBudget(
+  baseTokens: number,
+  attempt: number,
+  previousFailure: MastraFailureCode,
+): number {
+  return attempt === 1 && previousFailure === "MODEL_OUTPUT_TRUNCATED"
+    ? Math.min(Math.ceil(baseTokens * 1.2), 8_000)
+    : baseTokens;
+}
+
+function extractModelOutputIssues(
+  error: SyntaxError | z.ZodError | MastraError,
+): readonly ModelOutputIssue[] {
+  let issues: readonly ModelOutputIssue[];
+  if (error instanceof z.ZodError) {
+    issues = error.issues.slice(0, 8).map((issue) => ({
+      path: issue.path.join(".") || "<root>",
+      code: normalizeMastraIssueCode(issue),
+    }));
+  } else if (error instanceof SyntaxError) {
+    issues = [{ path: "<root>", code: "JSON_SYNTAX_INVALID" }];
+  } else {
+    issues = [{ path: "<root>", code: error.id }];
+  }
+  return issues;
+}
+
+/**
+ * Mastra 1.61 会在 strict 校验失败时把候选对象序列化到 details.value，但 Zod 4 的
+ * ZodError 经过框架包装后会丢失 issues。这里对有长度上限的内存值重新执行同一 Schema，
+ * 只返回字段路径和错误码；原始对象不记录、不持久化，也不进入平台响应或修复提示。
+ */
+function extractStructuredOutputIssues<T>(
+  error: SyntaxError | z.ZodError | MastraError,
+  schema: z.ZodType<T>,
+): readonly ModelOutputIssue[] {
+  if (!(error instanceof MastraError)) return extractModelOutputIssues(error);
+  const serializedValue = error.details?.["value"];
+  if (typeof serializedValue !== "string" || serializedValue.length > 100_000) {
+    return extractModelOutputIssues(error);
+  }
+  try {
+    const candidate: unknown = JSON.parse(serializedValue);
+    const result = schema.safeParse(candidate);
+    return result.success
+      ? extractModelOutputIssues(error)
+      : extractModelOutputIssues(result.error);
+  } catch {
+    return [{ path: "<root>", code: "JSON_SYNTAX_INVALID" }];
+  }
+}
+
+function normalizeMastraIssueCode(issue: z.ZodIssue): string {
+  if (issue.code !== "custom") return issue.code;
+  return [
+	"CODE_SECTIONS_INVALID",
+	"PROTOTYPE_SOURCE_TOO_LARGE",
+	"DESIGN_TEXT_MISSING",
+	"DESIGN_TOKEN_MISSING",
+    "DESIGN_ID_COVERAGE_MISSING",
+	"RESPONSIVE_CSS_MISSING",
+    "UNSAFE_CSS_REFERENCE",
+    "UNSAFE_PROTOTYPE_SOURCE",
+    "DEFAULT_EXPORT_MISSING",
+    "FORBIDDEN_IMPORT",
+    "FORBIDDEN_RUNTIME_API",
+    "UNEXPECTED_CODE_FENCE",
+    "INLINE_STYLES_NOT_ALLOWED",
+	"TSX_SYNTAX_INVALID",
+	"CSS_SYNTAX_INVALID",
+	"UNSAFE_INLINE_STYLE",
+  ].includes(issue.message)
+    ? issue.message
+    : "CUSTOM_VALIDATION_FAILED";
+}
+
+function isMastraOutputValidationError(
+  error: unknown,
+): error is SyntaxError | z.ZodError | MastraError {
   if (error instanceof SyntaxError || error instanceof z.ZodError) return true;
   if (!(error instanceof MastraError)) return false;
   return error.id === "STRUCTURED_OUTPUT_SCHEMA_VALIDATION_FAILED"

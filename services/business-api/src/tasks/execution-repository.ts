@@ -368,7 +368,8 @@ export class PgExecutionRepository implements ExecutionRepository {
               state.failure_code,state.failed_at,
               (SELECT max(id)::text FROM task_events WHERE task_id=task.id) AS event_id
          FROM tasks task LEFT JOIN task_execution_state state ON state.task_id=task.id
-        WHERE task.id=$1 AND lower(task.publisher_id)=lower($2)`,
+        WHERE task.id=$1 AND lower(task.publisher_id)=lower($2)
+          AND task.archived_at IS NULL`,
       [taskId, actorId],
     );
     const current = row.rows[0];
@@ -449,7 +450,10 @@ export class PgExecutionRepository implements ExecutionRepository {
   }
 
   private async assertPublisher(taskId: string, actorId: string): Promise<void> {
-    const rows = await this.db.query("SELECT 1 FROM tasks WHERE id=$1 AND lower(publisher_id)=lower($2)", [taskId, actorId]);
+    const rows = await this.db.query(
+      "SELECT 1 FROM tasks WHERE id=$1 AND lower(publisher_id)=lower($2) AND archived_at IS NULL",
+      [taskId, actorId],
+    );
     if (rows.rows[0] === undefined) throw notFound();
   }
 

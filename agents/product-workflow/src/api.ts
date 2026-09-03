@@ -124,7 +124,7 @@ export class WorkflowApi {
     try {
       const result = route.kind === "dispatch"
         ? this.#formalDispatch.accept(route.agentId, callType, raw)
-        : this.#formalDispatch.receiveWebhook(route.agentId, raw);
+        : this.#formalDispatch.receiveWebhook(route.agentId, callType, raw);
       return jsonResponse(route.kind === "dispatch" ? 202 : 200, result);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -190,6 +190,9 @@ export class WorkflowApi {
           // 只返回固定校验码，不返回模型原文、任务内容或字段值。
           issue_codes: [...new Set(error.issues.map((issue) => issue.code))],
 					issues: error.issues.slice(0, 8),
+					...(error.validationStage === undefined
+						? {}
+						: { validation_stage: error.validationStage }),
         });
       }
       return jsonResponse(502, {

@@ -70,6 +70,14 @@ func (r *memoryDispatchRepository) LatestForWorkflowNode(context.Context, string
 func (r *memoryDispatchRepository) PrepareExecutionRetry(_ context.Context, taskID, _ string) (ExecutionRetryResult, error) {
 	return ExecutionRetryResult{TaskID: taskID, AssignmentID: "assignment-1", TransitionEventID: "event-1"}, nil
 }
+func (r *memoryDispatchRepository) PrepareWorkflowExecutionRetry(
+	_ context.Context, taskID, workflowNodeID, _ string,
+) (ExecutionRetryResult, error) {
+	return ExecutionRetryResult{
+		TaskID: taskID, WorkflowNodeID: workflowNodeID,
+		AssignmentID: "assignment-1", TransitionEventID: "event-1",
+	}, nil
+}
 
 type recordingQueue struct {
 	messages []DispatchMessage
@@ -126,5 +134,15 @@ func TestExecutionRetryDelegatesToTransactionalRepository(t *testing.T) {
 	result, err := service.RetryFailedExecution(context.Background(), "task", "publisher")
 	if err != nil || result.TaskID != "task" || result.TransitionEventID != "event-1" {
 		t.Fatalf("execution retry was not delegated: result=%+v err=%v", result, err)
+	}
+}
+
+func TestWorkflowExecutionRetryDelegatesToTransactionalRepository(t *testing.T) {
+	service := Service{Repository: &memoryDispatchRepository{}}
+	result, err := service.RetryFailedWorkflowNodeExecution(
+		context.Background(), "task", "node", "publisher",
+	)
+	if err != nil || result.TaskID != "task" || result.WorkflowNodeID != "node" || result.TransitionEventID != "event-1" {
+		t.Fatalf("workflow execution retry was not delegated: result=%+v err=%v", result, err)
 	}
 }

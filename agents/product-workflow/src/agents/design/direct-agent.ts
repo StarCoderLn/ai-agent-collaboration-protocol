@@ -1,8 +1,6 @@
 import { DesignDraftSchema, finalizeArtifact } from "../../domain.js";
 import {
   generationPrompt,
-  prototypeGenerationPrompt,
-  prototypeSystemInstructions,
   systemInstructions,
 } from "../../prompts.js";
 import { assertAgentInput, type RunContext, type WorkflowAgentDependencies, type WorkflowExecutor } from "../shared/contracts.js";
@@ -17,12 +15,6 @@ export class DesignDirectAgent implements WorkflowExecutor {
       system: systemInstructions("design"), prompt: generationPrompt(input), schema: DesignDraftSchema,
       maxOutputTokens: 4_500, ...(context.signal === undefined ? {} : { signal: context.signal }),
     });
-    const prototype = await this.deps.jsonClient.generatePrototype({
-      system: prototypeSystemInstructions(),
-      prompt: prototypeGenerationPrompt(input, draft),
-      maxOutputTokens: 7_000,
-      ...(context.signal === undefined ? {} : { signal: context.signal }),
-    });
-    return finalizeArtifact(input, { ...draft, prototype }, this.deps.now());
+    return finalizeArtifact(input, draft, this.deps.now());
   }
 }

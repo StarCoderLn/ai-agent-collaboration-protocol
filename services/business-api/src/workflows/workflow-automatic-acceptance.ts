@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { ResultSubmissionInput } from "../tasks/execution-input";
 
-const AUTOMATIC_ACCEPTANCE_RULE_VERSION = "workflow-intermediate-v3";
+const AUTOMATIC_ACCEPTANCE_RULE_VERSION = "workflow-intermediate-v4";
 
 const nonEmptyText = z.string().trim().min(1);
 const artifactEnvelope = z.object({
@@ -76,22 +76,33 @@ const richDesignPreview = z.object({
   }
 });
 
-const runnableDesignPrototype = z.object({
-  pageTsx: z.string().trim().min(300).max(30_000),
-  globalsCss: z.string().trim().min(300).max(30_000),
-}).superRefine((prototype, context) => {
-  // 锚点让平台能够自动证明 Coding 继承了设计结构；仅有“看起来类似”的页面不能推进。
-  const designIds = [...prototype.pageTsx.matchAll(/data-design-id=["']([a-z0-9-]+)["']/gi)]
-    .map((match) => match[1])
-    .filter((value): value is string => value !== undefined);
-  if (new Set(designIds).size < 4) {
-    context.addIssue({ code: "custom", path: ["pageTsx"], message: "设计原型缺少可验证锚点" });
+const renderedDesignScreen = z.object({
+  id: z.enum(["desktop", "mobile"]),
+  label: nonEmptyText,
+  viewport: z.object({ width: z.number().int(), height: z.number().int() }),
+  canvas: z.object({ width: z.number().int(), height: z.number().int() }),
+  mimeType: z.literal("image/svg+xml"),
+  content: z.string().trim().min(500).max(120_000).startsWith("<svg"),
+}).superRefine((screen, context) => {
+  // 自动验收仍把平台渲染结果当作持久化边界输入，而不是因为当前由自有代码生成就永久
+  // 信任。历史数据或未来渲染器若引入脚本、外链或错误画布尺寸，必须停止自动推进。
+  if (/<(?:script|foreignObject)\b|\bon[a-z]+\s*=|\b(?:href|xlink:href)\s*=|\burl\s*\(/i.test(screen.content)) {
+    context.addIssue({ code: "custom", path: ["content"], message: "设计稿包含未授权内容" });
   }
-  if (/<style\b|style\s*=\s*\{\{|dangerouslySetInnerHTML|process\.env|\b(?:fetch|XMLHttpRequest|WebSocket)\s*\(/.test(prototype.pageTsx)) {
-    context.addIssue({ code: "custom", path: ["pageTsx"], message: "设计原型包含未授权运行能力" });
+  if (screen.canvas.width !== screen.viewport.width || screen.canvas.height < screen.viewport.height) {
+    context.addIssue({ code: "custom", path: ["canvas"], message: "设计稿画布尺寸无效" });
   }
-  if (/(?:@import|url\s*\(|expression\s*\(|javascript:|behavior\s*:|-moz-binding)/i.test(prototype.globalsCss)) {
-    context.addIssue({ code: "custom", path: ["globalsCss"], message: "设计样式包含外部或危险引用" });
+  const expected = screen.id === "desktop"
+    ? { width: 1_440, height: 900 }
+    : { width: 390, height: 844 };
+  if (screen.viewport.width !== expected.width || screen.viewport.height !== expected.height) {
+    context.addIssue({ code: "custom", path: ["viewport"], message: "设计稿断点与协议不一致" });
+  }
+});
+
+const renderedDesignScreens = z.array(renderedDesignScreen).length(2).superRefine((screens, context) => {
+  if (new Set(screens.map((screen) => screen.id)).size !== 2) {
+    context.addIssue({ code: "custom", message: "设计稿必须同时包含桌面端和移动端" });
   }
 });
 
@@ -121,7 +132,8 @@ const acceptanceSchemas = {
     })).min(1),
   }),
   DesignArtifact: artifactEnvelope.extend({
-    schemaVersion: z.literal("design.artifact.v0.3"),
+    schemaVersion: z.literal("design.artifact.v0.4"),
+    rendererVersion: z.literal("aicp-design-renderer.v1"),
     direction: z.string().trim().min(20),
     tokens: z.record(z.string(), z.unknown()).refine((value) => Object.keys(value).length > 0),
     pages: z.array(z.object({ id: nonEmptyText, name: nonEmptyText, purpose: nonEmptyText })).min(1),
@@ -130,7 +142,7 @@ const acceptanceSchemas = {
     responsiveRules: z.array(nonEmptyText).min(1),
     accessibilityRules: z.array(nonEmptyText).min(1),
     preview: richDesignPreview,
-    prototype: runnableDesignPrototype,
+    renderedScreens: renderedDesignScreens,
   }),
 } as const;
 

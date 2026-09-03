@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { z } from "zod";
-import { PrototypeFilesSchema, type PrototypeFiles } from "../src/domain.js";
 import { WorkflowExecutorRouter } from "../src/executors.js";
 import type { JsonModelClient } from "../src/model-client.js";
 
@@ -49,15 +48,28 @@ class QueuedJsonClient implements JsonModelClient {
     return options.schema.parse(value);
   }
 
-	async generateCodePage(): Promise<string> {
+	async generateCodeFiles() {
+		const value = this.values.shift();
+		if (typeof value !== "object" || value === null || !("pageTsx" in value) || !("globalsCss" in value)) {
+			throw new Error("queued code files must contain pageTsx and globalsCss");
+		}
+		return value as { pageTsx: string; globalsCss: string };
+	}
+
+	async generateCodePage(options: Parameters<JsonModelClient["generateCodePage"]>[0]) {
+		this.calls.push(options.prompt);
 		const value = this.values.shift();
 		if (typeof value !== "string") throw new Error("queued code page must be a string");
 		return value;
 	}
 
-	async generatePrototype(): Promise<PrototypeFiles> {
-		return PrototypeFilesSchema.parse(this.values.shift());
+	async generateCodeStyles(options: Parameters<JsonModelClient["generateCodeStyles"]>[0]) {
+		this.calls.push(options.prompt);
+		const value = this.values.shift();
+		if (typeof value !== "string") throw new Error("queued code styles must be a string");
+		return value;
 	}
+
 }
 
 describe("workflow executor strategies", () => {

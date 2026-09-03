@@ -3,9 +3,16 @@ import { describe, expect, it } from "vitest";
 import {
   DesignArtifactSchema,
   RequirementsArtifactSchema,
+  type DesignDraft,
   type WorkflowExecutionInput,
 } from "../src/domain.js";
-import { codeGenerationPrompt } from "../src/prompts.js";
+import { renderDesignScreens } from "../src/design-renderer.js";
+import {
+  codeGenerationPrompt,
+	codePageGenerationPrompt,
+	codeStylesGenerationPrompt,
+	generationPrompt,
+} from "../src/prompts.js";
 
 describe("coding generation prompt", () => {
   it("asks for the requested product screen instead of defaulting to a workflow-stage UI", () => {
@@ -13,17 +20,63 @@ describe("coding generation prompt", () => {
     const prompt = codeGenerationPrompt(input);
 
     expect(prompt).toContain("展示 USDC 托管余额、Agent 分配状态和验收后的结算动作");
-		expect(prompt).toContain("Start from the authoritative Design Agent page.tsx");
+		expect(prompt).toContain("Authoritative validated DesignSpec");
 		expect(prompt).toContain("Do not replace the designed product with a PRD workflow");
     expect(prompt).toContain("确认验收");
 		expect(prompt).toContain('"kind":"table"');
-		expect(prompt).toContain("Authoritative Design Agent page.tsx");
-		expect(prompt).toContain('data-design-id="escrow-shell"');
-		expect(prompt).toContain("Preserve every literal data-design-id attribute exactly");
-		expect(prompt).toContain("return it byte-for-byte instead of rewriting it");
+		expect(prompt).toContain('"requiredDesignIds":["page-shell","hero","section-1-funds"');
+		expect(prompt).toContain('"requiredVisibleTexts":["EscrowOS","任务","结算","连接钱包"');
+		expect(prompt).toContain("Authoritative rendered design images");
+		expect(prompt).toContain("<svg");
+		expect(prompt).toContain("The rendered design images are the visual source of truth");
+		expect(prompt).toContain("complete app/globals.css source");
+		expect(prompt).toContain("<<<AICP_GLOBALS_CSS>>>");
+		expect(prompt).toContain("self-contained JSX <svg> or CSS gradients");
+		expect(prompt).toContain("Never encode artwork as a CSS url()");
+		expect(prompt).toContain("app/page.tsx must be at most 30,000 characters");
+		expect(prompt).toContain("readonly data arrays rendered through shared components and .map()");
+		expect(prompt).toContain("never duplicate the page markup for each breakpoint");
+		expect(prompt).not.toContain("page.tsx (untrusted source to preserve)");
+		expect(prompt).not.toContain("platform derives colors");
 		expect(prompt).not.toContain("below 6,000 characters");
     expect(prompt).not.toContain("Build exactly one workflow screen");
   });
+
+	it("可靠状态机让 CSS 明确消费已经验收的 TSX", () => {
+		const input = codingInput();
+		const acceptedPage = "export default function Page(){return <main className=\"escrow-shell\">已验收页面</main>}";
+		const pagePrompt = codePageGenerationPrompt(input);
+		const stylesPrompt = codeStylesGenerationPrompt(input, acceptedPage);
+
+		expect(pagePrompt).toContain("Return raw TSX only");
+		expect(pagePrompt).toContain('"requiredVisibleTexts":["EscrowOS","任务","结算","连接钱包"');
+		expect(pagePrompt).toContain("Target 12,000 to 16,000 source characters and never exceed 28,000");
+		expect(pagePrompt).toContain("do not copy the rendered reference SVG source into the TSX");
+		expect(pagePrompt).not.toContain("<<<AICP_GLOBALS_CSS>>>");
+		expect(stylesPrompt).toContain(acceptedPage);
+		expect(stylesPrompt).toContain("style this exact tree without rewriting it");
+		expect(stylesPrompt).toContain("Return raw CSS only");
+	});
+});
+
+describe("design specification generation prompt", () => {
+	it("只要求结构化设计决策，不再要求模型生成 SVG、TSX 或 CSS", () => {
+	  const coding = codingInput();
+	  const input: Extract<WorkflowExecutionInput, { step: "design" }> = {
+		schemaVersion: "workflow.execute.v0.1",
+		taskId: coding.taskId,
+		step: "design",
+		agentId: "design-mastra",
+		userRequest: coding.userRequest,
+		requirements: coding.requirements,
+	  };
+	  const prompt = generationPrompt(input);
+
+	  expect(prompt).toContain("Design one believable primary screen, not a wireframe");
+	  expect(prompt).toContain("Do not output SVG or HTML");
+	  expect(prompt).not.toContain("app/page.tsx");
+	  expect(prompt).not.toContain("globals.css");
+	});
 });
 
 function codingInput(): Extract<WorkflowExecutionInput, { step: "code" }> {
@@ -55,9 +108,7 @@ function codingInput(): Extract<WorkflowExecutionInput, { step: "code" }> {
     generatedBy: { agentId: "code-direct", strategy: "direct" },
     generatedAt,
   });
-	  const design = DesignArtifactSchema.parse({
-	    schemaVersion: "design.artifact.v0.3",
-    taskId: "task-escrow-dashboard",
+	  const designDraft: DesignDraft = {
     title: "USDC 托管工作台设计",
     direction: "用清晰的资金摘要、状态时间线和高风险操作确认区建立可信的任务验收体验。",
     tokens: {
@@ -96,13 +147,16 @@ function codingInput(): Extract<WorkflowExecutionInput, { step: "code" }> {
 				{ id: "settlement", kind: "table", layout: "full", title: "结算明细", description: "验收后释放", items: previewItems("设计里程碑", "35 USDC") },
 			],
 		},
-		prototype: {
-			pageTsx: "// 该原型是设计阶段确认的视觉真相源，Coding 只能补充交互而不能重排页面。\n// 每个锚点对应用户可感知的重要区块，测试用它们验证链路连续性。\nexport default function Page(){return <main data-design-id=\"escrow-shell\"><header data-design-id=\"task-header\">托管任务</header><section data-design-id=\"funds-panel\">120 USDC</section><section data-design-id=\"acceptance-panel\"><button>确认验收</button></section></main>};",
-			globalsCss: "/* 这份完整样式由 Design Agent 确定并由 Coding 制品逐字继承，不允许下游另写模板覆盖。 */\n/* 所有资源自包含，保证平台安全预览时不发起任何外部请求。 */\n*{box-sizing:border-box}body{margin:0;background:#f8fafc;color:#0f172a;font-family:system-ui}main{min-height:100vh;padding:40px}header,section{padding:24px;margin:0 auto 16px;border:1px solid #dbe3ee;border-radius:12px}button{cursor:pointer}",
-		},
-    generatedBy: { agentId: "code-direct", strategy: "direct" },
-    generatedAt,
-  });
+	  };
+	  const design = DesignArtifactSchema.parse({
+		...designDraft,
+		schemaVersion: "design.artifact.v0.4",
+		taskId: "task-escrow-dashboard",
+		rendererVersion: "aicp-design-renderer.v1",
+		renderedScreens: renderDesignScreens(designDraft),
+		generatedBy: { agentId: "code-direct", strategy: "direct" },
+		generatedAt,
+	  });
 
   return {
     schemaVersion: "workflow.execute.v0.1",

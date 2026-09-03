@@ -21,7 +21,7 @@ function dependencies(): TaskEventSseDeps {
 describe("task event SSE", () => {
   it("resumes strictly after Last-Event-ID without duplicating the cursor event", async () => {
     const deps = dependencies();
-    const request = new Request(`http://api.local/api/tasks/${TASK_ID}/events`, { headers: { "last-event-id": "10" } });
+    const request = new Request(`http://api.local/api/tasks/${TASK_ID}/events/stream`, { headers: { "last-event-id": "10" } });
     const response = await createTaskEventSseHandler(deps)(request, { params: Promise.resolve({ id: TASK_ID }) });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/event-stream");
@@ -33,7 +33,7 @@ describe("task event SSE", () => {
 
   it("rejects malformed cursors before opening a stream", async () => {
     const response = await createTaskEventSseHandler(dependencies())(
-      new Request(`http://api.local/api/tasks/${TASK_ID}/events`, { headers: { "last-event-id": "-1" } }),
+      new Request(`http://api.local/api/tasks/${TASK_ID}/events/stream`, { headers: { "last-event-id": "-1" } }),
       { params: Promise.resolve({ id: TASK_ID }) },
     );
     expect(response.status).toBe(400);

@@ -81,7 +81,7 @@ describe("WorkflowApi", () => {
       run: async () => {
         throw new ModelOutputError("MODEL_OUTPUT_INVALID", [
           { path: "<code>", code: "INLINE_STYLES_NOT_ALLOWED" },
-        ]);
+		], "code_page");
       },
     };
     const api = new WorkflowApi({
@@ -110,6 +110,7 @@ describe("WorkflowApi", () => {
       retryable: true,
       issue_codes: ["INLINE_STYLES_NOT_ALLOWED"],
 			issues: [{ path: "<code>", code: "INLINE_STYLES_NOT_ALLOWED" }],
+			validation_stage: "code_page",
     });
 		expect(JSON.stringify(responseBody)).not.toContain("开发一个可以依次选择");
   });

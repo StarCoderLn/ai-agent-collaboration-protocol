@@ -254,10 +254,12 @@ func run(ctx context.Context) error {
 		defer ticker.Stop()
 		for {
 			if _, matchErr := initialMatchWorker.RunOnce(ctx); matchErr != nil && !errors.Is(matchErr, context.Canceled) {
-				log.Printf("initial task matching had failures")
+				// 记录内部错误链，便于区分数据损坏、迁移遗漏和临时基础设施故障；
+				// 日志不包含任务正文、凭据或 Agent 密钥，避免为了可观测性泄露敏感信息。
+				log.Printf("initial task matching had failures: %v", matchErr)
 			}
 			if _, matchErr := workflowMatchWorker.RunOnce(ctx); matchErr != nil && !errors.Is(matchErr, context.Canceled) {
-				log.Printf("workflow node matching had failures")
+				log.Printf("workflow node matching had failures: %v", matchErr)
 			}
 			select {
 			case <-ctx.Done():

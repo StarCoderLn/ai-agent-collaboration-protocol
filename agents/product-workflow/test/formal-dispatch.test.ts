@@ -1,36 +1,96 @@
 import { describe, expect, it } from "vitest";
+import type { z } from "zod";
 
 import type { WorkflowAgentId } from "../src/catalog.js";
-import type { WorkflowArtifact, WorkflowExecutionInput } from "../src/domain.js";
+import type { DesignDraft, WorkflowArtifact, WorkflowExecutionInput } from "../src/domain.js";
+import { renderDesignScreens } from "../src/design-renderer.js";
 import {
   adaptFormalTask,
+  classifyWorkflowExecutionFailure,
   FormalDispatchService,
+  FormalDispatchError,
   SignedFormalCallbackClient,
   TaskEventWebhookSchema,
   type FormalCallbackClient,
   type FormalDispatchInput,
 } from "../src/formal-dispatch.js";
-import type { WorkflowExecutor } from "../src/executors.js";
+import { WorkflowExecutorRouter, type RunContext, type WorkflowExecutor } from "../src/executors.js";
+import { ModelOutputError, ModelProviderError, type JsonModelClient } from "../src/model-client.js";
 
 const NOW = new Date("2026-08-23T08:00:00.000Z");
 
 class RecordingExecutor implements WorkflowExecutor {
   readonly inputs: WorkflowExecutionInput[] = [];
+  readonly contexts: RunContext[] = [];
 
-  async run(input: WorkflowExecutionInput): Promise<WorkflowArtifact> {
+  async run(input: WorkflowExecutionInput, context: RunContext = {}): Promise<WorkflowArtifact> {
     this.inputs.push(input);
+    this.contexts.push(context);
     return artifactFor(input.agentId, input.taskId);
   }
 }
 
+class RecoveryRecordingClient implements JsonModelClient {
+  jsonCallCount = 0;
+  readonly codeMaxAttempts: Array<1 | 2 | undefined> = [];
+	readonly pageMaxAttempts: Array<1 | 2 | undefined> = [];
+	readonly pageTokenBudgets: number[] = [];
+	readonly styleMaxAttempts: Array<1 | 2 | undefined> = [];
+	acceptedPageSeenByStyles = false;
+
+  async generateJson<T>(_options: {
+    system: string;
+    prompt: string;
+    schema: z.ZodType<T>;
+    maxOutputTokens: number;
+    maxAttempts?: 1 | 2;
+    signal?: AbortSignal;
+  }): Promise<T> {
+    this.jsonCallCount += 1;
+    throw new Error("恢复模式不应重新调用分析或评审步骤");
+  }
+
+  async generateCodeFiles(options: Parameters<JsonModelClient["generateCodeFiles"]>[0]) {
+    this.codeMaxAttempts.push(options.maxAttempts);
+    return {
+      pageTsx: "export default function Page(){return <main><h1>恢复后的完整页面</h1></main>;}".padEnd(120, " "),
+      globalsCss: ":root{--primary:#6255E7;--secondary:#64748B;--background:#F8FAFC;--text:#172033}body{margin:0;background:var(--background);color:var(--text)}main{padding:32px}@media(max-width:760px){main{padding:16px}}".padEnd(320, " "),
+    };
+  }
+
+	async generateCodePage(options: Parameters<JsonModelClient["generateCodePage"]>[0]) {
+		this.pageMaxAttempts.push(options.maxAttempts);
+		this.pageTokenBudgets.push(options.maxOutputTokens);
+		return "export default function Page(){return <main><h1>恢复后的完整页面</h1></main>;}".padEnd(120, " ");
+	}
+
+	async generateCodeStyles(options: Parameters<JsonModelClient["generateCodeStyles"]>[0]) {
+		this.styleMaxAttempts.push(options.maxAttempts);
+		this.acceptedPageSeenByStyles = options.prompt.includes("恢复后的完整页面");
+		return ":root{--primary:#6255E7;--secondary:#64748B;--background:#F8FAFC;--text:#172033}body{margin:0;background:var(--background);color:var(--text)}main{padding:32px}@media(max-width:760px){main{padding:16px}}".padEnd(320, " ");
+	}
+}
+
 class RecordingCallbacks implements FormalCallbackClient {
   readonly operations: string[] = [];
+  readonly failureCodes: string[] = [];
+  readonly failureStages: (string | null)[] = [];
   resultCount = 0;
   failureCount = 0;
 
   async acknowledge(): Promise<void> { this.operations.push("ack"); }
   async reportProgress(_context: never, progress: number): Promise<void> { this.operations.push(`progress:${progress}`); }
-  async reportFailure(): Promise<void> { this.operations.push("failure"); this.failureCount += 1; }
+  async reportFailure(
+    _context: never,
+    _suffix: string,
+    failureCode: string,
+    failureStage: string | null,
+  ): Promise<void> {
+    this.operations.push("failure");
+    this.failureCodes.push(failureCode);
+    this.failureStages.push(failureStage);
+    this.failureCount += 1;
+  }
   async submitResult(): Promise<void> { this.operations.push("result"); this.resultCount += 1; }
 }
 
@@ -69,6 +129,31 @@ describe("formal dispatch", () => {
     }
   });
 
+	it("恢复 Coding 节点时让已验收 TSX 成为 CSS 的真实输入", async () => {
+    const client = new RecoveryRecordingClient();
+    const router = new WorkflowExecutorRouter({
+      jsonClient: client,
+      mastraModel: "deepseek/test",
+      modelStepTimeoutMs: 1_000,
+      now: () => NOW,
+    });
+    const input = adaptFormalTask({
+      agentId: "code-state-machine",
+      callType: "production",
+      dispatch: dispatchInputFor("code-state-machine"),
+    }, NOW);
+
+    const artifact = await router.run(input, { recoveryMode: true });
+
+    expect(artifact.schemaVersion).toBe("code.artifact.v0.1");
+    expect(client.jsonCallCount).toBe(0);
+	expect(client.codeMaxAttempts).toEqual([]);
+	expect(client.pageMaxAttempts).toEqual([1]);
+	expect(client.pageTokenBudgets).toEqual([10_000]);
+	expect(client.styleMaxAttempts).toEqual([1]);
+	expect(client.acceptedPageSeenByStyles).toBe(true);
+  });
+
   it("keeps task behavior in coding requirements and treats Agent capability as a constraint", () => {
     const dispatch = dispatchInputFor("code-direct");
     const input = adaptFormalTask({ agentId: "code-direct", callType: "production", dispatch }, NOW);
@@ -92,19 +177,42 @@ describe("formal dispatch", () => {
     await waitFor(() => callbacks.resultCount === 1);
     expect(callbacks.operations).toEqual(["ack", "progress:10", "progress:80", "result"]);
 
-    expect(service.receiveWebhook("prd-direct", {
+    // 用一个没有接收过首次派发的新实例模拟 Agent 进程重启。返工正文由平台完整携带，
+    // 因而恢复不再依赖旧进程里的 ExecutionContext。
+    const restartedService = new FormalDispatchService({ executor, callbacks, now: () => NOW });
+    const reworkDispatch = dispatchInput();
+    reworkDispatch.requestId = "92000000-0000-4000-8000-000000000007";
+    if (reworkDispatch.workflow !== null && reworkDispatch.workflow !== undefined) {
+      reworkDispatch.workflow.recoveryMode = true;
+    }
+    expect(restartedService.receiveWebhook("prd-direct", "production", {
       schemaVersion: "task-event.v1",
       eventId: "7",
       taskId: dispatchInput().task.id,
       eventType: "task.rework_requested",
       statusVersion: "7",
-      payload: { requestNo: 1, reason: "请补充失败与恢复路径" },
+      payload: {
+        workflowNodeId: reworkDispatch.workflow?.nodeId,
+        requestId: reworkDispatch.requestId,
+        requestNo: 1,
+        reason: "请补充失败与恢复路径",
+        dispatch: reworkDispatch,
+      },
       createdAt: NOW.toISOString(),
     })).toEqual({ received: true, action: "rework_queued" });
     await waitFor(() => callbacks.resultCount === 2);
-    expect(callbacks.operations).toEqual(["ack", "progress:10", "progress:80", "result", "result"]);
+    expect(callbacks.operations).toEqual([
+      "ack",
+      "progress:10",
+      "progress:80",
+      "result",
+      "progress:10",
+      "progress:80",
+      "result",
+    ]);
     expect(executor.inputs).toHaveLength(2);
     expect(executor.inputs[1]?.userRequest).toContain("请补充失败与恢复路径");
+    expect(executor.contexts.map((context) => context.recoveryMode)).toEqual([false, true]);
   });
 
   it("reports a sanitized signed failure callback when model execution fails", async () => {
@@ -115,6 +223,47 @@ describe("formal dispatch", () => {
     await waitFor(() => callbacks.failureCount === 1);
 
     expect(callbacks.operations).toEqual(["ack", "progress:10", "failure"]);
+    expect(callbacks.failureCodes).toEqual(["MODEL_EXECUTION_FAILED"]);
+    // 未知异常没有平台校验阶段，不得为了填满 UI 而编造一个。
+    expect(callbacks.failureStages).toEqual([null]);
+  });
+
+  it("reports which validation stage rejected the artifact so failures stay distinguishable", async () => {
+    const callbacks = new RecordingCallbacks();
+    const service = new FormalDispatchService({
+      // 进度只有 10/80 两个里程碑，任何模型执行中的失败都停在 10；阶段是唯一能区分
+      // “页面结构未生成”和“页面已验收、样式失败”的真实事实。
+      executor: {
+        run: () => Promise.reject(new ModelOutputError(
+          "MODEL_OUTPUT_TRUNCATED",
+          [{ path: "globalsCss", code: "UNSAFE_CSS_REFERENCE" }],
+          "code_styles",
+        )),
+      },
+      callbacks,
+      now: () => NOW,
+    });
+
+    expect(service.accept("code-state-machine", "production", dispatchInputFor("code-state-machine")))
+      .toEqual({ queued: true });
+    await waitFor(() => callbacks.failureCount === 1);
+
+    expect(callbacks.failureCodes).toEqual(["MODEL_OUTPUT_TRUNCATED"]);
+    expect(callbacks.failureStages).toEqual(["code_styles"]);
+  });
+
+  it("classifies failures without exposing provider messages or model output", () => {
+    expect(classifyWorkflowExecutionFailure(new ModelProviderError("MODEL_TIMEOUT")))
+      .toBe("MODEL_TIMEOUT");
+    expect(classifyWorkflowExecutionFailure(new ModelOutputError("MODEL_OUTPUT_TRUNCATED")))
+      .toBe("MODEL_OUTPUT_TRUNCATED");
+    expect(classifyWorkflowExecutionFailure(new SyntaxError("private model output")))
+      .toBe("MODEL_OUTPUT_INVALID");
+    expect(classifyWorkflowExecutionFailure(new FormalDispatchError(
+      "UPSTREAM_ARTIFACT_REQUIRED",
+      "private upstream details",
+      false,
+    ))).toBe("ARTIFACT_VALIDATION_FAILED");
   });
 
   it("keeps retrying the acceptance propagation race with the same idempotency key", async () => {
@@ -165,16 +314,50 @@ describe("formal dispatch", () => {
     await client.reportFailure(
       { agentId: "code-direct", callType: "production", dispatch: dispatchInput() },
       "initial",
+      "MODEL_TIMEOUT",
+      null,
+    );
+
+    // 供应商超时没有对应的平台校验阶段，回调必须完全省略该字段，而不是编造一个。
+    expect(JSON.parse(body)).toEqual({
+      agentId: expect.any(String),
+      assignmentId: dispatchInput().assignmentId,
+      state: "failed",
+      failureCode: "MODEL_TIMEOUT",
+      reportedAt: NOW.toISOString(),
+    });
+    expect(body).not.toContain("private details");
+  });
+
+  it("sends the validation stage but never the schema issue paths", async () => {
+    let body = "";
+    const client = new SignedFormalCallbackClient({
+      secret: "formal-callback-test-secret",
+      now: () => NOW,
+      fetch: (async (_url, init) => {
+        body = String(init?.body ?? "");
+        return new Response(JSON.stringify({ taskId: dispatchInput().task.id, status: "execution_failed" }), { status: 200 });
+      }) as typeof fetch,
+    });
+
+    await client.reportFailure(
+      { agentId: "code-state-machine", callType: "production", dispatch: dispatchInput() },
+      "initial",
+      "MODEL_OUTPUT_TRUNCATED",
+      "code_styles",
     );
 
     expect(JSON.parse(body)).toEqual({
       agentId: expect.any(String),
       assignmentId: dispatchInput().assignmentId,
       state: "failed",
-      failureCode: "MODEL_EXECUTION_FAILED",
+      failureCode: "MODEL_OUTPUT_TRUNCATED",
+      failureStage: "code_styles",
       reportedAt: NOW.toISOString(),
     });
-    expect(body).not.toContain("private details");
+    // 字段路径与 Schema 错误码仍是内部诊断信息，不进入公开回调协议。
+    expect(body).not.toContain("UNSAFE_CSS_REFERENCE");
+    expect(body).not.toContain("globalsCss");
   });
 
   it("does not retry a permanent callback rejection", async () => {
@@ -201,6 +384,16 @@ function dispatchInput(): FormalDispatchInput {
     schemaVersion: "dispatch.v1",
     requestId: "92000000-0000-4000-8000-000000000001",
     assignmentId: "92000000-0000-4000-8000-000000000002",
+    workflow: {
+      nodeId: "92000000-0000-4000-8000-000000000004",
+      nodeKey: "requirements",
+      kind: "requirements",
+      title: "需求澄清与 PRD",
+      inputContract: "TaskBrief",
+      outputContract: "RequirementsArtifact",
+      budgetCapMinor: "9007199254740993",
+      agreedAmountMinor: "9007199254740993",
+    },
     upstreamArtifacts: [],
     task: {
       id: "92000000-0000-4000-8000-000000000003",
@@ -283,9 +476,7 @@ function artifactFor(agentId: WorkflowAgentId, taskId: string): WorkflowArtifact
 }
 
 function designArtifactFor(taskId: string): WorkflowArtifact {
-	  return {
-	    schemaVersion: "design.artifact.v0.3",
-    taskId,
+	const draft: DesignDraft = {
     title: "可信任务市场设计",
     direction: "建立一套清晰可信、可以追踪多 Agent 工作状态和验收结果的产品界面。",
     tokens: {
@@ -308,13 +499,16 @@ function designArtifactFor(taskId: string): WorkflowArtifact {
 				previewSection("settlement", "table", "里程碑结算", "35 USDC 待验收"),
 			],
 			},
-		prototype: {
-			pageTsx: "// 正式派发测试使用完整可运行原型，验证 Coding 节点确实接收到设计阶段的页面结构。\n// 稳定锚点是跨 Agent 继承契约，不能在适配上游制品时被丢弃。\nexport default function Page(){return <main data-design-id=\"page-shell\"><header data-design-id=\"task-header\">任务详情</header><section data-design-id=\"workflow\">执行进度</section><section data-design-id=\"settlement\">里程碑结算</section></main>};",
-			globalsCss: "/* 正式派发测试保留 Design Agent 的完整视觉基线，下游代码制品必须逐字复用。 */\n/* 样式自包含且不引用远程资源，满足平台 iframe 预览的安全边界。 */\n*{box-sizing:border-box}body{margin:0;background:#f8fafc;color:#172033;font-family:system-ui}main{min-height:100vh;padding:40px}header,section{padding:24px;margin:0 auto 16px;border:1px solid #d8dcec;border-radius:12px}",
-		},
+	};
+	return {
+		...draft,
+		schemaVersion: "design.artifact.v0.4",
+		taskId,
+		rendererVersion: "aicp-design-renderer.v1",
+		renderedScreens: [...renderDesignScreens(draft)],
 	    generatedBy: { agentId: "design-direct", strategy: "direct" },
 	    generatedAt: NOW.toISOString(),
-	  };
+	};
 }
 
 function previewSection(

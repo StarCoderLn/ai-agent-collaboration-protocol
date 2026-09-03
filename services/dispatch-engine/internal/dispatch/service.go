@@ -70,6 +70,7 @@ type DispatchMessage struct {
 // 状态；目标状态仍由 Business API 的权威任务状态机根据 transition event 计算。
 type ExecutionRetryResult struct {
 	TaskID            string `json:"taskId"`
+	WorkflowNodeID    string `json:"workflowNodeId,omitempty"`
 	AssignmentID      string `json:"assignmentId"`
 	TransitionEventID string `json:"transitionEventId"`
 	Replayed          bool   `json:"replayed"`
@@ -84,6 +85,7 @@ type Repository interface {
 	LatestForTask(ctx context.Context, taskID string) (LockResult, error)
 	LatestForWorkflowNode(ctx context.Context, taskID, workflowNodeID string) (LockResult, error)
 	PrepareExecutionRetry(ctx context.Context, taskID, actorID string) (ExecutionRetryResult, error)
+	PrepareWorkflowExecutionRetry(ctx context.Context, taskID, workflowNodeID, actorID string) (ExecutionRetryResult, error)
 }
 
 type Queue interface {
@@ -172,6 +174,18 @@ func (s *Service) RetryFailedExecution(ctx context.Context, taskID, actorID stri
 		return ExecutionRetryResult{}, errors.New("execution retry requires repository, task and actor")
 	}
 	return s.Repository.PrepareExecutionRetry(ctx, taskID, actorID)
+}
+
+// RetryFailedWorkflowNodeExecution 与旧任务重试保持相同资金和审计语义，但把恢复范围
+// 限定到一个正式工作流节点。下游节点继续保持 blocked，不会重跑已经验收的上游阶段。
+func (s *Service) RetryFailedWorkflowNodeExecution(
+	ctx context.Context,
+	taskID, workflowNodeID, actorID string,
+) (ExecutionRetryResult, error) {
+	if s.Repository == nil || taskID == "" || workflowNodeID == "" || actorID == "" {
+		return ExecutionRetryResult{}, errors.New("workflow execution retry requires repository, task, node and actor")
+	}
+	return s.Repository.PrepareWorkflowExecutionRetry(ctx, taskID, workflowNodeID, actorID)
 }
 
 func backoff(attempt int) time.Duration {

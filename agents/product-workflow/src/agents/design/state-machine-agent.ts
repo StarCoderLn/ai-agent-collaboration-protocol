@@ -1,8 +1,6 @@
 import { DesignDraftSchema, finalizeArtifact } from "../../domain.js";
 import {
   generationPrompt,
-  prototypeGenerationPrompt,
-  prototypeSystemInstructions,
   systemInstructions,
 } from "../../prompts.js";
 import { assertAgentInput, type RunContext, type WorkflowAgentDependencies, type WorkflowExecutor } from "../shared/contracts.js";
@@ -18,13 +16,7 @@ export class DesignStateMachineAgent implements WorkflowExecutor {
     let draft = await this.generateDraft(input, analysis, [], context);
     const review = await reviewWithClient(this.deps.jsonClient, input, draft, context);
     if (!review.approved && review.issues.length > 0) draft = await this.generateDraft(input, analysis, review.issues, context);
-    const prototype = await this.deps.jsonClient.generatePrototype({
-      system: prototypeSystemInstructions(),
-      prompt: prototypeGenerationPrompt(input, draft),
-      maxOutputTokens: 7_000,
-      ...(context.signal === undefined ? {} : { signal: context.signal }),
-    });
-    return finalizeArtifact(input, { ...draft, prototype }, this.deps.now());
+    return finalizeArtifact(input, draft, this.deps.now());
   }
 
   private generateDraft(

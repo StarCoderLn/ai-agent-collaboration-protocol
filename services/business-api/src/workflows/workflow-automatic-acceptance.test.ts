@@ -21,7 +21,7 @@ describe("evaluateAutomaticAcceptance", () => {
       results: [jsonResult(validRequirements("task-1"))],
     })).toMatchObject({
       kind: "passed",
-      ruleVersion: "workflow-intermediate-v3",
+		ruleVersion: "workflow-intermediate-v4",
       evidence: {
         outputContract: "RequirementsArtifact",
         schemaVersion: "requirements.artifact.v0.1",
@@ -30,7 +30,7 @@ describe("evaluateAutomaticAcceptance", () => {
     });
   });
 
-  it("不包含可运行原型的旧设计不能继续自动推进 Coding", () => {
+	it("不包含桌面和移动设计稿的旧设计不能继续自动推进 Coding", () => {
     expect(evaluateAutomaticAcceptance({
       taskId: "task-1",
       outputContract: "DesignArtifact",
@@ -38,7 +38,7 @@ describe("evaluateAutomaticAcceptance", () => {
       results: [jsonResult({
         ...validDesign("task-1"),
         schemaVersion: "design.artifact.v0.2",
-        prototype: undefined,
+		renderedScreens: undefined,
       })],
     })).toMatchObject({
       kind: "failed",
@@ -54,10 +54,10 @@ describe("evaluateAutomaticAcceptance", () => {
       results: [jsonResult(validDesign("task-1"))],
     })).toMatchObject({
       kind: "passed",
-      ruleVersion: "workflow-intermediate-v3",
+		ruleVersion: "workflow-intermediate-v4",
       evidence: {
         outputContract: "DesignArtifact",
-        schemaVersion: "design.artifact.v0.3",
+		schemaVersion: "design.artifact.v0.4",
       },
     });
   });
@@ -75,20 +75,24 @@ describe("evaluateAutomaticAcceptance", () => {
     })).toMatchObject({ kind: "failed" });
   });
 
-  it("缺少设计锚点或引用远程资源的原型不能推进 Coding", () => {
-    const missingAnchors = validDesign("task-1");
-    missingAnchors.prototype.pageTsx = "export default function Page(){return <main data-design-id=\"only-one\">任务</main>}\n// 原型长度足够但缺少跨 Agent 继承所需的稳定设计锚点。\n// 平台不能仅凭可编译就把它误判为可自动推进的完整设计。\n// 其余说明只用于证明长度不是本测试的失败原因。";
-    expect(evaluateAutomaticAcceptance({
-      taskId: "task-1", outputContract: "DesignArtifact", hasDownstream: true,
-      results: [jsonResult(missingAnchors)],
-    })).toMatchObject({ kind: "failed" });
+	it("缺少移动断点或含脚本的设计稿不能推进 Coding", () => {
+		const missingBreakpoint = validDesign("task-1");
+		const desktopOnly = missingBreakpoint.renderedScreens[0];
+		if (desktopOnly === undefined) throw new Error("测试设计必须包含桌面设计稿");
+		missingBreakpoint.renderedScreens[1] = { ...desktopOnly };
+		expect(evaluateAutomaticAcceptance({
+			taskId: "task-1", outputContract: "DesignArtifact", hasDownstream: true,
+			results: [jsonResult(missingBreakpoint)],
+		})).toMatchObject({ kind: "failed" });
 
-    const remoteCss = validDesign("task-1");
-    remoteCss.prototype.globalsCss = `${remoteCss.prototype.globalsCss}\n@import url('https://example.com/theme.css');`;
-    expect(evaluateAutomaticAcceptance({
-      taskId: "task-1", outputContract: "DesignArtifact", hasDownstream: true,
-      results: [jsonResult(remoteCss)],
-    })).toMatchObject({ kind: "failed" });
+		const unsafeSvg = validDesign("task-1");
+		const desktop = unsafeSvg.renderedScreens[0];
+		if (desktop === undefined) throw new Error("测试设计必须包含桌面设计稿");
+		desktop.content = `${desktop.content}<script>alert(1)</script>`;
+		expect(evaluateAutomaticAcceptance({
+			taskId: "task-1", outputContract: "DesignArtifact", hasDownstream: true,
+			results: [jsonResult(unsafeSvg)],
+		})).toMatchObject({ kind: "failed" });
   });
 
   it("任务归属或可执行任务缺失时暂停自动推进", () => {
@@ -160,7 +164,8 @@ function validDesign(taskId: string) {
     tone,
   });
   return {
-    schemaVersion: "design.artifact.v0.3",
+		schemaVersion: "design.artifact.v0.4",
+		rendererVersion: "aicp-design-renderer.v1",
     taskId,
     generatedAt: "2026-08-29T01:10:00.000Z",
     generatedBy: { agentId: "design-agent", strategy: "mastra" },
@@ -174,19 +179,31 @@ function validDesign(taskId: string) {
     preview: {
       hero: {
         title: "任务协作工作台",
-        description: "集中查看任务、Agent 和里程碑结算的当前状态。",
+        description: "集中查看任务、Agent 和最终统一结算的当前状态。",
         primaryAction: "发布新任务",
       },
       metrics: [{ label: "执行中", value: "3" }],
       sections: [
         { id: "tasks", kind: "cards", title: "当前任务", description: "最近执行状态", items: [item("后台管理系统", "执行中", "primary"), item("品牌设计", "已完成", "success")] },
         { id: "agents", kind: "progress", title: "Agent 进度", description: "自动更新", items: [item("需求 Agent", "已完成", "success"), item("设计 Agent", "进行中", "primary")] },
-        { id: "settlement", kind: "table", title: "里程碑结算", description: "按验收释放", items: [item("需求确认", "已结算", "success"), item("界面设计", "待验收", "warning")] },
+        { id: "settlement", kind: "table", title: "统一结算", description: "全部验收后释放", items: [item("需求确认", "质量已通过", "success"), item("界面设计", "待验收", "warning")] },
       ],
     },
-    prototype: {
-      pageTsx: "// 自动验收测试使用完整的设计页面，确保下游拿到真实页面而不是抽象描述。\n// 四个稳定锚点用于验证 Coding Agent 保留了页面的关键视觉结构。\nexport default function Page(){return <main data-design-id=\"page-shell\"><header data-design-id=\"task-header\"><h1>任务协作工作台</h1></header><section data-design-id=\"agent-progress\">Agent 进度</section><section data-design-id=\"settlement-panel\"><button>查看详情</button></section></main>}",
-      globalsCss: "/* 设计阶段输出完整自包含样式，下游代码制品必须逐字继承这份视觉真相源。 */\n/* 不允许远程字体、图片或主题文件，确保隔离预览不会产生外部网络请求。 */\n*{box-sizing:border-box}body{margin:0;background:#0b1020;color:#f8fafc;font-family:system-ui}main{min-height:100vh;padding:48px}header,section{max-width:1080px;margin:0 auto 20px;padding:24px;border:1px solid #34406d;border-radius:16px}button{cursor:pointer}",
-    },
-  };
+		renderedScreens: [
+			designScreen("desktop", 1_440, 900),
+			designScreen("mobile", 390, 844),
+		],
+	};
+}
+
+function designScreen(id: "desktop" | "mobile", width: number, height: number) {
+	const content = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="${width}" height="${height}" fill="#ffffff"/>`.padEnd(520, " ") + "</svg>";
+	return {
+		id,
+		label: id === "desktop" ? "桌面端设计稿" : "移动端设计稿",
+		viewport: { width, height },
+		canvas: { width, height },
+		mimeType: "image/svg+xml",
+		content,
+	};
 }

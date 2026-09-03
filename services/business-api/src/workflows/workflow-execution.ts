@@ -3,11 +3,13 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import type { QueryExecutor } from "../db/pool";
-import { executionStatusInputSchema, resultSubmissionInputSchema } from "../tasks/execution-input";
-import type { ExecutionStatusInput, ResultSubmissionInput } from "../tasks/execution-input";
+import { resultSubmissionInputSchema, workflowExecutionStatusInputSchema } from "../tasks/execution-input";
+import type { ResultSubmissionInput } from "../tasks/execution-input";
+import { emitTaskEvent, emitTaskEventToAgent } from "../tasks/task-event-repository";
 import type { TaskServiceResult } from "../tasks/task-service";
-import { calculatePlatformFee } from "../platform/task-state";
+import { calculatePlatformFee, transitionTaskStatus, type TaskStatus } from "../platform/task-state";
 import { evaluateAutomaticAcceptance } from "./workflow-automatic-acceptance";
+import { buildWorkflowSettlementPlan, type AcceptedWorkflowSettlementLine } from "./workflow-settlement";
 import {
   aggregateWorkflowStatus,
   transitionWorkflowNode,
@@ -107,7 +109,7 @@ export class PgWorkflowExecutionRepository {
     idempotencyKey: string | undefined,
     requestFingerprint: string,
   ): Promise<TaskServiceResult> {
-    const input = parse(executionStatusInputSchema, raw);
+    const input = parse(workflowExecutionStatusInputSchema, raw);
     const key = requiredKey(idempotencyKey);
     const locked = await this.lockNode(taskId, workflowNodeId, input.assignmentId, input.agentId);
     const replay = await this.callbackReplay(key, "execution_status", taskId, input.assignmentId, requestFingerprint);
@@ -126,20 +128,28 @@ export class PgWorkflowExecutionRepository {
     await this.db.query(
       `INSERT INTO workflow_node_execution_state(
          workflow_node_id,task_id,assignment_id,progress,execution_state,failure_code,
-         attention_message,last_reported_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         failure_stage,attention_message,last_reported_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
        ON CONFLICT (workflow_node_id) DO UPDATE SET assignment_id=EXCLUDED.assignment_id,
          progress=EXCLUDED.progress,execution_state=EXCLUDED.execution_state,
-         failure_code=EXCLUDED.failure_code,attention_message=EXCLUDED.attention_message,
+         failure_code=EXCLUDED.failure_code,failure_stage=EXCLUDED.failure_stage,
+         attention_message=EXCLUDED.attention_message,
          last_reported_at=EXCLUDED.last_reported_at,updated_at=now()`,
       [workflowNodeId, taskId, input.assignmentId, progress, executionState,
         input.state === "failed" ? input.failureCode : null,
+        // 阶段只在失败时有意义；成功进度必须清空它，否则重试后会残留上一次的失败边界。
+        input.state === "failed" ? input.failureStage ?? null : null,
         input.state === "needs_input" ? input.message : null,
         new Date(input.reportedAt)],
     );
     await this.writeNodeEvent(workflowNodeId, taskId, nextVersion,
       input.state === "failed" ? "workflow_node.execution_failed" : "workflow_node.execution_progress",
-      { assignmentId: input.assignmentId, status: nextStatus, progress, executionState });
+      {
+        assignmentId: input.assignmentId, status: nextStatus, progress, executionState,
+        ...(input.state === "failed" && input.failureStage !== undefined
+          ? { failureStage: input.failureStage }
+          : {}),
+      });
     const run = await this.refreshRun(locked.workflow_run_id);
     const result = resultOf(200, {
       taskId, workflowNodeId, nodeStatus: nextStatus, nodeVersion: nextVersion.toString(),
@@ -207,7 +217,8 @@ export class PgWorkflowExecutionRepository {
     await this.updateNode(workflowNodeId, locked.version, nextStatus, nextVersion);
     await this.db.query(
       `UPDATE workflow_node_execution_state
-          SET progress=100,execution_state=$2,failure_code=NULL,attention_message=$3,updated_at=now()
+          SET progress=100,execution_state=$2,failure_code=NULL,failure_stage=NULL,
+              attention_message=$3,updated_at=now()
         WHERE workflow_node_id=$1`,
       [workflowNodeId,
         automaticAcceptance.kind === "failed" ? "needs_input" : "running",
@@ -318,13 +329,6 @@ export class PgWorkflowExecutionRepository {
         settlement.feeRuleVersion],
     );
     const acceptanceId = required(acceptance.rows[0], "WORKFLOW_ACCEPTANCE_NOT_INSERTED").id;
-    await this.db.query(
-      `INSERT INTO escrow_execution_jobs(
-         task_id,source,source_ref,action,payee,agent_gross_amount_minor,fee_amount_minor,status,next_attempt_at
-       ) VALUES ($1,'workflow_acceptance',$2,'milestone_release',$3,$4,$5,'pending',now())`,
-      [taskId, acceptanceId, terms.payout_wallet_address.toLocaleLowerCase(),
-        settlement.grossAmountMinor, settlement.platformFeeMinor],
-    );
     const updated = await this.db.query(
       `UPDATE task_workflow_nodes SET status=$2,version=$3,accepted_at=now(),updated_at=now()
         WHERE id=$1 AND version=$4`,
@@ -337,15 +341,9 @@ export class PgWorkflowExecutionRepository {
     await this.unlockDownstream(terms.workflow_run_id, taskId);
     const run = await this.refreshRun(terms.workflow_run_id);
     if (run.status === "completed") {
-      // finalize 可以与最后一个 milestone job 同事务进入 outbox，但资金 worker 只有在
-      // 所有节点释放均已链上确认后才会领取它，因此不会提前退回仍需支付的余额。
-      await this.db.query(
-        `INSERT INTO escrow_execution_jobs(
-           task_id,source,source_ref,action,status,next_attempt_at
-         ) VALUES ($1,'workflow_run',$2,'finalize','pending',now())
-         ON CONFLICT (source,source_ref) DO NOTHING`,
-        [taskId, terms.workflow_run_id],
-      );
+      // 中间阶段只通过结构化质量门禁并解锁下游，绝不产生资金任务。只有最终节点由
+      // 发布者人工验收、整张工作流进入 completed 后，才固化一笔原子分账 outbox。
+      await this.queueFinalSettlement(taskId, terms.workflow_run_id, acceptedBy);
     }
     return resultOf(200, {
       acceptanceId, taskId, workflowNodeId, resultId,
@@ -354,12 +352,110 @@ export class PgWorkflowExecutionRepository {
     });
   }
 
+  private async queueFinalSettlement(taskId: string, workflowRunId: string, acceptedBy: string): Promise<void> {
+    const taskRows = await this.db.query<{ status: TaskStatus; status_version: string; publisher_id: string }>(
+      "SELECT status,status_version::text,publisher_id FROM tasks WHERE id=$1 FOR UPDATE",
+      [taskId],
+    );
+    const task = required(taskRows.rows[0], "TASK_NOT_FOUND");
+    // 自动质量门禁不能替代发布者的最终资金授权。即使某个内部入口误把最终节点标记
+    // accepted，这里仍会在创建链上分账任务前重新验证验收钱包与任务所有者一致。
+    if (task.publisher_id.toLowerCase() !== acceptedBy.toLowerCase()) {
+      throw new WorkflowExecutionError(403, "FINAL_SETTLEMENT_REQUIRES_PUBLISHER", "最终结算必须由任务发布者验收授权");
+    }
+    const lineRows = await this.db.query<{
+      node_id: string; acceptance_id: string; result_id: string; agent_id: string; payout_wallet_address: string;
+      gross_amount_minor: string; platform_fee_minor: string; artifact_kind: "inline" | "file";
+      mime_type: string; size_bytes: string; body_or_file_ref: string;
+    }>(
+      `SELECT node.id::text AS node_id,acceptance.id::text AS acceptance_id,
+              result.id::text AS result_id,assignment.agent_id::text,agent.payout_wallet_address,
+              acceptance.gross_amount_minor::text,acceptance.platform_fee_minor::text,
+              result.artifact_kind,result.mime_type,result.size_bytes::text,result.body_or_file_ref
+         FROM task_workflow_nodes node
+         JOIN workflow_node_acceptances acceptance ON acceptance.workflow_node_id=node.id
+         JOIN workflow_node_results result ON result.id=acceptance.result_id
+         JOIN task_assignments assignment ON assignment.id=acceptance.assignment_id
+         JOIN agents agent ON agent.id=assignment.agent_id
+        WHERE node.workflow_run_id=$1 AND node.status='accepted'
+        ORDER BY node.position_index,node.id`,
+      [workflowRunId],
+    );
+    const nodeCount = await this.db.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM task_workflow_nodes WHERE workflow_run_id=$1",
+      [workflowRunId],
+    );
+    if (lineRows.rows.length !== Number(required(nodeCount.rows[0], "WORKFLOW_NOT_FOUND").count)) {
+      throw new WorkflowExecutionError(409, "WORKFLOW_ACCEPTANCE_INCOMPLETE", "仍有阶段尚未完成验收，不能创建结算");
+    }
+    const lines: AcceptedWorkflowSettlementLine[] = lineRows.rows.map((row) => ({
+      nodeId: row.node_id,
+      acceptanceId: row.acceptance_id,
+      resultId: row.result_id,
+      agentId: row.agent_id,
+      payee: row.payout_wallet_address,
+      grossAmountMinor: BigInt(row.gross_amount_minor),
+      feeAmountMinor: BigInt(row.platform_fee_minor),
+      artifactKind: row.artifact_kind,
+      mimeType: row.mime_type,
+      sizeBytes: BigInt(row.size_bytes),
+      bodyOrFileRef: row.body_or_file_ref,
+    }));
+    const plan = buildWorkflowSettlementPlan(workflowRunId, lines);
+    const runRows = await this.db.query<{ total_budget_minor: string }>(
+      "SELECT total_budget_minor::text FROM task_workflow_runs WHERE id=$1 AND status='completed' FOR UPDATE",
+      [workflowRunId],
+    );
+    const totalBudgetMinor = BigInt(required(runRows.rows[0], "WORKFLOW_NOT_COMPLETED").total_budget_minor);
+    if (plan.totalGrossAmountMinor > totalBudgetMinor) {
+      throw new WorkflowExecutionError(409, "WORKFLOW_SETTLEMENT_EXCEEDS_ESCROW", "Agent 成交总额超过托管金额");
+    }
+    await this.db.query(
+      `INSERT INTO escrow_execution_jobs(
+         task_id,source,source_ref,action,workflow_payouts,settlement_manifest_hash,evidence_root,status,next_attempt_at
+       ) VALUES ($1,'workflow_run',$2,'workflow_settle',$3::jsonb,$4,$5,'pending',now())
+       ON CONFLICT (source,source_ref) DO NOTHING`,
+      [taskId, workflowRunId, JSON.stringify(plan.payouts), plan.settlementManifestHash, plan.evidenceRoot],
+    );
+    const nextStatus = transitionTaskStatus(task.status, { type: "workflow_final_accepted" });
+    const nextVersion = BigInt(task.status_version) + 1n;
+    await this.db.query(
+      "UPDATE tasks SET status=$2,status_version=$3,updated_at=now() WHERE id=$1",
+      [taskId, nextStatus, nextVersion.toString()],
+    );
+    await emitTaskEvent(this.db, {
+      taskId,
+      statusVersion: nextVersion,
+      eventType: "task.workflow_final_accepted",
+      payload: {
+        status: nextStatus,
+        workflowRunId,
+        settlementManifestHash: plan.settlementManifestHash,
+        evidenceRoot: plan.evidenceRoot,
+        payoutCount: plan.payouts.length,
+        totalGrossAmountMinor: plan.totalGrossAmountMinor.toString(),
+        totalFeeAmountMinor: plan.totalFeeAmountMinor.toString(),
+      },
+      createdAt: new Date(),
+    });
+  }
+
   async requestRework(taskId: string, workflowNodeId: string, raw: unknown, actorId: string): Promise<TaskServiceResult> {
     const input = parse(reworkSchema, raw);
-    const rows = await this.db.query<{ status: WorkflowNodeStatus; version: string; workflow_run_id: string }>(
-      `SELECT node.status,node.version::text,node.workflow_run_id::text
-         FROM task_workflow_nodes node JOIN tasks task ON task.id=node.task_id
-        WHERE node.id=$1 AND node.task_id=$2 AND lower(task.publisher_id)=lower($3) FOR UPDATE OF node`,
+    const rows = await this.db.query<{
+      status: WorkflowNodeStatus;
+      version: string;
+      workflow_run_id: string;
+      agent_id: string;
+    }>(
+      `SELECT node.status,node.version::text,node.workflow_run_id::text,
+              assignment.agent_id::text
+         FROM task_workflow_nodes node
+         JOIN tasks task ON task.id=node.task_id
+         JOIN task_assignments assignment
+           ON assignment.workflow_node_id=node.id AND assignment.status='accepted'
+        WHERE node.id=$1 AND node.task_id=$2 AND lower(task.publisher_id)=lower($3)
+        FOR UPDATE OF node,task,assignment`,
       [workflowNodeId, taskId, actorId],
     );
     const node = rows.rows[0];
@@ -385,11 +481,49 @@ export class PgWorkflowExecutionRepository {
     );
     const nextVersion = BigInt(node.version) + 1n;
     await this.updateNode(workflowNodeId, node.version, nextStatus, nextVersion);
-    await this.db.query("UPDATE workflow_node_execution_state SET progress=95,updated_at=now() WHERE workflow_node_id=$1", [workflowNodeId]);
+    // 返工是一个新的执行批次。旧进度已经保存在不可变节点事件中，当前快照必须回到 0，
+    // 并等待 Agent 的新签名回调推进；直接写 95 会把“已受理”伪装成“即将完成”。
+    const reset = await this.db.query(
+      `UPDATE workflow_node_execution_state
+          SET progress=0,execution_state='running',failure_code=NULL,failure_stage=NULL,
+              attention_message=NULL,
+              last_reported_at=NULL,updated_at=now()
+        WHERE workflow_node_id=$1`,
+      [workflowNodeId],
+    );
+    if (reset.rowCount !== 1) {
+      throw new Error("WORKFLOW_REWORK_EXECUTION_STATE_NOT_FOUND");
+    }
+    const requestId = required(inserted.rows[0], "REWORK_NOT_INSERTED").id;
     await this.writeNodeEvent(workflowNodeId, taskId, nextVersion, "workflow_node.rework_requested", {
-      requestId: required(inserted.rows[0], "REWORK_NOT_INSERTED").id,
+      requestId,
       resultId: input.resultId, requestNo, reason: input.reason, status: nextStatus,
     });
+    // Agent Webhook worker 只消费 task_events。这里显式指定当前节点的 Agent，不能使用
+    // “任务最新 assignment”推断，否则返工上游节点时会误投给下游 Agent。
+    const taskVersionRow = await this.db.query<{ status_version: string }>(
+      `UPDATE tasks SET status_version=status_version+1,updated_at=now()
+        WHERE id=$1 RETURNING status_version::text`,
+      [taskId],
+    );
+    const taskStatusVersion = BigInt(required(
+      taskVersionRow.rows[0],
+      "REWORK_TASK_VERSION_NOT_UPDATED",
+    ).status_version);
+    await emitTaskEventToAgent(this.db, {
+      taskId,
+      statusVersion: taskStatusVersion,
+      eventType: "task.rework_requested",
+      payload: {
+        workflowNodeId,
+        requestId,
+        resultId: input.resultId,
+        requestNo,
+        reason: input.reason,
+        status: nextStatus,
+      },
+      createdAt: new Date(),
+    }, node.agent_id);
     const run = await this.refreshRun(node.workflow_run_id);
     return resultOf(201, {
       taskId, workflowNodeId, requestNo, nodeStatus: nextStatus,
@@ -398,11 +532,14 @@ export class PgWorkflowExecutionRepository {
   }
 
   private async lockNode(taskId: string, workflowNodeId: string, assignmentId: string, agentId: string): Promise<LockedNodeRow> {
+    // 执行状态表按节点保存最新快照，但进度单调性只在同一个 assignment 内成立。
+    // 节点失败恢复后，新 assignment 必须从独立进度开始；旧快照仍保留用于审计，
+    // 不能被误当成新执行批次的起始进度。
     const rows = await this.db.query<LockedNodeRow>(
       `SELECT node.status,node.version::text,node.workflow_run_id::text,node.output_contract,
               EXISTS(SELECT 1 FROM task_workflow_edges edge WHERE edge.source_node_id=node.id) AS has_downstream,
               assignment.status AS assignment_status,assignment.agent_id::text AS assigned_agent_id,
-              state.progress
+              CASE WHEN state.assignment_id=assignment.id THEN state.progress ELSE NULL END AS progress
          FROM task_workflow_nodes node
          JOIN task_assignments assignment ON assignment.workflow_node_id=node.id AND assignment.id=$3
          LEFT JOIN workflow_node_execution_state state ON state.workflow_node_id=node.id

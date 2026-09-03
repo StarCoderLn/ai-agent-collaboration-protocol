@@ -59,6 +59,14 @@ func (f *fakeDispatcher) RetryFailedExecution(_ context.Context, taskID, actorID
 		TaskID: taskID, AssignmentID: "assignment-1", TransitionEventID: "event-1",
 	}, nil
 }
+func (f *fakeDispatcher) RetryFailedWorkflowNodeExecution(
+	_ context.Context, taskID, workflowNodeID, actorID string,
+) (dispatch.ExecutionRetryResult, error) {
+	return dispatch.ExecutionRetryResult{
+		TaskID: taskID, WorkflowNodeID: workflowNodeID,
+		AssignmentID: "assignment-node-1", TransitionEventID: "event-node-1",
+	}, nil
+}
 
 type fakeAssignmentReader struct{}
 

@@ -12,6 +12,7 @@ import {
   type WorkflowExecutionInput,
 } from "./domain.js";
 import type { WorkflowExecutor } from "./executors.js";
+import { ModelOutputError, ModelProviderError, type ModelOutputValidationStage } from "./model-client.js";
 import { signRequest, type CallType } from "./protocol.js";
 
 const UUID = z.string().uuid();
@@ -70,6 +71,8 @@ export const FormalDispatchInputSchema = z.object({
     outputContract: z.string().trim().min(1).max(120),
     budgetCapMinor: INTEGER_STRING,
     agreedAmountMinor: INTEGER_STRING,
+    // execution_failed 后的平台重试只需聚焦修复代码，不应重新消耗分析与评审调用。
+    recoveryMode: z.boolean().optional(),
   }).strict().nullable().optional(),
   upstreamArtifacts: z.array(UpstreamArtifactSchema).max(100).default([]),
   task: z.object({
@@ -106,6 +109,16 @@ export const TaskEventWebhookSchema = z.object({
 }).strict();
 export type TaskEventWebhook = z.infer<typeof TaskEventWebhookSchema>;
 
+// 返工通知与普通任务事件不同：它必须携带平台从持久化数据重建的完整派发正文。
+// Agent 因此可以在进程重启后恢复执行，不再依赖首次派发留下的内存 Map。
+const ReworkEventPayloadSchema = z.object({
+  workflowNodeId: UUID,
+  requestId: UUID,
+  requestNo: z.number().int().positive(),
+  reason: z.string().trim().min(1).max(4_000),
+  dispatch: FormalDispatchInputSchema,
+}).passthrough();
+
 type ExecutionContext = Readonly<{
   agentId: WorkflowAgentId;
   callType: CallType;
@@ -114,10 +127,25 @@ type ExecutionContext = Readonly<{
 
 type BackgroundJob = () => Promise<void>;
 
+export const WORKFLOW_EXECUTION_FAILURE_CODES = [
+  "MODEL_TIMEOUT",
+  "MODEL_PROVIDER_UNAVAILABLE",
+  "MODEL_OUTPUT_TRUNCATED",
+  "MODEL_OUTPUT_INVALID",
+  "ARTIFACT_VALIDATION_FAILED",
+  "MODEL_EXECUTION_FAILED",
+] as const;
+export type WorkflowExecutionFailureCode = typeof WORKFLOW_EXECUTION_FAILURE_CODES[number];
+
 export interface FormalCallbackClient {
   acknowledge(context: ExecutionContext): Promise<void>;
   reportProgress(context: ExecutionContext, progress: number, suffix: string): Promise<void>;
-  reportFailure(context: ExecutionContext, suffix: string): Promise<void>;
+  reportFailure(
+    context: ExecutionContext,
+    suffix: string,
+    failureCode: WorkflowExecutionFailureCode,
+    failureStage: ModelOutputValidationStage | null,
+  ): Promise<void>;
   submitResult(context: ExecutionContext, artifact: WorkflowArtifact, suffix: string): Promise<void>;
 }
 
@@ -130,7 +158,6 @@ export class FormalDispatchService {
   readonly #callbacks: FormalCallbackClient;
   readonly #schedule: (job: BackgroundJob) => void;
   readonly #now: () => Date;
-  readonly #contexts = new Map<string, ExecutionContext>();
   readonly #handledEvents = new Set<string>();
   readonly #taskQueues = new Map<string, Promise<void>>();
 
@@ -150,28 +177,35 @@ export class FormalDispatchService {
     const dispatch = FormalDispatchInputSchema.parse(raw);
     findWorkflowAgent(agentId);
     const context = { agentId, callType, dispatch } satisfies ExecutionContext;
-    this.#contexts.set(contextKey(agentId, dispatch.assignmentId), context);
     this.#enqueue(context, "initial");
     // accepted 只表示任务已安全进入 Agent 内部队列；平台接单状态由后续签名 ack 回调推进。
     return { queued: true };
   }
 
-  receiveWebhook(agentId: WorkflowAgentId, raw: unknown): { received: true; action: "ignored" | "rework_queued" } {
+  receiveWebhook(
+    agentId: WorkflowAgentId,
+    callType: CallType,
+    raw: unknown,
+  ): { received: true; action: "ignored" | "rework_queued" } {
     const event = TaskEventWebhookSchema.parse(raw);
     if (this.#handledEvents.has(event.eventId)) return { received: true, action: "ignored" };
-    this.#handledEvents.add(event.eventId);
     if (event.eventType !== "task.rework_requested") return { received: true, action: "ignored" };
-    const matches = [...this.#contexts.values()].filter((context) =>
-      context.agentId === agentId && context.dispatch.task.id === event.taskId);
-    const context = matches.length === 1 ? matches[0] : undefined;
-    if (context === undefined) {
-      // 进程重启后内存上下文不存在时不能伪造重跑；返回可重试错误由正式 Webhook 死信恢复。
-      this.#handledEvents.delete(event.eventId);
-      throw new FormalDispatchError("REWORK_CONTEXT_NOT_FOUND", "formal dispatch context is unavailable after restart", true);
+    const payload = ReworkEventPayloadSchema.parse(event.payload);
+    const workflow = payload.dispatch.workflow;
+    if (payload.dispatch.task.id !== event.taskId || payload.dispatch.requestId !== payload.requestId ||
+      workflow === undefined || workflow === null || workflow.nodeId !== payload.workflowNodeId) {
+      throw new FormalDispatchError(
+        "REWORK_DISPATCH_MISMATCH",
+        "rework event identifiers do not match the embedded dispatch",
+        false,
+      );
     }
-    const feedback = typeof event.payload.reason === "string" && event.payload.reason.trim().length > 0
-      ? event.payload.reason.trim()
-      : "发布者要求基于上一版交付重新检查完整性并改进。";
+    findWorkflowAgent(agentId);
+    const context = { agentId, callType, dispatch: payload.dispatch } satisfies ExecutionContext;
+    // 校验完成后再记入进程内快速去重集合；非法事件不能污染事件 ID，平台修复数据后
+    // 仍可以使用原 outbox 记录重新投递。跨进程幂等由平台稳定 Webhook 键与回调键兜底。
+    this.#handledEvents.add(event.eventId);
+    const feedback = payload.reason.trim();
     this.#enqueue(context, `rework-${event.statusVersion}`, feedback);
     return { received: true, action: "rework_queued" };
   }
@@ -189,8 +223,14 @@ export class FormalDispatchService {
           agentId: context.agentId,
           taskId: context.dispatch.task.id,
           errorName: error instanceof Error ? error.name : "UnknownError",
-          errorCode: error instanceof FormalDispatchError ? error.code : "UNCLASSIFIED_EXECUTION_ERROR",
-          retryable: error instanceof FormalDispatchError ? error.retryable : false,
+		  errorCode: error instanceof FormalDispatchError
+			? error.code
+			: error instanceof ModelOutputError
+				? error.code
+				: "UNCLASSIFIED_EXECUTION_ERROR",
+		  retryable: error instanceof FormalDispatchError
+			? error.retryable
+			: error instanceof ModelOutputError,
         });
       } finally {
         if (this.#taskQueues.get(key) === job) this.#taskQueues.delete(key);
@@ -201,17 +241,27 @@ export class FormalDispatchService {
   async #execute(context: ExecutionContext, suffix: string, reworkFeedback?: string): Promise<void> {
     if (suffix === "initial") {
       await this.#callbacks.acknowledge(context);
-      await this.#callbacks.reportProgress(context, 10, suffix);
     }
+    // 初次执行与返工都必须从新批次的真实回调开始。平台会在返工受理时把当前快照
+    // 归零；这里重新上报 10/80，避免 UI 使用请求受理时刻伪造“已经完成 95%”。
+    await this.#callbacks.reportProgress(context, 10, suffix);
     let artifact: WorkflowArtifact;
     try {
       const input = adaptFormalTask(context, this.#now(), reworkFeedback);
-      artifact = await this.#executor.run(input);
+      artifact = await this.#executor.run(input, {
+        recoveryMode: context.dispatch.workflow?.recoveryMode ?? false,
+      });
     } catch (error) {
+      const failureCode = classifyWorkflowExecutionFailure(error);
+      // 阶段是平台自己的校验边界，不是模型输出。把它随失败码一起上报，发布者才能区分
+      // “页面结构未生成”和“页面已验收、样式步骤失败”，而不是只看到一个恒定的百分比。
+      const failureStage = error instanceof ModelOutputError
+        ? error.validationStage ?? null
+        : null;
       // 只把“模型/执行器没有产出制品”归类为执行失败。ack、进度和结果回调自身的
       // 网络错误仍走既有重试与超时恢复，不能把平台暂时不可达误报成模型失败。
       try {
-        await this.#callbacks.reportFailure(context, suffix);
+        await this.#callbacks.reportFailure(context, suffix, failureCode, failureStage);
       } catch (callbackError) {
         // 日志只保留错误类别，不记录供应商原始错误、任务正文、模型输出或签名密钥。
         console.error("formal workflow failure callback failed", {
@@ -221,9 +271,22 @@ export class FormalDispatchService {
           errorCode: callbackError instanceof FormalDispatchError ? callbackError.code : "UNCLASSIFIED_CALLBACK_ERROR",
         });
       }
+			console.error("formal workflow execution classified", {
+				agentId: context.agentId,
+				taskId: context.dispatch.task.id,
+				failureCode,
+				// 正式回调继续只暴露稳定失败码；阶段与 Schema 路径仅用于本机诊断，且
+				// ModelOutputError 从不保存模型正文、字段值、提示词或供应商原始消息。
+				...(error instanceof ModelOutputError
+					? {
+						validationStage: failureStage ?? "unknown",
+						validationIssues: error.issues.slice(0, 8),
+					}
+					: {}),
+			});
       throw error;
     }
-    if (suffix === "initial") await this.#callbacks.reportProgress(context, 80, suffix);
+    await this.#callbacks.reportProgress(context, 80, suffix);
     await this.#callbacks.submitResult(context, artifact, suffix);
   }
 }
@@ -259,14 +322,22 @@ export class SignedFormalCallbackClient implements FormalCallbackClient {
     }, `status:${context.dispatch.task.id}:${context.dispatch.requestId}-${suffix}-${progress}`, context.callType);
   }
 
-  reportFailure(context: ExecutionContext, suffix: string): Promise<void> {
+  reportFailure(
+		context: ExecutionContext,
+		suffix: string,
+		failureCode: WorkflowExecutionFailureCode,
+		failureStage: ModelOutputValidationStage | null,
+	): Promise<void> {
     const agent = findWorkflowAgent(context.agentId);
     return this.#post(context.dispatch.callbacks.status, {
       agentId: agent.platformId,
       assignmentId: context.dispatch.assignmentId,
       state: "failed",
-      // 固定、可公开的错误码是协议契约；绝不把 DeepSeek 等供应商返回内容发给平台。
-      failureCode: "MODEL_EXECUTION_FAILED",
+			// 固定、可公开的错误码是协议契约；绝不把 DeepSeek 等供应商返回内容发给平台。
+			failureCode,
+			// 阶段同样是受控枚举，只命名平台的校验边界。不携带字段路径与 Schema 错误码，
+			// 它们仍只用于本机诊断，避免把内部契约细节变成公开协议。
+			...(failureStage === null ? {} : { failureStage }),
       reportedAt: this.#now().toISOString(),
     }, `status:${context.dispatch.task.id}:${context.dispatch.requestId}-${suffix}-failed`, context.callType);
   }
@@ -275,8 +346,8 @@ export class SignedFormalCallbackClient implements FormalCallbackClient {
     const agent = findWorkflowAgent(context.agentId);
     const summary = artifact.schemaVersion === "requirements.artifact.v0.1"
       ? "结构化 PRD 与可执行任务"
-      : artifact.schemaVersion === "design.artifact.v0.3"
-        ? "界面设计规范与可运行高保真原型"
+      : artifact.schemaVersion === "design.artifact.v0.4"
+		? "结构化设计规范与桌面/移动端设计稿"
         : "代码文件、运行说明与测试计划";
     return this.#post(context.dispatch.callbacks.results, {
       agentId: agent.platformId,
@@ -345,6 +416,37 @@ export class SignedFormalCallbackClient implements FormalCallbackClient {
 
 export class FormalDispatchError extends Error {
   constructor(readonly code: string, message: string, readonly retryable: boolean) { super(message); }
+}
+
+/**
+ * 将执行器内部错误压缩为可公开的稳定类别。判断只使用自有错误类、Mastra 的稳定 id/
+ * domain 和标准错误名，不读取第三方消息文本，因此诊断能力不会以泄漏用户任务为代价。
+ */
+export function classifyWorkflowExecutionFailure(error: unknown): WorkflowExecutionFailureCode {
+	if (error instanceof ModelProviderError) return error.code;
+	if (error instanceof ModelOutputError) return error.code;
+	if (error instanceof FormalDispatchError && error.code === "UPSTREAM_ARTIFACT_REQUIRED") {
+		return "ARTIFACT_VALIDATION_FAILED";
+	}
+	if (error instanceof SyntaxError || error instanceof z.ZodError) return "MODEL_OUTPUT_INVALID";
+	if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+		return "MODEL_TIMEOUT";
+	}
+	if (isMastraFailure(error)) return error.id.includes("TIMEOUT")
+		? "MODEL_TIMEOUT"
+		: error.id === "STRUCTURED_OUTPUT_SCHEMA_VALIDATION_FAILED"
+			|| error.id === "STRUCTURED_OUTPUT_OBJECT_UNDEFINED"
+			? "MODEL_OUTPUT_INVALID"
+			: "MODEL_PROVIDER_UNAVAILABLE";
+	return "MODEL_EXECUTION_FAILED";
+}
+
+function isMastraFailure(error: unknown): error is Readonly<{ id: string; domain: string }> {
+	if (typeof error !== "object" || error === null) return false;
+	const candidate = error as Readonly<{ id?: unknown; domain?: unknown }>;
+	return typeof candidate.id === "string"
+		&& typeof candidate.domain === "string"
+		&& (candidate.domain === "LLM" || candidate.id.startsWith("STRUCTURED_OUTPUT_"));
 }
 
 /** 正式节点只消费数据库中已验收的上游制品；缺失或损坏时明确失败，禁止合成假制品。 */

@@ -35,6 +35,7 @@ type Dispatcher interface {
 	ConfirmCandidate(ctx context.Context, command dispatch.LockCommand) (dispatch.LockResult, error)
 	Acknowledge(ctx context.Context, assignmentID, agentID string, accepted bool) (domain.Assignment, error)
 	RetryFailedExecution(ctx context.Context, taskID, actorID string) (dispatch.ExecutionRetryResult, error)
+	RetryFailedWorkflowNodeExecution(ctx context.Context, taskID, workflowNodeID, actorID string) (dispatch.ExecutionRetryResult, error)
 }
 
 type AssignmentReader interface {
@@ -65,6 +66,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/tasks/{id}/workflow-nodes/{nodeId}/assignments", s.internal(s.confirmWorkflowNodeAssignment))
 	mux.HandleFunc("GET /internal/tasks/{id}/workflow-nodes/{nodeId}/assignments/latest", s.internal(s.latestWorkflowNodeAssignment))
 	mux.HandleFunc("POST /internal/tasks/{id}/execution-retry", s.internal(s.retryFailedExecution))
+	mux.HandleFunc("POST /internal/tasks/{id}/workflow-nodes/{nodeId}/execution-retry", s.internal(s.retryFailedWorkflowNodeExecution))
 	mux.HandleFunc("POST /internal/agents/{id}/transitions", s.internal(s.transitionAgentLifecycle))
 	mux.HandleFunc("POST /agent-callback/assignments/{id}/ack", s.acknowledgeAssignment)
 	mux.HandleFunc("POST /agent-callback/tasks/{id}/status", s.forwardExecutionStatus)
@@ -94,6 +96,26 @@ func (s *Server) retryFailedExecution(writer http.ResponseWriter, request *http.
 	}
 	// 202 表示取消事实与 outbox 已持久化；任务主状态由 Business API 异步推进，调用方
 	// 应读取任务状态而不是假定这里已经进入 matching。
+	writeJSON(writer, http.StatusAccepted, result)
+}
+
+func (s *Server) retryFailedWorkflowNodeExecution(writer http.ResponseWriter, request *http.Request) {
+	if s.Dispatcher == nil {
+		writeError(writer, http.StatusServiceUnavailable, "DISPATCHER_UNAVAILABLE", "派发服务暂不可用", true)
+		return
+	}
+	actorID := request.Header.Get(headerInternalActor)
+	if actorID == "" {
+		writeError(writer, http.StatusUnauthorized, "UNAUTHENTICATED", "发布者身份缺失", false)
+		return
+	}
+	result, err := s.Dispatcher.RetryFailedWorkflowNodeExecution(
+		request.Context(), request.PathValue("id"), request.PathValue("nodeId"), actorID,
+	)
+	if err != nil {
+		writeDispatchError(writer, err)
+		return
+	}
 	writeJSON(writer, http.StatusAccepted, result)
 }
 

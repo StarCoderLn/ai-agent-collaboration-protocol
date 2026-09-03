@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { PgWorkflowExecutionRepository } from "./workflow-execution";
 import { readOwnedFormalWorkflow } from "./workflow-repository";
+import { PgWorkflowTransitionRepository } from "./workflow-transition-repository";
 import { PgEscrowRepository, type EscrowDatabase } from "../escrow/escrow-repository";
 import { taskKeyForTaskId } from "../escrow/escrow-chain-client";
 
@@ -100,6 +101,32 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
     );
     expect(rework.body).toMatchObject({ nodeStatus: "rework", requestNo: 1 });
 
+    const reworkDispatch = await client.query<{
+      progress: number;
+      last_reported_at: Date | null;
+      event_type: string;
+      delivery_status: string;
+      delivery_agent_id: string;
+      endpoint: string;
+    }>(
+      `SELECT state.progress,state.last_reported_at,event.event_type,
+              delivery.status AS delivery_status,delivery.agent_id::text AS delivery_agent_id,
+              delivery.endpoint
+         FROM workflow_node_execution_state state
+         JOIN task_events event ON event.task_id=state.task_id
+         JOIN webhook_deliveries delivery ON delivery.task_event_id=event.id
+        WHERE state.workflow_node_id=$1 AND event.event_type='task.rework_requested'`,
+      [fixture.requirementsNodeId],
+    );
+    expect(reworkDispatch.rows[0]).toEqual({
+      progress: 0,
+      last_reported_at: null,
+      event_type: "task.rework_requested",
+      delivery_status: "pending",
+      delivery_agent_id: fixture.agentId,
+      endpoint: "http://127.0.0.1:3999/execute/webhook",
+    });
+
     const secondSubmission = await repository.submitResults(
       fixture.taskId,
       fixture.requirementsNodeId,
@@ -145,16 +172,13 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
       coding_status: string;
       latest_result_count: string;
       job_count: string;
-      job_action: string;
     }>(
       `SELECT requirements.status AS requirements_status,
               design.status AS design_status,coding.status AS coding_status,
               (SELECT count(*)::text FROM workflow_node_results result
                 WHERE result.workflow_node_id=requirements.id AND result.is_latest) AS latest_result_count,
               (SELECT count(*)::text FROM escrow_execution_jobs job
-                WHERE job.task_id=requirements.task_id AND job.source='workflow_acceptance') AS job_count,
-              (SELECT action FROM escrow_execution_jobs job
-                WHERE job.task_id=requirements.task_id AND job.source='workflow_acceptance' LIMIT 1) AS job_action
+                WHERE job.task_id=requirements.task_id AND job.source='workflow_acceptance') AS job_count
          FROM task_workflow_nodes requirements
          JOIN task_workflow_nodes design ON design.id=$2
          JOIN task_workflow_nodes coding ON coding.id=$3
@@ -166,8 +190,8 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
       design_status: "matching",
       coding_status: "blocked",
       latest_result_count: "1",
-      job_count: "1",
-      job_action: "milestone_release",
+      // 中间节点只建立验收账本并解锁下游，不应提前创建任何链上付款任务。
+      job_count: "0",
     });
 
     const graph = await readOwnedFormalWorkflow(client, fixture.taskId, PUBLISHER);
@@ -193,36 +217,13 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
         grossAmountMinor: NODE_PRICE_MINOR,
         platformFeeMinor: "50000",
         agentAmountMinor: "11950000",
-        release: { status: "pending", txHash: null },
+        // 在最终节点获发布者验收前，单个阶段不存在独立释放交易。
+        release: null,
       },
-    });
-
-    await confirmRequirementsMilestone(client, fixture, secondResultId);
-    const releasedLedger = await client.query<{
-      intent_status: string;
-      intent_released: string;
-      run_released: string;
-      run_refundable: string;
-      job_status: string;
-    }>(
-      `SELECT intent.status AS intent_status,intent.released_amount_minor::text AS intent_released,
-              run.released_amount_minor::text AS run_released,
-              run.refundable_amount_minor::text AS run_refundable,job.status AS job_status
-         FROM escrow_intents intent JOIN task_workflow_runs run ON run.task_id=intent.task_id
-         JOIN escrow_execution_jobs job ON job.task_id=intent.task_id AND job.source='workflow_acceptance'
-        WHERE intent.task_id=$1`,
-      [fixture.taskId],
-    );
-    expect(releasedLedger.rows[0]).toEqual({
-      intent_status: "partially_released",
-      intent_released: NODE_PRICE_MINOR,
-      run_released: NODE_PRICE_MINOR,
-      run_refundable: "24000000",
-      job_status: "executed",
     });
   });
 
-  it("中间制品通过平台规则后自动验收、建立里程碑并解锁下游", async () => {
+  it("中间制品通过平台规则后只建立验收账本并解锁下游", async () => {
     const fixture = await insertFixture(client, "serial");
     const repository = new PgWorkflowExecutionRepository(client);
 
@@ -240,7 +241,7 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
       runStatus: "running",
       automaticAcceptance: {
         state: "passed",
-        ruleVersion: "workflow-intermediate-v1",
+        ruleVersion: "workflow-intermediate-v4",
       },
     });
     const evidence = await client.query<{
@@ -267,7 +268,7 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
       design_status: "matching",
       coding_status: "blocked",
       accepted_by: "system:workflow-acceptor",
-      job_count: "1",
+      job_count: "0",
     });
   });
 
@@ -355,6 +356,190 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
     }
   });
 
+  it("失败节点持久化并回读校验阶段，重新执行时清空它", async () => {
+    const fixture = await insertFixture(client, "serial");
+    const repository = new PgWorkflowExecutionRepository(client);
+    await repository.reportStatus(
+      fixture.taskId,
+      fixture.requirementsNodeId,
+      {
+        agentId: fixture.agentId,
+        assignmentId: fixture.assignmentId,
+        state: "running",
+        progress: 10,
+        reportedAt: "2026-08-29T01:00:00.000Z",
+      },
+      "stage-progress",
+      "stage-progress-fingerprint",
+    );
+    // 进度停在 10 是既定行为：Agent 只上报开始与产出两个里程碑。阶段因此是唯一能
+    // 说明“失败发生在哪一步”的事实，必须被完整持久化并回读。
+    const failed = await repository.reportStatus(
+      fixture.taskId,
+      fixture.requirementsNodeId,
+      {
+        agentId: fixture.agentId,
+        assignmentId: fixture.assignmentId,
+        state: "failed",
+        failureCode: "MODEL_OUTPUT_TRUNCATED",
+        failureStage: "requirements_draft",
+        reportedAt: "2026-08-29T01:10:00.000Z",
+      },
+      "stage-failure",
+      "stage-failure-fingerprint",
+    );
+    expect(failed.body).toMatchObject({ executionState: "failed", progress: 10 });
+
+    const graph = await readOwnedFormalWorkflow(client, fixture.taskId, PUBLISHER);
+    const failedNode = graph?.nodes.find((node) => node.id === fixture.requirementsNodeId);
+    expect(failedNode?.execution).toMatchObject({
+      progress: 10,
+      state: "failed",
+      failureCode: "MODEL_OUTPUT_TRUNCATED",
+      failureStage: "requirements_draft",
+    });
+
+    // 恢复执行必须清空上一次的阶段，否则旧失败边界会残留在新批次的快照上。
+    const transitions = new PgWorkflowTransitionRepository(client);
+    await client.query("UPDATE task_assignments SET status='cancelled' WHERE id=$1", [fixture.assignmentId]);
+    await expect(transitions.apply(fixture.taskId, fixture.requirementsNodeId, {
+      eventId: randomUUID(),
+      assignmentId: fixture.assignmentId,
+      eventType: "assignment_failed",
+    })).resolves.toMatchObject({ nodeStatus: "matching" });
+    const retryAssignmentId = randomUUID();
+    await client.query(
+      `INSERT INTO task_assignments(
+         id,task_id,workflow_node_id,agent_id,distribution_record_id,agreed_amount_minor,status,
+         version,assigned_by,accept_by,responded_at
+       ) SELECT $2,task_id,workflow_node_id,agent_id,distribution_record_id,agreed_amount_minor,
+                'accepted',2,'stage-retry-test',now()+interval '1 hour',now()
+           FROM task_assignments WHERE id=$1`,
+      [fixture.assignmentId, retryAssignmentId],
+    );
+    await expect(transitions.apply(fixture.taskId, fixture.requirementsNodeId, {
+      eventId: randomUUID(),
+      assignmentId: retryAssignmentId,
+      eventType: "assignment_locked",
+    })).resolves.toMatchObject({ nodeStatus: "awaiting_agent_acceptance" });
+    await expect(transitions.apply(fixture.taskId, fixture.requirementsNodeId, {
+      eventId: randomUUID(),
+      assignmentId: retryAssignmentId,
+      eventType: "agent_accepted",
+    })).resolves.toMatchObject({ nodeStatus: "executing" });
+    await repository.reportStatus(
+      fixture.taskId,
+      fixture.requirementsNodeId,
+      {
+        agentId: fixture.agentId,
+        assignmentId: retryAssignmentId,
+        state: "running",
+        progress: 10,
+        reportedAt: "2026-08-29T01:20:00.000Z",
+      },
+      "stage-recovery",
+      "stage-recovery-fingerprint",
+    );
+    await expect(client.query(
+      "SELECT failure_code,failure_stage FROM workflow_node_execution_state WHERE workflow_node_id=$1",
+      [fixture.requirementsNodeId],
+    )).resolves.toMatchObject({ rows: [{ failure_code: null, failure_stage: null }] });
+  });
+
+  it("失败节点的新 assignment 从独立进度开始且不会继承旧执行批次", async () => {
+    const fixture = await insertFixture(client, "serial");
+    const repository = new PgWorkflowExecutionRepository(client);
+    await repository.reportStatus(
+      fixture.taskId,
+      fixture.requirementsNodeId,
+      {
+        agentId: fixture.agentId,
+        assignmentId: fixture.assignmentId,
+        state: "running",
+        progress: 80,
+        reportedAt: "2026-08-29T01:00:00.000Z",
+      },
+      "old-assignment-progress",
+      "old-assignment-progress-fingerprint",
+    );
+
+    const replacementAssignmentId = randomUUID();
+    await client.query(
+      "UPDATE task_assignments SET status='cancelled' WHERE id=$1",
+      [fixture.assignmentId],
+    );
+    await client.query(
+      `INSERT INTO task_assignments(
+         id,task_id,workflow_node_id,agent_id,distribution_record_id,agreed_amount_minor,status,
+         version,assigned_by,accept_by,responded_at
+       ) SELECT $2,task_id,workflow_node_id,agent_id,distribution_record_id,agreed_amount_minor,
+                'accepted',2,'workflow-retry-test',now()+interval '1 hour',now()
+           FROM task_assignments WHERE id=$1`,
+      [fixture.assignmentId, replacementAssignmentId],
+    );
+
+    const restarted = await repository.reportStatus(
+      fixture.taskId,
+      fixture.requirementsNodeId,
+      {
+        agentId: fixture.agentId,
+        assignmentId: replacementAssignmentId,
+        state: "running",
+        progress: 10,
+        reportedAt: "2026-08-29T01:05:00.000Z",
+      },
+      "replacement-assignment-progress",
+      "replacement-assignment-progress-fingerprint",
+    );
+    expect(restarted.body).toMatchObject({ progress: 10, executionState: "running" });
+    await expect(client.query<{ assignment_id: string; progress: number }>(
+      `SELECT assignment_id::text,progress FROM workflow_node_execution_state
+        WHERE workflow_node_id=$1`,
+      [fixture.requirementsNodeId],
+    )).resolves.toMatchObject({ rows: [{ assignment_id: replacementAssignmentId, progress: 10 }] });
+  });
+
+	it("只有执行快照仍绑定旧 assignment 时才接受 executing 恢复事件", async () => {
+		const fixture = await insertFixture(client, "serial");
+		const execution = new PgWorkflowExecutionRepository(client);
+		const transitions = new PgWorkflowTransitionRepository(client);
+		await execution.reportStatus(
+			fixture.taskId,
+			fixture.requirementsNodeId,
+			{
+				agentId: fixture.agentId,
+				assignmentId: fixture.assignmentId,
+				state: "running",
+				progress: 10,
+				reportedAt: "2026-08-29T01:00:00.000Z",
+			},
+			"current-assignment-progress",
+			"current-assignment-progress-fingerprint",
+		);
+		await client.query("UPDATE task_assignments SET status='cancelled' WHERE id=$1", [fixture.assignmentId]);
+		await expect(transitions.apply(fixture.taskId, fixture.requirementsNodeId, {
+			eventId: randomUUID(),
+			assignmentId: fixture.assignmentId,
+			eventType: "assignment_failed",
+		})).rejects.toMatchObject({ code: "TRANSITION_NOT_READY" });
+
+		const replacementAssignmentId = randomUUID();
+		await client.query(
+			`INSERT INTO task_assignments(
+			   id,task_id,workflow_node_id,agent_id,distribution_record_id,agreed_amount_minor,status,
+			   version,assigned_by,accept_by,responded_at
+			 ) SELECT $2,task_id,workflow_node_id,agent_id,distribution_record_id,agreed_amount_minor,
+			          'cancelled',3,'stale-recovery-test',now()+interval '1 hour',now()
+			     FROM task_assignments WHERE id=$1`,
+			[fixture.assignmentId, replacementAssignmentId],
+		);
+		await expect(transitions.apply(fixture.taskId, fixture.requirementsNodeId, {
+			eventId: randomUUID(),
+			assignmentId: replacementAssignmentId,
+			eventType: "assignment_failed",
+		})).resolves.toMatchObject({ nodeStatus: "matching", assignmentId: replacementAssignmentId });
+	});
+
   it("前置节点验收后会同时解锁所有满足条件的并行分支，不依赖节点插入顺序", async () => {
     const fixture = await insertFixture(client, "parallel");
     const repository = new PgWorkflowExecutionRepository(client);
@@ -396,9 +581,13 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
     ]);
   });
 
-  it("所有节点完成后只在里程碑已确认时最终结算，并退回尚未成交的 USDC 余额", async () => {
+  it("所有阶段验收完成后只创建一笔原子分账，并在链上确认后统一释放与退款", async () => {
     const fixture = await insertFixture(client, "serial");
     const repository = new PgWorkflowExecutionRepository(client);
+    // 先建立设计、开发两个阶段的已验收事实，让需求阶段成为最后一个完成验收的节点。
+    // 这样可直接验证 queueFinalSettlement 的真实入口，而不是绕过领域服务手工插入 outbox。
+    await insertPreAcceptedNode(client, fixture, fixture.designNodeId, "DesignArtifact");
+    await insertPreAcceptedNode(client, fixture, fixture.codingNodeId, "CodeArtifact");
     const submitted = await repository.submitResults(
       fixture.taskId,
       fixture.requirementsNodeId,
@@ -419,38 +608,65 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
       { resultId, expectedNodeVersion: "2", expectedSettlement: settlementOf(preview) },
       PUBLISHER,
     );
-    await confirmRequirementsMilestone(client, fixture, resultId);
-
-    // 本用例只关注资金终态；其余节点的逐步执行已由前两个用例覆盖，因此直接建立
-    // “所有节点均已验收”的数据库前置事实，避免重复整条执行脚本。
-    await client.query(
-      `UPDATE task_workflow_nodes SET status='accepted',accepted_at=now(),version=version+1
-        WHERE workflow_run_id=$1 AND status<>'accepted'`,
-      [fixture.runId],
+    const queued = await client.query<{
+      task_status: string;
+      run_status: string;
+      action: string;
+      status: string;
+      workflow_payouts: readonly { grossAmountMinor: string; feeAmountMinor: string }[];
+      settlement_manifest_hash: string;
+      evidence_root: string;
+    }>(
+      `SELECT task.status AS task_status,run.status AS run_status,job.action,job.status,
+              job.workflow_payouts,job.settlement_manifest_hash,job.evidence_root
+         FROM tasks task JOIN task_workflow_runs run ON run.task_id=task.id
+         JOIN escrow_execution_jobs job ON job.source='workflow_run' AND job.source_ref=run.id
+        WHERE task.id=$1`,
+      [fixture.taskId],
     );
-    await client.query("UPDATE task_workflow_runs SET status='completed',version=version+1 WHERE id=$1", [fixture.runId]);
-    const finalizeTxHash = `0x${"aa".repeat(32)}`;
+    const settlement = required(queued.rows[0]);
+    expect(settlement).toMatchObject({
+      task_status: "pending_settlement",
+      run_status: "completed",
+      action: "workflow_settle",
+      status: "pending",
+    });
+    expect(settlement.workflow_payouts).toHaveLength(3);
+    const totalGross = settlement.workflow_payouts.reduce(
+      (sum, payout) => sum + BigInt(payout.grossAmountMinor),
+      0n,
+    );
+    const totalFee = settlement.workflow_payouts.reduce(
+      (sum, payout) => sum + BigInt(payout.feeAmountMinor),
+      0n,
+    );
+    expect(totalGross).toBe(36_000_000n);
+    expect(totalFee).toBe(150_000n);
+
+    const settlementTxHash = `0x${"aa".repeat(32)}`;
     await client.query(
-      `INSERT INTO escrow_execution_jobs(
-         task_id,source,source_ref,action,status,next_attempt_at,tx_hash
-       ) VALUES ($1,'workflow_run',$2,'finalize','submitted',now(),$3)`,
-      [fixture.taskId, fixture.runId, finalizeTxHash],
+      `UPDATE escrow_execution_jobs SET status='submitted',tx_hash=$3
+        WHERE task_id=$1 AND source='workflow_run' AND source_ref=$2`,
+      [fixture.taskId, fixture.runId, settlementTxHash],
     );
     const escrow = new PgEscrowRepository(asEscrowDatabase(client));
     await escrow.observe({
       chainId: 31_337n,
       contractAddress: ESCROW_CONTRACT,
       taskKey: taskKeyForTaskId(fixture.taskId),
-      txHash: finalizeTxHash,
+      txHash: settlementTxHash,
       logIndex: 0,
       blockNumber: 102n,
       blockHash: BLOCK_HASH,
       payload: {
-        type: "Finalized",
+        type: "WorkflowSettled",
         payer: PUBLISHER,
         escrowAmountMinor: 36_000_000n,
-        releasedAmountMinor: 12_000_000n,
-        payerRefundAmountMinor: 24_000_000n,
+        totalGrossAmountMinor: totalGross,
+        totalFeeAmountMinor: totalFee,
+        payerRefundAmountMinor: 0n,
+        settlementManifestHash: settlement.settlement_manifest_hash,
+        evidenceRoot: settlement.evidence_root,
       },
     });
     const pending = required((await escrow.listPending(20)).find((event) => event.blockNumber === 102n));
@@ -466,11 +682,11 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
       intent_status: string;
       released_amount_minor: string;
       refundable_amount_minor: string;
-      finalize_status: string;
+      settlement_status: string;
     }>(
       `SELECT task.status AS task_status,intent.status AS intent_status,
               run.released_amount_minor::text,run.refundable_amount_minor::text,
-              job.status AS finalize_status
+              job.status AS settlement_status
          FROM tasks task JOIN escrow_intents intent ON intent.task_id=task.id
          JOIN task_workflow_runs run ON run.task_id=task.id
          JOIN escrow_execution_jobs job ON job.source='workflow_run' AND job.source_ref=run.id
@@ -480,54 +696,62 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
     expect(finalState.rows[0]).toEqual({
       task_status: "settled",
       intent_status: "released",
-      released_amount_minor: NODE_PRICE_MINOR,
-      refundable_amount_minor: "24000000",
-      finalize_status: "executed",
+      released_amount_minor: "36000000",
+      refundable_amount_minor: "0",
+      settlement_status: "executed",
     });
   });
 });
 
-async function confirmRequirementsMilestone(
+/**
+ * 为非目标节点建立完整、可审计的历史验收事实。测试通过真实外键关系准备前置数据，
+ * 但不调用链上付款，因为新模型明确要求所有阶段完成后才产生唯一结算交易。
+ */
+async function insertPreAcceptedNode(
   client: PoolClient,
   fixture: Fixture,
-  resultId: string,
+  nodeId: string,
+  artifactName: string,
 ): Promise<void> {
-  const txHash = `0x${"99".repeat(32)}`;
-  const submitted = await client.query(
-    `UPDATE escrow_execution_jobs job SET status='submitted',tx_hash=$3
-       FROM workflow_node_acceptances acceptance
-      WHERE job.source='workflow_acceptance' AND job.source_ref=acceptance.id
-        AND acceptance.task_id=$1 AND acceptance.result_id=$2`,
-    [fixture.taskId, resultId, txHash],
+  const distributionId = randomUUID();
+  const assignmentId = randomUUID();
+  const resultId = randomUUID();
+  await client.query(
+    `INSERT INTO job_distribution_records(
+       id,task_id,workflow_node_id,rule_version,input_fingerprint,input_snapshot,candidates,
+       filter_reasons,final_selection_agent_id
+     ) VALUES ($1,$2,$3,'ranking-v1',$4,'{}'::jsonb,'[]'::jsonb,'{}'::jsonb,$5)`,
+    [distributionId, fixture.taskId, nodeId, `settlement-${randomUUID()}`, fixture.agentId],
   );
-  if (submitted.rowCount !== 1) throw new Error("MILESTONE_JOB_NOT_SUBMITTED");
-
-  const escrow = new PgEscrowRepository(asEscrowDatabase(client));
-  await escrow.observe({
-    chainId: 31_337n,
-    contractAddress: ESCROW_CONTRACT,
-    taskKey: taskKeyForTaskId(fixture.taskId),
-    txHash,
-    logIndex: 0,
-    blockNumber: 101n,
-    blockHash: BLOCK_HASH,
-    payload: {
-      type: "MilestoneReleased",
-      payee: PAYOUT,
-      escrowAmountMinor: 36_000_000n,
-      milestoneGrossAmountMinor: 12_000_000n,
-      feeAmountMinor: 50_000n,
-      totalReleasedAmountMinor: 12_000_000n,
-      remainingAmountMinor: 24_000_000n,
-    },
-  });
-  const pending = required((await escrow.listPending(20)).find((event) => event.blockNumber === 101n));
-  await expect(escrow.applyCanonicalConfirmation({
-    eventId: pending.id,
-    canonicalBlockHash: BLOCK_HASH,
-    confirmations: 12n,
-    now: new Date("2026-08-29T02:00:00.000Z"),
-  })).resolves.toBe("confirmed");
+  await client.query(
+    `INSERT INTO task_assignments(
+       id,task_id,workflow_node_id,agent_id,distribution_record_id,agreed_amount_minor,status,
+       version,assigned_by,accept_by,responded_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,'accepted',2,'workflow-settlement-test',
+       now()+interval '1 hour',now())`,
+    [assignmentId, fixture.taskId, nodeId, fixture.agentId, distributionId, NODE_PRICE_MINOR],
+  );
+  await client.query(
+    `INSERT INTO workflow_node_results(
+       id,workflow_node_id,task_id,assignment_id,submission_batch,batch_no,result_index,summary,
+       artifact_kind,body_or_file_ref,mime_type,size_bytes,generated_at
+     ) VALUES ($1,$2,$3,$4,$5,1,1,$6,'inline',$7,'application/json',$8,now())`,
+    [resultId, nodeId, fixture.taskId, assignmentId, randomUUID(), `${artifactName} 验收制品`,
+      JSON.stringify({ artifact: artifactName }), Buffer.byteLength(artifactName)],
+  );
+  await client.query(
+    `INSERT INTO workflow_node_acceptances(
+       workflow_node_id,task_id,result_id,assignment_id,accepted_by,gross_amount_minor,
+       platform_fee_minor,agent_amount_minor,fee_rule_version
+     ) VALUES ($1,$2,$3,$4,'system:workflow-acceptor',$5,50000,$6,'fee-v3-usdc')`,
+    [nodeId, fixture.taskId, resultId, assignmentId, NODE_PRICE_MINOR, "11950000"],
+  );
+  await client.query(
+    `UPDATE task_workflow_nodes
+        SET status='accepted',accepted_at=now(),version=version+1,updated_at=now()
+      WHERE id=$1`,
+    [nodeId],
+  );
 }
 
 /**
