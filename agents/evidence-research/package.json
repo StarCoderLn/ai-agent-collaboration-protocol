@@ -6,12 +6,14 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
+    "predev": "pnpm --filter @aicp/agent-sdk build",
     "dev": "tsx watch src/index.ts",
     "example": "tsx src/example-client.ts",
     "start": "node dist/index.js",
     "test": "vitest run"
   },
   "dependencies": {
+    "@aicp/agent-sdk": "workspace:*",
     "@mastra/core": "1.61.0",
     "zod": "4.4.3"
   },

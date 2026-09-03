@@ -1,4 +1,11 @@
-import { createHash } from "node:crypto";
+import {
+  isValidIdempotencyKey,
+  jsonResponse,
+  markIdempotentReplay,
+  MemoryIdempotencyRegistry,
+  type ApiRequest,
+  type ApiResponse,
+} from "@aicp/agent-sdk";
 import { ResearchTaskInputSchema } from "./domain.js";
 import {
   ProtocolError,
@@ -14,26 +21,8 @@ const MAX_BODY_BYTES = 1 << 20;
 const EXECUTION_TIMEOUT_MS = 120_000;
 
 /** 已经被 HTTP 适配层归一化的请求。header 名必须是小写。 */
-export type ApiRequest = {
-  method: string;
-  path: string;
-  headers: Readonly<Record<string, string | undefined>>;
-  body: Uint8Array;
-  signal?: AbortSignal;
-};
-
-export type ApiResponse = {
-  status: number;
-  headers: Record<string, string>;
-  body: Uint8Array;
-};
-
-type IdempotencyRecord = {
-  // 同一个幂等键只有在请求体完全相同时才能复用，避免调用方误拿旧任务的结果。
-  fingerprint: string;
-  // 保存 Promise 而不是最终结果，可以让并发到达的相同请求共享同一次执行。
-  response: Promise<ApiResponse>;
-};
+// 保留既有类型导入路径；传输类型的权威定义已经迁移到 SDK。
+export type { ApiRequest, ApiResponse } from "@aicp/agent-sdk";
 
 /**
  * 论文研究 Agent 的协议入口。
@@ -45,7 +34,7 @@ export class ResearchApi {
   readonly #agentId: string;
   readonly #executor: ResearchExecutor;
   readonly #verifier: ProtocolVerifier;
-  readonly #records = new Map<string, IdempotencyRecord>();
+  readonly #idempotency = new MemoryIdempotencyRegistry();
   readonly #executionTimeoutMs: number;
 
   constructor(options: {
@@ -103,31 +92,19 @@ export class ResearchApi {
         error: "Idempotency-Key must use {operation}:{taskId}:{clientGeneratedId}",
       });
     }
-    const fingerprint = createHash("sha256").update(request.body).digest("hex");
-    const existing = this.#records.get(idempotencyKey);
-    if (existing !== undefined) {
-      if (existing.fingerprint !== fingerprint) {
-        return jsonResponse(409, {
-          error: "idempotency key was reused with a different request body",
-        });
-      }
-      const replay = await existing.response;
-      // 返回保存的业务响应，但加上可观察标记，方便平台审计是否命中了幂等重放。
-      return {
-        ...replay,
-        headers: { ...replay.headers, "x-idempotent-replay": "true" },
-      };
+    const execution = await this.#idempotency.execute(
+      idempotencyKey,
+      request.body,
+      () => this.#execute(request, callType),
+    );
+    if (execution.kind === "conflict") {
+      return jsonResponse(409, {
+        error: "idempotency key was reused with a different request body",
+      });
     }
-
-    const responsePromise = this.#execute(request, callType);
-    // 在 await 前写入 Map，封闭两个并发请求同时启动模型调用的竞态窗口。
-    this.#records.set(idempotencyKey, { fingerprint, response: responsePromise });
-    const response = await responsePromise;
-    if (response.status >= 500) {
-      // 服务端/上游暂时失败时允许平台用同一个幂等键重试；成功和确定性 4xx 则保留。
-      this.#records.delete(idempotencyKey);
-    }
-    return response;
+    return execution.replayed
+      ? markIdempotentReplay(execution.response)
+      : execution.response;
   }
 
   async #execute(request: ApiRequest, callType: CallType): Promise<ApiResponse> {
@@ -175,23 +152,4 @@ export class ResearchApi {
       });
     }
   }
-}
-
-function isValidIdempotencyKey(value: string): boolean {
-  // v0.1 只固定三段式结构；各段的业务含义由协议约定，不在 Agent 内重复解析。
-  const parts = value.split(":", 3);
-  return parts.length === 3 && parts.every((part) => part.length > 0);
-}
-
-function jsonResponse(status: number, value: unknown): ApiResponse {
-  // 所有响应禁用缓存和 MIME 猜测，避免研究内容被中间缓存或当作可执行内容解释。
-  return {
-    status,
-    headers: {
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-      "x-content-type-options": "nosniff",
-    },
-    body: Buffer.from(JSON.stringify(value)),
-  };
 }

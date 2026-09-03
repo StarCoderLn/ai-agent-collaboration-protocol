@@ -8,8 +8,27 @@ importers:
 
   .: {}
 
+  agent-sdk:
+    dependencies:
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.0
+        version: 22.20.1
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.12))
+
   evidence-research:
     dependencies:
+      '@aicp/agent-sdk':
+        specifier: workspace:*
+        version: link:../agent-sdk
       '@mastra/core':
         specifier: 1.61.0
         version: 1.61.0(zod@4.4.3)
@@ -32,6 +51,9 @@ importers:
 
   product-workflow:
     dependencies:
+      '@aicp/agent-sdk':
+        specifier: workspace:*
+        version: link:../agent-sdk
       '@mastra/core':
         specifier: 1.61.0
         version: 1.61.0(zod@4.4.3)

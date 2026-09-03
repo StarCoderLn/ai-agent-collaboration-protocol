@@ -1,4 +1,11 @@
-import { createHash } from "node:crypto";
+import {
+  isValidIdempotencyKey,
+  jsonResponse,
+  markIdempotentReplay,
+  MemoryIdempotencyRegistry,
+  type ApiRequest,
+  type ApiResponse,
+} from "@aicp/agent-sdk";
 import { z } from "zod";
 import { WORKFLOW_AGENT_CATALOG, WorkflowAgentIdSchema } from "./catalog.js";
 import { WorkflowExecutionInputSchema } from "./domain.js";
@@ -18,24 +25,8 @@ import {
 
 const MAX_BODY_BYTES = 4 << 20;
 
-export type ApiRequest = {
-  method: string;
-  path: string;
-  headers: Readonly<Record<string, string | undefined>>;
-  body: Uint8Array;
-  signal?: AbortSignal;
-};
-
-export type ApiResponse = {
-  status: number;
-  headers: Record<string, string>;
-  body: Uint8Array;
-};
-
-type IdempotencyRecord = {
-  fingerprint: string;
-  response: Promise<ApiResponse>;
-};
+// 保留既有类型导入路径；协议传输类型的权威定义已经迁移到 SDK。
+export type { ApiRequest, ApiResponse } from "@aicp/agent-sdk";
 
 /** 9 个产品工作流 Agent 共用的协议边界；agentId 只在验签和输入校验后用于路由。 */
 export class WorkflowApi {
@@ -43,7 +34,7 @@ export class WorkflowApi {
   readonly #verifier: ProtocolVerifier;
   readonly #executionTimeoutMs: number;
   readonly #formalDispatch: FormalDispatchService;
-  readonly #records = new Map<string, IdempotencyRecord>();
+  readonly #idempotency = new MemoryIdempotencyRegistry();
 
   constructor(options: {
     secret: string;
@@ -110,25 +101,20 @@ export class WorkflowApi {
         error: "Idempotency-Key must use {operation}:{taskId}:{clientGeneratedId}",
       });
     }
-    const fingerprint = createHash("sha256").update(request.body).digest("hex");
-    const existing = this.#records.get(idempotencyKey);
-    if (existing !== undefined) {
-      if (existing.fingerprint !== fingerprint) {
-        return jsonResponse(409, { error: "idempotency key reused with different input" });
-      }
-      const replay = await existing.response;
-      return { ...replay, headers: { ...replay.headers, "x-idempotent-replay": "true" } };
+    const execution = await this.#idempotency.execute(
+      idempotencyKey,
+      request.body,
+      () =>
+        isWorkflow
+          ? this.#execute(request, callType)
+          : this.#handleFormal(request, callType, formalRoute as FormalRoute),
+    );
+    if (execution.kind === "conflict") {
+      return jsonResponse(409, { error: "idempotency key reused with different input" });
     }
-
-    const responsePromise = isWorkflow
-      ? this.#execute(request, callType)
-      : this.#handleFormal(request, callType, formalRoute as FormalRoute);
-    this.#records.set(idempotencyKey, { fingerprint, response: responsePromise });
-    const response = await responsePromise;
-    if (response.status >= 500) {
-      this.#records.delete(idempotencyKey);
-    }
-    return response;
+    return execution.replayed
+      ? markIdempotentReplay(execution.response)
+      : execution.response;
   }
 
   async #handleFormal(request: ApiRequest, callType: CallType, route: FormalRoute): Promise<ApiResponse> {
@@ -223,22 +209,4 @@ function parseFormalRoute(path: string): FormalRoute | null {
   const agent = WorkflowAgentIdSchema.safeParse(matched[1]);
   if (!agent.success) return null;
   return { kind: matched[2] === undefined ? "dispatch" : "webhook", agentId: agent.data };
-}
-
-function isValidIdempotencyKey(value: string): boolean {
-  // 不设置 split 上限：带有额外冒号的四段键必须被拒绝，不能被静默截成合法三段。
-  const parts = value.split(":");
-  return parts.length === 3 && parts.every((part) => part.length > 0);
-}
-
-function jsonResponse(status: number, value: unknown): ApiResponse {
-  return {
-    status,
-    headers: {
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-      "x-content-type-options": "nosniff",
-    },
-    body: Buffer.from(JSON.stringify(value)),
-  };
 }

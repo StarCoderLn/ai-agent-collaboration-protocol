@@ -7,11 +7,13 @@
     "build": "tsc -p tsconfig.build.json",
     "bootstrap:local": "tsx src/local-bootstrap.ts",
     "check": "tsc --noEmit",
+    "predev": "pnpm --filter @aicp/agent-sdk build",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run"
   },
   "dependencies": {
+    "@aicp/agent-sdk": "workspace:*",
     "@mastra/core": "1.61.0",
     "pg": "8.23.0",
 	"typescript": "5.9.3",

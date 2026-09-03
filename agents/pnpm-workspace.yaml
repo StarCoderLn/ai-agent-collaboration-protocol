@@ -1,4 +1,5 @@
 packages:
+  - "agent-sdk"
   - "evidence-research"
   - "product-workflow"
 
