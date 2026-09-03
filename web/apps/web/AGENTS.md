@@ -16,3 +16,4 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - [2.agent-registration/T-007] 排"编辑/查看页" task 须先确认对应 GET 读取端点已有独立任务，否则页面无法端到端可用。
 - [2.agent-registration/T-007] 跨源 SIWE 场景 fetch 默认 credentials:"same-origin" 漏发 session cookie，须显式设 include。
 - [2.agent-registration/T-007] 依赖路由参数(如 agentId)的 useEffect fetch 须用 AbortController 防旧请求覆盖新状态。
+- [6.escrow-sync-and-wallet] injected 钱包连接器只允许在用户主动操作时惰性注册。

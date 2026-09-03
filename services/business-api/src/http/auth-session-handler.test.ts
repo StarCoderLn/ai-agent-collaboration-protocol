@@ -7,15 +7,20 @@ describe("auth session handler", () => {
   it("returns the authenticated wallet without exposing the opaque session id", async () => {
     const response = await createAuthSessionHandler({
       allowedOrigin: "http://localhost:3001",
+      chainId: 31_337,
       resolveActorId: async () => "0x1111111111111111111111111111111111111111",
     })(new Request("http://api.local/api/auth/session"));
-    expect(await response.json()).toEqual({ authenticated: true, walletAddress: "0x1111111111111111111111111111111111111111" });
+    expect(await response.json()).toEqual({
+      authenticated: true,
+      walletAddress: "0x1111111111111111111111111111111111111111",
+      chainId: 31_337,
+    });
     expect(response.headers.get("set-cookie")).toBeNull();
   });
 
   it("distinguishes an invalid session from an authentication service outage", async () => {
-    const unauthenticated = createAuthSessionHandler({ allowedOrigin: "http://localhost:3001", resolveActorId: async () => { throw new SessionInvalidError(); } });
-    const unavailable = createAuthSessionHandler({ allowedOrigin: "http://localhost:3001", resolveActorId: async () => { throw new Error("db down"); } });
+    const unauthenticated = createAuthSessionHandler({ allowedOrigin: "http://localhost:3001", chainId: 31_337, resolveActorId: async () => { throw new SessionInvalidError(); } });
+    const unavailable = createAuthSessionHandler({ allowedOrigin: "http://localhost:3001", chainId: 31_337, resolveActorId: async () => { throw new Error("db down"); } });
     await expect(unauthenticated(new Request("http://api.local"))).resolves.toMatchObject({ status: 401 });
     await expect(unavailable(new Request("http://api.local"))).resolves.toMatchObject({ status: 503 });
   });

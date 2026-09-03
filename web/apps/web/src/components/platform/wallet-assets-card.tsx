@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@web/ui/components/button";
 import { Skeleton } from "@web/ui/components/skeleton";
 import { AlertTriangle, Coins, RefreshCw, Wallet } from "lucide-react";
-import { useConnection } from "wagmi";
 
 import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import { useLocale } from "@/components/i18n/locale-provider";
@@ -12,26 +11,24 @@ import {
 	getWalletAssetDirectory,
 	WalletAssetsApiError,
 } from "@/lib/api/wallet-assets";
+import type { MessageId } from "@/lib/i18n/messages";
 import {
 	formatWalletAssetAmount,
 	readWalletAssetBalances,
 	type WalletAssetBalance,
 } from "@/lib/wallet/asset-balances";
-import type { MessageId } from "@/lib/i18n/messages";
 import { walletNetworkName } from "@/lib/wallet/network-name";
 
 export default function WalletAssetsCard() {
 	const { locale, t } = useLocale();
 	const wallet = useWalletSession();
-	const connection = useConnection();
 	const walletAddress =
 		wallet.status === "connected" ? wallet.walletAddress : null;
-	const connectedNetwork =
-		connection.chainId === undefined
-			? t("钱包网络未连接")
-			: walletNetworkName(connection.chainId);
 	const balances = useQuery({
-		queryKey: ["wallet-assets", walletAddress, connection.chainId ?? null],
+		// 余额来自服务端资产目录指定的各自网络，不依赖 MetaMask 当前选中的链。
+		// 这允许本地 USDC/ETH 与 Sepolia 产品 YD 同时只读展示，也不会为刷新余额
+		// 主动连接钱包扩展。
+		queryKey: ["wallet-assets", walletAddress],
 		enabled: walletAddress !== null,
 		queryFn: async ({ signal }) => {
 			if (walletAddress === null) throw new Error("尚未连接钱包");
@@ -89,24 +86,6 @@ export default function WalletAssetsCard() {
 					</Button>
 				)}
 			</header>
-			{walletAddress !== null && (
-				<div className="relative mt-4 flex items-center justify-between gap-3 rounded-xl border border-secondary/12 bg-secondary/6 px-3 py-2 text-xs">
-					<span className="flex items-center gap-2 text-muted-foreground">
-						<span
-							className={`size-1.5 rounded-full ${connection.chainId === undefined ? "bg-warning" : "bg-success shadow-[0_0_10px_var(--success)]"}`}
-							aria-hidden
-						/>
-						{t("当前钱包网络")}
-					</span>
-					<span
-						className="truncate font-medium text-foreground"
-						title={connectedNetwork}
-					>
-						{connectedNetwork}
-					</span>
-				</div>
-			)}
-
 			<div className="relative mt-5">
 				{wallet.status === "checking" || wallet.status === "connecting" ? (
 					<AssetRowsSkeleton />

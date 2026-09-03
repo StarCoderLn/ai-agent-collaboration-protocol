@@ -14,11 +14,13 @@ const agent = {
 	categoryId: "40000000-0000-4000-8000-000000000023",
 	// 故意保留服务端完整路径，证明筛选依据是分类 ID，而不是易变化的展示名称。
 	categoryName: "产品与开发 / 软件开发",
+	provider: { label: "0x1234…5678" },
 	description: "来自正式 Agent 目录 API",
 	tags: ["TypeScript", "测试"],
 	pricing: { type: "fixed", amountMinor: "25000000", currency: "USDC" },
 	status: "active",
-	score: null,
+	// 模拟旧接口或缓存仍返回 3.5 冷启动先验，页面必须根据零样本证据隐藏它。
+	score: 3.5,
 	sampleSize: 0,
 	disputeRate: null,
 	completedCount: 0,
@@ -66,7 +68,7 @@ function successfulApiResponse(input: RequestInfo | URL): Promise<Response> {
 	const url = String(input);
 	if (url.includes("/market/agents")) {
 		return Promise.resolve(
-			Response.json({ agents: [agent], limit: 50, offset: 0 }),
+			Response.json({ agents: [agent], total: 1, limit: 9, offset: 0 }),
 		);
 	}
 	if (url.endsWith("/categories")) {
@@ -90,8 +92,15 @@ describe("AgentMarketplace", () => {
 			await screen.findByText("真实目录 Coding Agent"),
 		).toBeInTheDocument();
 		expect(screen.getByText("来自正式 Agent 目录 API")).toBeInTheDocument();
-		expect(screen.getAllByText("暂无").length).toBeGreaterThanOrEqual(1);
-		expect(screen.getByText("25 USDC")).toBeInTheDocument();
+		expect(screen.getByText("Agent 提供者")).toBeInTheDocument();
+		expect(screen.getByText("0x1234…5678")).toBeInTheDocument();
+		expect(screen.getByText("新入驻")).toBeInTheDocument();
+		expect(screen.queryByText("健康探测正常")).not.toBeInTheDocument();
+		expect(screen.getByText("暂无评分")).toBeInTheDocument();
+		expect(screen.queryByText("3.5")).not.toBeInTheDocument();
+		expect(screen.getByText("单次服务价")).toBeInTheDocument();
+		expect(screen.getByText("25 USDC")).toHaveClass("text-primary");
+		expect(screen.queryByText("参考报价")).not.toBeInTheDocument();
 		const cardLink = screen.getByRole("link", {
 			name: "查看详情：真实目录 Coding Agent",
 		});
@@ -103,8 +112,8 @@ describe("AgentMarketplace", () => {
 		expect(cardLink.querySelector("article")).not.toBeNull();
 		expect(cardLink.querySelector("a")).toBeNull();
 		expect(screen.queryByText("查看详情")).not.toBeInTheDocument();
-		expect(screen.getByText("计费方式")).toBeInTheDocument();
-		expect(screen.getByText("按任务计费")).toBeInTheDocument();
+		expect(screen.queryByText("计费方式")).not.toBeInTheDocument();
+		expect(screen.queryByText("按任务计费")).not.toBeInTheDocument();
 		expect(screen.getByLabelText("按能力分类筛选")).toHaveTextContent(
 			"全部分类",
 		);
@@ -118,8 +127,11 @@ describe("AgentMarketplace", () => {
 		});
 		fireEvent.pointerDown(codeCategory, { pointerType: "mouse" });
 		fireEvent.click(codeCategory);
-		// categoryName 与短名称不同仍能命中，验证筛选使用稳定分类 ID。
-		expect(screen.getByText("真实目录 Coding Agent")).toBeInTheDocument();
+		// 分类切换会触发新的服务端分页查询；等待请求完成后再验证结果，避免把旧版
+		// 客户端同步筛选的时序继续固化进测试。
+		expect(
+			await screen.findByText("真实目录 Coding Agent"),
+		).toBeInTheDocument();
 	});
 
 	it("shows a controlled error state and can retry", async () => {
@@ -139,5 +151,44 @@ describe("AgentMarketplace", () => {
 		await waitFor(() =>
 			expect(screen.getByText("真实目录 Coding Agent")).toBeInTheDocument(),
 		);
+	});
+
+	it("requests the second server page when the user changes page", async () => {
+		const secondPageAgent = {
+			...agent,
+			id: "83100000-0000-4000-8000-000000000010",
+			name: "第二页设计 Agent",
+		};
+		vi.mocked(fetch).mockImplementation((input) => {
+			const url = String(input);
+			if (url.includes("/market/agents")) {
+				const isSecondPage = url.includes("offset=9");
+				return Promise.resolve(
+					Response.json({
+						agents: [isSecondPage ? secondPageAgent : agent],
+						total: 18,
+						limit: 9,
+						offset: isSecondPage ? 9 : 0,
+					}),
+				);
+			}
+			if (url.endsWith("/categories")) {
+				return Promise.resolve(Response.json({ categories }));
+			}
+			return Promise.reject(new Error(`Unexpected request: ${url}`));
+		});
+		render(<AgentMarketplace />);
+
+		expect(
+			await screen.findByText("真实目录 Coding Agent"),
+		).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "第 2 页" }));
+
+		expect(await screen.findByText("第二页设计 Agent")).toBeInTheDocument();
+		expect(
+			vi
+				.mocked(fetch)
+				.mock.calls.some(([input]) => String(input).includes("offset=9")),
+		).toBe(true);
 	});
 });

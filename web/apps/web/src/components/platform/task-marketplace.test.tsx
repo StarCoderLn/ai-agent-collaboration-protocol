@@ -46,16 +46,27 @@ vi.mock("@/lib/api/tasks", async (importOriginal) => {
 });
 
 describe("Task marketplace filters", () => {
-	beforeEach(() => vi.mocked(listPublicTasks).mockResolvedValue([]));
+	beforeEach(() =>
+		vi.mocked(listPublicTasks).mockResolvedValue({
+			tasks: [],
+			total: 0,
+			limit: 9,
+			offset: 0,
+		}),
+	);
 	afterEach(() => {
 		cleanup();
 		vi.clearAllMocks();
 	});
 
-	it("queries the backend with category, tag, status and keyword instead of filtering only the first page", async () => {
+	it("queries the backend with category, status and keyword instead of filtering only the first page", async () => {
 		render(<TaskMarketplace />);
 		await waitFor(() =>
-			expect(listPublicTasks).toHaveBeenCalledWith({}, expect.any(AbortSignal)),
+			expect(listPublicTasks).toHaveBeenCalledWith(
+				{},
+				{ limit: 9, offset: 0 },
+				expect.any(AbortSignal),
+			),
 		);
 		expect(
 			screen.getByRole("heading", { name: "发现等待执行的真实任务" }),
@@ -68,9 +79,6 @@ describe("Task marketplace filters", () => {
 
 		fireEvent.change(screen.getByLabelText("搜索任务"), {
 			target: { value: "Coding" },
-		});
-		fireEvent.change(screen.getByLabelText("按任务标签筛选"), {
-			target: { value: "TypeScript" },
 		});
 		fireEvent.click(screen.getByLabelText("按任务分类筛选"));
 		// 父分类只负责组织分类树，不应成为可提交的筛选条件；市场与发布/上架入口
@@ -95,9 +103,9 @@ describe("Task marketplace filters", () => {
 				{
 					keyword: "Coding",
 					category: "40000000-0000-4000-8000-000000000023",
-					tag: "TypeScript",
 					status: "execution_failed",
 				},
+				{ limit: 9, offset: 0 },
 				expect.any(AbortSignal),
 			),
 		);
@@ -106,36 +114,72 @@ describe("Task marketplace filters", () => {
 	});
 
 	it("makes the whole task card a single accessible detail link", async () => {
-		vi.mocked(listPublicTasks).mockResolvedValue([
-			{
-				access: "public",
-				id: "e0b8258a-208e-4e22-978c-eb1aecc43506",
-				title: "开发 USDC 托管任务工作台",
-				description: "验证任务列表卡片可以从任意非交互区域进入详情页。",
-				categoryId: "40000000-0000-4000-8000-000000000023",
-				tags: ["react", "testing"],
-				budgetMinMinor: "32000000",
-				budgetMaxMinor: "32000000",
-				currency: "USDC",
-				deadline: "2026-09-04T15:59:59.999Z",
-				requiredCapability: "react, testing",
-				status: "execution_failed",
-				createdAt: "2026-08-28T07:19:29.473Z",
-			},
-		]);
+		vi.mocked(listPublicTasks).mockResolvedValue({
+			tasks: [
+				{
+					access: "public",
+					id: "e0b8258a-208e-4e22-978c-eb1aecc43506",
+					title: "开发 USDC 托管任务工作台",
+					description: "验证任务列表卡片可以从任意非交互区域进入详情页。",
+					categoryId: "40000000-0000-4000-8000-000000000023",
+					tags: ["react", "testing"],
+					budgetMinMinor: "32000000",
+					budgetMaxMinor: "32000000",
+					currency: "USDC",
+					// 使用各常见时区都落在 9 月 5 日的时刻，测试只约束点连接格式，
+					// 不把执行测试的机器时区误当成产品契约。
+					deadline: "2026-09-05T01:00:00.000Z",
+					requiredCapability: "react, testing",
+					status: "execution_failed",
+					createdAt: "2026-08-28T07:19:29.473Z",
+				},
+			],
+			total: 1,
+			limit: 9,
+			offset: 0,
+		});
 		render(<TaskMarketplace />);
 		const cardLink = await screen.findByRole("link", {
 			name: "查看任务：开发 USDC 托管任务工作台",
 		});
 		expect(cardLink).toHaveAttribute(
 			"href",
-			"/tasks/e0b8258a-208e-4e22-978c-eb1aecc43506",
+			"/tasks/e0b8258a-208e-4e22-978c-eb1aecc43506?from=market",
 		);
 		expect(cardLink).toHaveClass("cursor-pointer");
 		expect(cardLink.querySelector("article")).not.toBeNull();
 		expect(cardLink.querySelector("a")).toBeNull();
 		expect(screen.queryByText("查看任务")).not.toBeInTheDocument();
-		expect(screen.getByText("任务周期")).toBeInTheDocument();
-		expect(screen.getByText("约 8 天")).toBeInTheDocument();
+		expect(screen.queryByText("任务周期")).not.toBeInTheDocument();
+		expect(screen.getByText("2026.09.05")).toBeInTheDocument();
+		expect(screen.getByText("发布于 2026.08.28")).toBeInTheDocument();
+		expect(screen.getByText("任务周期约 8 天")).toBeInTheDocument();
+	});
+
+	it("requests the second server page when the user changes page", async () => {
+		vi.mocked(listPublicTasks).mockResolvedValue({
+			tasks: [],
+			total: 18,
+			limit: 9,
+			offset: 0,
+		});
+		render(<TaskMarketplace />);
+
+		await waitFor(() =>
+			expect(listPublicTasks).toHaveBeenCalledWith(
+				{},
+				{ limit: 9, offset: 0 },
+				expect.any(AbortSignal),
+			),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "第 2 页" }));
+
+		await waitFor(() =>
+			expect(listPublicTasks).toHaveBeenLastCalledWith(
+				{},
+				{ limit: 9, offset: 9 },
+				expect.any(AbortSignal),
+			),
+		);
 	});
 });

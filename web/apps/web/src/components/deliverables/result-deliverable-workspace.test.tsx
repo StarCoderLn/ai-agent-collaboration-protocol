@@ -147,7 +147,105 @@ describe("ResultDeliverableWorkspace", () => {
 		);
 		expect(onReadinessChange).not.toHaveBeenCalledWith(true);
 	});
+
+	it("用大画布切换桌面与移动设计稿，并在 Schema 通过后开放验收", async () => {
+		const onReadinessChange = vi.fn();
+		render(
+			<ResultDeliverableWorkspace
+				result={{
+					summary: "电商增长工作台设计",
+					kind: "inline",
+					content: JSON.stringify(designArtifact()),
+					mimeType: "application/json",
+					sizeBytes: "2048",
+					note: null,
+				}}
+				onReadinessChange={onReadinessChange}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("img", { name: "电商增长工作台设计 的桌面端设计稿" }),
+		).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("tab", { name: "移动端" }));
+		expect(
+			screen.getByRole("img", { name: "电商增长工作台设计 的移动端设计稿" }),
+		).toBeInTheDocument();
+		await waitFor(() =>
+			expect(onReadinessChange).toHaveBeenLastCalledWith(true),
+		);
+	});
 });
+
+function designArtifact() {
+	return {
+		schemaVersion: "design.artifact.v0.4",
+		taskId: "task-design-1",
+		title: "电商增长工作台设计",
+		direction: "以营销转化和活动进度为核心，形成清晰可操作的增长工作台。",
+		tokens: {
+			primaryColor: "#5B4CF0",
+			secondaryColor: "#12A594",
+			backgroundColor: "#F5F7FF",
+			textColor: "#151A2D",
+			borderRadius: "16px",
+			spacingBase: "8px",
+			fontFamily: "Inter",
+		},
+		pages: [
+			{
+				id: "home",
+				name: "增长首页",
+				purpose: "展示营销活动和转化表现。",
+				sections: ["概览"],
+			},
+		],
+		components: [
+			{
+				id: "root",
+				name: "工作台",
+				parentId: null,
+				responsibility: "展示核心增长信息",
+				states: ["默认"],
+			},
+		],
+		interactionRules: ["点击活动查看详情"],
+		responsiveRules: ["移动端单列显示"],
+		accessibilityRules: ["按钮具有可读名称"],
+		assetPlan: [],
+		preview: {
+			navigation: null,
+			hero: {
+				eyebrow: "增长",
+				title: "营销工作台",
+				description: "查看转化表现与活动进度。",
+				primaryAction: "查看活动",
+				secondaryAction: null,
+			},
+			metrics: [],
+			sections: [],
+		},
+		rendererVersion: "aicp-design-renderer.v1",
+		renderedScreens: [
+			designScreen("desktop", 1_440, 900),
+			designScreen("mobile", 390, 844),
+		],
+		generatedBy: { agentId: "design-direct", strategy: "direct" },
+		generatedAt: "2026-08-31T00:00:00.000Z",
+	};
+}
+
+function designScreen(id: "desktop" | "mobile", width: number, height: number) {
+	const openingTag = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">`;
+	return {
+		id,
+		label: id === "desktop" ? "桌面端设计稿" : "移动端设计稿",
+		viewport: { width, height },
+		canvas: { width, height },
+		mimeType: "image/svg+xml",
+		content: `${openingTag.padEnd(520, " ")}</svg>`,
+	};
+}
 
 /** 测试只临时补齐 jsdom 缺失的全屏 API，结束后恢复环境，避免污染同进程内的其他用例。 */
 function restoreProperty(

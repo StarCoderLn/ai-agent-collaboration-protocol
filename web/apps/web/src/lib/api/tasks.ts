@@ -1,7 +1,6 @@
 import { z } from "zod";
-
-import { BUSINESS_API_BASE_URL } from "./base-url";
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
+import { BUSINESS_API_BASE_URL } from "./base-url";
 
 /**
  * 正式任务 API 的浏览器边界。页面不保存任务主状态，所有金额、版本和状态都以服务端
@@ -16,6 +15,7 @@ const integerStringSchema = z.string().regex(/^\d+$/);
 const isoDateTimeSchema = z.iso.datetime({ offset: true });
 export const taskStatusSchema = z.enum([
 	"draft",
+	"planning",
 	"awaiting_escrow",
 	"matching",
 	"awaiting_agent_acceptance",
@@ -46,8 +46,8 @@ const publicTaskSchema = z.object({
 	description: z.string(),
 	categoryId: uuidSchema,
 	tags: z.array(z.string()),
-	budgetMinMinor: integerStringSchema,
-	budgetMaxMinor: integerStringSchema,
+	budgetMinMinor: integerStringSchema.nullable(),
+	budgetMaxMinor: integerStringSchema.nullable(),
 	currency: z.string(),
 	deadline: isoDateTimeSchema,
 	requiredCapability: z.string(),
@@ -125,17 +125,16 @@ const taskCreatedSchema = z.object({
 });
 const taskSubmittedSchema = z.object({
 	taskId: uuidSchema,
-	status: z.literal("awaiting_escrow"),
+	status: z.literal("planning"),
 	statusVersion: integerStringSchema,
-	preview: z.object({
-		escrowAmountMinor: integerStringSchema,
-		platformFeeMinor: integerStringSchema,
-		agentReceivesMinor: integerStringSchema,
-		feeBasisPoints: integerStringSchema,
-		minimumPlatformFeeMinor: integerStringSchema,
-		feeRuleVersion: z.string(),
-		irreversibleWarning: z.string(),
+	planning: z.object({
+		estimatedBudgetMinor: integerStringSchema.nullable(),
+		message: z.string(),
 	}),
+});
+const taskArchivedSchema = z.object({
+	taskId: uuidSchema,
+	archived: z.literal(true),
 });
 const matchCriteriaUpdatedSchema = z.object({
 	taskId: uuidSchema,
@@ -154,6 +153,7 @@ const tagSuggestionSchema = z.object({
 });
 const publicTaskListSchema = z.object({
 	tasks: z.array(publicTaskSchema),
+	total: z.number().int().nonnegative(),
 	limit: z.number().int(),
 	offset: z.number().int(),
 });
@@ -293,10 +293,31 @@ const escrowRetrySchema = escrowStatusSchema.extend({
 	}),
 });
 
+const scoreDimensionSchema = z.object({
+	recentValue: z.number().finite(),
+	lifetimeValue: z.number().finite(),
+	sampleSize: z.number().int().nonnegative(),
+});
+const deliveryCaseSchema = z.object({
+	source: z.enum(["platform_verified", "agent_provided"]),
+	title: z.string(),
+	summary: z.string(),
+	artifactKind: z.enum([
+		"document",
+		"image",
+		"video",
+		"website",
+		"code",
+		"other",
+	]),
+	previewRef: z.string(),
+});
 const candidateSchema = z.object({
 	agentId: uuidSchema,
 	name: z.string(),
 	matchedTags: z.array(z.string()),
+	/** 任务需要但该 Agent 标签中尚未覆盖的能力，由冻结匹配快照返回。 */
+	unmatchedTags: z.array(z.string()).optional(),
 	quoteMinor: integerStringSchema,
 	estimatedDurationSeconds: z.number().int().nonnegative(),
 	score: z.number().finite(),
@@ -304,6 +325,30 @@ const candidateSchema = z.object({
 	responseMinutes: z.number().int().nonnegative(),
 	isNew: z.boolean(),
 	rankScore: integerStringSchema,
+	recommendationBadges: z
+		.array(z.enum(["best_overall", "quality_first", "best_value"]))
+		.optional(),
+	taskFitScore: z.number().int().min(0).max(100).optional(),
+	confidence: z.enum(["low", "medium", "high"]).optional(),
+	sampleSize: z.number().int().nonnegative().optional(),
+	similarCompleted: z.number().int().nonnegative().optional(),
+	onTimeRate: z.number().min(0).max(1).optional(),
+	reworkRate: z.number().min(0).max(1).optional(),
+	disputeRate: z.number().min(0).max(1).optional(),
+	currentLoad: z.number().int().nonnegative().optional(),
+	scoreDimensions: z
+		.object({
+			completionStrength: scoreDimensionSchema.optional(),
+			qualityFeedback: scoreDimensionSchema.optional(),
+			communicationExperience: scoreDimensionSchema.optional(),
+			disputeReliability: scoreDimensionSchema.optional(),
+			completedHistory: scoreDimensionSchema.optional(),
+		})
+		.passthrough()
+		.optional(),
+	// 兼容上线前已经冻结的候选记录：旧 Go JSON 会把空切片写成 null。仅该字段接受
+	// 历史 null；非数组脏数据仍然拒绝。新记录由 Go 统一输出 []，不继续扩大旧语义。
+	deliveryCases: z.array(deliveryCaseSchema).nullish(),
 });
 const candidateRecordSchema = z.object({
 	id: uuidSchema,
@@ -350,11 +395,24 @@ const assignmentResultSchema = z.object({
 	dispatchAttempt: dispatchAttemptSchema,
 	replayed: z.boolean(),
 });
+const workflowSelectionResultSchema = z.object({
+	taskId: uuidSchema,
+	nodeId: uuidSchema,
+	agentId: uuidSchema,
+	agreedAmountMinor: integerStringSchema,
+	selectedNodeCount: z.number().int().nonnegative(),
+	totalNodeCount: z.number().int().positive(),
+	quotedTotalMinor: integerStringSchema.nullable(),
+	taskStatus: z.enum(["planning", "awaiting_escrow"]),
+});
 const executionRetrySchema = z.object({
 	taskId: uuidSchema,
 	assignmentId: uuidSchema,
 	transitionEventId: uuidSchema,
 	replayed: z.boolean(),
+});
+const workflowExecutionRetrySchema = executionRetrySchema.extend({
+	workflowNodeId: uuidSchema,
 });
 
 const executionStatusSchema = z.object({
@@ -420,6 +478,40 @@ const reworkResultSchema = z.object({
 const ratingResultSchema = z.object({
 	taskId: uuidSchema,
 	ratingId: uuidSchema,
+	agentId: uuidSchema,
+	statusVersion: integerStringSchema,
+	submittedAt: isoDateTimeSchema,
+});
+const workflowFeedbackStrengthSchema = z.enum([
+	"requirements_understanding",
+	"delivery_quality",
+	"design_fidelity",
+	"usability",
+	"communication",
+	"efficiency",
+]);
+const workflowFeedbackSchema = z.object({
+	id: uuidSchema,
+	workflowNodeId: uuidSchema,
+	assignmentId: uuidSchema,
+	agentId: uuidSchema,
+	agentName: z.string(),
+	quality: z.number().int().min(1).max(5),
+	communication: z.number().int().min(1).max(5),
+	comment: z.string().nullable(),
+	strengths: z.array(workflowFeedbackStrengthSchema),
+	improvement: z.string().nullable(),
+	allowModelTraining: z.boolean(),
+	submittedAt: isoDateTimeSchema,
+});
+const workflowFeedbackListSchema = z.object({
+	taskId: uuidSchema,
+	feedback: z.array(workflowFeedbackSchema),
+});
+const workflowFeedbackSubmissionSchema = z.object({
+	taskId: uuidSchema,
+	workflowNodeId: uuidSchema,
+	feedbackId: uuidSchema,
 	agentId: uuidSchema,
 	statusVersion: integerStringSchema,
 	submittedAt: isoDateTimeSchema,
@@ -496,6 +588,28 @@ const disputeSchema = z.object({
 	),
 	decision: disputeDecisionSchema.nullable(),
 	viewerRole: z.enum(["publisher", "agent", "arbitrator"]),
+	// 平台仲裁员与 DAO 小组成员都能读取卷宗，但资金裁决入口不同，不能只靠同一个
+	// viewerRole 推断写权限，否则 DAO 成员会被错误引导到平台后台裁决表单。
+	viewerCanPlatformDecide: z.boolean(),
+	daoArbitration: z
+		.object({
+			roundId: uuidSchema,
+			status: z.enum(["awaiting_panel", "voting", "decided", "cancelled"]),
+			panelSize: z.number().int().positive(),
+			panelCount: z.number().int().nonnegative(),
+			quorum: z.number().int().positive(),
+			voteCount: z.number().int().nonnegative(),
+			votes: z.object({
+				release: z.number().int().nonnegative(),
+				partialRelease: z.number().int().nonnegative(),
+				refund: z.number().int().nonnegative(),
+			}),
+			viewerHasVoted: z.boolean(),
+			evidenceRoot: transactionHashSchema.nullable(),
+			votingDeadline: isoDateTimeSchema,
+			decidedAt: isoDateTimeSchema.nullable(),
+		})
+		.nullable(),
 });
 const arbitrationResultSchema = z.object({
 	disputeId: uuidSchema,
@@ -526,6 +640,8 @@ const workflowRunStatusSchema = z.enum([
 	"cancelled",
 ]);
 const workflowNodeStatusSchema = z.enum([
+	"selecting",
+	"selected",
 	"blocked",
 	"matching",
 	"awaiting_agent_acceptance",
@@ -559,11 +675,20 @@ const workflowNodeSchema = z.object({
 	requiredCapability: z.string(),
 	inputContract: z.string(),
 	outputContract: z.string(),
-	budgetCapMinor: integerStringSchema,
+	budgetCapMinor: integerStringSchema.nullable(),
+	pricePreferenceMinor: integerStringSchema.nullable(),
+	pricePreferenceWeight: z.number().int().positive(),
 	positionIndex: z.number().int().nonnegative(),
 	status: workflowNodeStatusSchema,
 	version: integerStringSchema,
 	acceptedAt: isoDateTimeSchema.nullable(),
+	selection: z
+		.object({
+			agentId: uuidSchema,
+			agentName: z.string(),
+			agreedAmountMinor: integerStringSchema,
+		})
+		.nullable(),
 	assignment: z
 		.object({
 			id: uuidSchema,
@@ -578,6 +703,21 @@ const workflowNodeSchema = z.object({
 		.object({
 			progress: z.number().int().min(0).max(100),
 			state: z.string(),
+			failureCode: z.string().nullable(),
+			// 失败阶段是平台自己的校验边界枚举，取代恒为 10 的“失败时进度”做故障说明。
+			// 未知取值按缺失处理，避免旧 Agent 或未来新增阶段让整个关系图解析失败。
+			failureStage: z
+				.enum([
+					"analysis",
+					"requirements_draft",
+					"design_draft",
+					"code_page",
+					"code_styles",
+				])
+				.nullable()
+				.catch(null)
+				.default(null),
+			attentionMessage: z.string().nullable(),
 		})
 		.nullable(),
 	candidateRecord: z
@@ -607,7 +747,10 @@ const workflowNodeSchema = z.object({
 			feeRuleVersion: z.string(),
 			createdAt: isoDateTimeSchema,
 			release: z
-				.object({ status: z.string(), txHash: transactionHashSchema.nullable() })
+				.object({
+					status: z.string(),
+					txHash: transactionHashSchema.nullable(),
+				})
 				.nullable(),
 		})
 		.nullable(),
@@ -621,6 +764,11 @@ const workflowNodeSchema = z.object({
 		})
 		.nullable(),
 });
+const workflowCapabilityResultSchema = z.object({
+	taskId: uuidSchema,
+	nodeId: uuidSchema,
+	tags: z.array(z.string()),
+});
 const formalWorkflowSchema = z.object({
 	run: z.object({
 		id: uuidSchema,
@@ -628,9 +776,12 @@ const formalWorkflowSchema = z.object({
 		status: workflowRunStatusSchema,
 		version: integerStringSchema,
 		currency: z.literal("USDC"),
-		totalBudgetMinor: integerStringSchema,
+		totalBudgetMinor: integerStringSchema.nullable(),
 		releasedAmountMinor: integerStringSchema,
-		refundableAmountMinor: integerStringSchema,
+		refundableAmountMinor: integerStringSchema.nullable(),
+		budgetPreferenceMinor: integerStringSchema.nullable(),
+		quotedTotalMinor: integerStringSchema.nullable(),
+		quoteConfirmedAt: isoDateTimeSchema.nullable(),
 		createdAt: isoDateTimeSchema,
 		updatedAt: isoDateTimeSchema,
 	}),
@@ -641,6 +792,16 @@ const formalWorkflowSchema = z.object({
 			sourceNodeId: uuidSchema,
 			targetNodeId: uuidSchema,
 			artifactContract: z.string(),
+		}),
+	),
+});
+const workflowPreferenceResultSchema = z.object({
+	taskId: uuidSchema,
+	budgetPreferenceMinor: integerStringSchema.nullable(),
+	nodePreferences: z.array(
+		z.object({
+			nodeId: uuidSchema,
+			pricePreferenceMinor: integerStringSchema.nullable(),
 		}),
 	),
 });
@@ -689,7 +850,16 @@ export type EscrowStatus = z.infer<typeof escrowStatusSchema>;
 export type TaskCandidateRecord = z.infer<typeof candidateRecordSchema>;
 export type TaskCandidate = z.infer<typeof candidateSchema>;
 export type TaskAssignmentResult = z.infer<typeof assignmentResultSchema>;
+export type WorkflowSelectionResult = z.infer<
+	typeof workflowSelectionResultSchema
+>;
+export type WorkflowPreferenceResult = z.infer<
+	typeof workflowPreferenceResultSchema
+>;
 export type TaskExecutionRetry = z.infer<typeof executionRetrySchema>;
+export type WorkflowExecutionRetry = z.infer<
+	typeof workflowExecutionRetrySchema
+>;
 export type TaskExecutionStatus = z.infer<typeof executionStatusSchema>;
 export type TaskResult = z.infer<typeof taskResultSchema>;
 export type TaskAcceptancePreview = z.infer<typeof acceptancePreviewSchema>;
@@ -719,7 +889,8 @@ export type TaskDraftInput = Readonly<{
 	deliverableFormat: string;
 	categoryId: string;
 	tags: readonly string[];
-	pricing: Readonly<{ type: "fixed"; amountMinor: string }>;
+	/** 旧草稿仍可携带报价；新发布链路会省略该字段，等待选完 Agent 后由服务端回写。 */
+	pricing?: Readonly<{ type: "fixed"; amountMinor: string }>;
 	currency: "USDC";
 	deadline: string;
 	requiredCapability: string;
@@ -807,6 +978,23 @@ export async function submitTask(
 	);
 }
 
+/**
+ * 产品界面称为删除，服务端执行可审计软归档。只有尚未进入资金流程的任务会成功，
+ * 因而客户端不能乐观地从列表移除，必须等待服务端确认。
+ */
+export async function archiveTask(
+	taskId: string,
+	idempotencyKey: string,
+): Promise<z.output<typeof taskArchivedSchema>> {
+	return credentialedMutation(
+		`/tasks/${encodeURIComponent(parseUuid(taskId))}`,
+		"DELETE",
+		{},
+		idempotencyKey,
+		taskArchivedSchema,
+	);
+}
+
 export async function listPublicTasks(
 	filters: Readonly<{
 		keyword?: string;
@@ -814,9 +1002,13 @@ export async function listPublicTasks(
 		tag?: string;
 		status?: TaskStatus;
 	}>,
+	pagination: Readonly<{ limit: number; offset: number }>,
 	signal?: AbortSignal,
-): Promise<readonly PublicTask[]> {
-	const params = new URLSearchParams({ limit: "50", offset: "0" });
+): Promise<z.output<typeof publicTaskListSchema>> {
+	const params = new URLSearchParams({
+		limit: String(pagination.limit),
+		offset: String(pagination.offset),
+	});
 	if (filters.keyword?.trim()) params.set("keyword", filters.keyword.trim());
 	if (filters.category)
 		params.set("category", uuidSchema.parse(filters.category));
@@ -825,9 +1017,7 @@ export async function listPublicTasks(
 	const response = await request(`/market/tasks?${params.toString()}`, {
 		signal,
 	});
-	return parseSuccess(response, publicTaskListSchema).then(
-		(body) => body.tasks,
-	);
+	return parseSuccess(response, publicTaskListSchema);
 }
 
 export async function getPublicTask(
@@ -898,6 +1088,24 @@ export async function getTaskWorkflow(
 	);
 }
 
+/**
+ * 保存匹配阶段的可选预算上限。该金额只影响候选排序；托管接口仍只接受服务端冻结的
+ * quotedTotalMinor，浏览器不能把这个偏好直接作为交易金额。
+ */
+export async function updateWorkflowBudgetPreference(
+	taskId: string,
+	budgetPreferenceMinor: string | null,
+	idempotencyKey: string,
+): Promise<WorkflowPreferenceResult> {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow`,
+		"PATCH",
+		{ budgetPreferenceMinor },
+		idempotencyKey,
+		workflowPreferenceResultSchema,
+	);
+}
+
 export async function getWorkflowNodeAcceptancePreview(
 	taskId: string,
 	nodeId: string,
@@ -959,18 +1167,37 @@ export async function rematchWorkflowNodeCandidates(
 	);
 }
 
+/**
+ * 保存用户对平台识别能力的修正。保存与重匹配保持为两个显式命令，使页面可以分别
+ * 提示“能力已保存”和“候选生成失败”，并安全重试后一操作。
+ */
+export async function updateWorkflowNodeCapabilities(
+	taskId: string,
+	nodeId: string,
+	tags: readonly string[],
+	idempotencyKey: string,
+) {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow-nodes/${taskPathId(nodeId)}/preferences`,
+		"PATCH",
+		{ tags },
+		idempotencyKey,
+		workflowCapabilityResultSchema,
+	);
+}
+
 export async function confirmWorkflowNodeCandidate(
 	taskId: string,
 	nodeId: string,
 	agentId: string,
 	idempotencyKey: string,
-): Promise<TaskAssignmentResult> {
+): Promise<TaskAssignmentResult | WorkflowSelectionResult> {
 	return credentialedMutation(
 		`/tasks/${taskPathId(taskId)}/workflow-nodes/${taskPathId(nodeId)}/assignments`,
 		"POST",
 		{ agentId: parseUuid(agentId) },
 		idempotencyKey,
-		assignmentResultSchema,
+		z.union([workflowSelectionResultSchema, assignmentResultSchema]),
 	);
 }
 
@@ -990,7 +1217,7 @@ export async function prepareTaskEscrow(
 export async function submitTaskEscrowTransaction(
 	taskId: string,
 	input:
-		| Readonly<{ status: "submitted"; txHash: string }>
+		| Readonly<{ status: "submitted"; txHash: string; amountMinor: string }>
 		| Readonly<{ status: "failed"; failureReason: string }>,
 	idempotencyKey: string,
 ): Promise<EscrowStatus> {
@@ -1111,6 +1338,24 @@ export async function retryFailedTaskExecution(
 	);
 }
 
+/**
+ * 只恢复正式工作流中的一个失败节点。旧 assignment、失败进度和恢复事件继续留在审计
+ * 记录中；服务端复用既有 Escrow 与冻结 Agent，不会再次请求钱包交易。
+ */
+export async function retryFailedWorkflowNodeExecution(
+	taskId: string,
+	workflowNodeId: string,
+	idempotencyKey: string,
+): Promise<WorkflowExecutionRetry> {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow-nodes/${taskPathId(workflowNodeId)}/execution-retry`,
+		"POST",
+		{},
+		idempotencyKey,
+		workflowExecutionRetrySchema,
+	);
+}
+
 export async function getTaskExecutionStatus(
 	taskId: string,
 	signal?: AbortSignal,
@@ -1194,6 +1439,48 @@ export async function submitTaskRating(
 		rating,
 		idempotencyKey,
 		ratingResultSchema,
+	);
+}
+
+export type WorkflowFeedbackStrength = z.infer<
+	typeof workflowFeedbackStrengthSchema
+>;
+export type WorkflowFeedback = z.infer<typeof workflowFeedbackSchema>;
+export type WorkflowFeedbackInput = Readonly<{
+	quality: number;
+	communication: number;
+	comment?: string;
+	strengths: readonly WorkflowFeedbackStrength[];
+	improvement?: string;
+	allowModelTraining: boolean;
+}>;
+
+/** 发布者只读取自己任务的逐阶段反馈；服务端不会向公开任务详情暴露原始文字。 */
+export async function listWorkflowFeedback(
+	taskId: string,
+	signal?: AbortSignal,
+): Promise<readonly WorkflowFeedback[]> {
+	const result = await credentialedGet(
+		`/tasks/${taskPathId(taskId)}/workflow-feedback`,
+		workflowFeedbackListSchema,
+		signal,
+	);
+	return result.feedback;
+}
+
+/** 反馈目标由任务节点解析，客户端不能自行指定 Agent 或 assignment。 */
+export async function submitWorkflowNodeFeedback(
+	taskId: string,
+	workflowNodeId: string,
+	feedback: WorkflowFeedbackInput,
+	idempotencyKey: string,
+) {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow-nodes/${taskPathId(workflowNodeId)}/feedback`,
+		"POST",
+		feedback,
+		idempotencyKey,
+		workflowFeedbackSubmissionSchema,
 	);
 }
 
@@ -1287,6 +1574,7 @@ const TASK_EVENT_TYPES = [
 	"task.arbitration_refund_confirmed",
 	"task.timed_out",
 	"task.rated",
+	"task.workflow_feedback_submitted",
 ] as const;
 
 /**
@@ -1332,7 +1620,7 @@ export function subscribeTaskEvents(
 
 async function credentialedMutation<Schema extends z.ZodType>(
 	path: string,
-	method: "POST" | "PATCH",
+	method: "POST" | "PATCH" | "DELETE",
 	body: unknown,
 	idempotencyKey: string,
 	schema: Schema,

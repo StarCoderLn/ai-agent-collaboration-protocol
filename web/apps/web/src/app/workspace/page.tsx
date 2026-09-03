@@ -8,6 +8,7 @@ import {
 	Scale,
 	Sparkles,
 } from "lucide-react";
+import type { Route } from "next";
 import Link from "next/link";
 
 import { useLocale } from "@/components/i18n/locale-provider";
@@ -43,8 +44,8 @@ const workspaceEntries: readonly WorkspaceEntry[] = [
 	},
 	{
 		href: "/workspace/disputes",
-		title: "争议与仲裁",
-		description: "查看争议证据、托管资金和仲裁进度，确保每次处理可追溯。",
+		title: "争议处理",
+		description: "查看争议证据、托管资金和处理进度，确保每次处理可追溯。",
 		icon: Scale,
 		iconClassName: "bg-destructive/10 text-destructive",
 		glowClassName: "bg-destructive/15",
@@ -82,7 +83,7 @@ export default function WorkspacePage() {
 
 				<nav
 					aria-label={t("工作台业务入口")}
-					className="mt-10 grid gap-5 lg:grid-cols-3"
+					className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-3"
 				>
 					{workspaceEntries.map((entry) => (
 						<WorkspaceEntryCard key={entry.href} entry={entry} />
@@ -100,7 +101,9 @@ function WorkspaceEntryCard({ entry }: { entry: WorkspaceEntry }) {
 
 	return (
 		<Link
-			href={entry.href}
+			// entry.href 来自上方封闭的工作台目录，不接受接口返回的任意字符串。数组元素进入
+			// 通用卡片后丢失字面量收窄，因此在这个已验证边界显式恢复 Next Route 类型。
+			href={entry.href as Route}
 			className="group relative flex min-h-72 cursor-pointer flex-col overflow-hidden rounded-[28px] border border-primary/18 bg-card/72 p-6 shadow-[0_24px_80px_rgba(8,4,24,0.18)] backdrop-blur-xl transition-[transform,border-color,box-shadow,background-color] duration-300 hover:-translate-y-1.5 hover:border-primary/45 hover:bg-card/90 hover:shadow-[0_28px_90px_var(--brand-glow)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-7"
 		>
 			<span

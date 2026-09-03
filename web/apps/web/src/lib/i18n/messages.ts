@@ -11,6 +11,7 @@ export const EN_MESSAGES = {
 	"上架 Agent": "List an Agent",
 	发布任务: "Post a Task",
 	工作台: "Workspace",
+	"DAO 仲裁": "DAO Arbitration",
 	关闭主菜单: "Close main menu",
 	打开主菜单: "Open main menu",
 	切换语言: "Change language",
@@ -48,6 +49,13 @@ export const EN_MESSAGES = {
 	下载文档: "Download document",
 	下载设计稿: "Download design",
 	"下载源码 ZIP": "Download source ZIP",
+	设计稿图片: "Design screens",
+	设计稿断点: "Design breakpoints",
+	桌面端: "Desktop",
+	移动端: "Mobile",
+	"图片用于人工验收，结构化设计规范将继续传递给 Coding Agent。":
+		"Review the images visually. The structured design specification continues to the Coding Agent.",
+	"{title} 的{breakpoint}设计稿": "{title} {breakpoint} design",
 	产品需求文档: "Product requirements document",
 	目标用户: "Target users",
 	用户故事与验收标准: "User stories and acceptance criteria",
@@ -113,6 +121,8 @@ export const EN_MESSAGES = {
 	"等待生成候选 Agent": "Waiting for candidate Agents",
 	"资金托管确认后，平台会在这里展示真实匹配结果。":
 		"Verified matching results will appear here after escrow is confirmed.",
+	"平台正在为该阶段生成真实候选与履约证据，请稍后刷新。":
+		"The platform is generating real candidates and delivery evidence for this stage. Refresh shortly.",
 	"最终分配的执行 Agent": "Assigned execution Agent",
 	"正在查看候选 Agent": "Viewing candidate Agent",
 	"候选，尚未分配": "Candidate, not assigned",
@@ -179,6 +189,7 @@ export const EN_MESSAGES = {
 	任务记录完整可追踪: "Complete, traceable task history",
 	链上确认: "Onchain confirmation",
 	完成后自动开始匹配: "Matching starts automatically",
+	"完成后派发已选 Agent": "Dispatches selected Agents when complete",
 	"100%": "100%",
 	状态变更可追溯: "Traceable state changes",
 	"3 个阶段": "3 stages",
@@ -193,6 +204,14 @@ export const EN_MESSAGES = {
 	清楚描述任务: "Define the task clearly",
 	"填写目标、预算、交付物和验收标准，发布前先看完整费用预览。":
 		"Set the goal, budget, deliverable, and acceptance criteria, then review the full cost before posting.",
+	"填写标题、分类、标签、预算参考和截止日期，平台据此拆分正式工作流。":
+		"Add a title, category, tags, planning budget, and deadline so the platform can build the formal workflow.",
+	"比较并选择 Agent": "Compare and choose Agents",
+	"从综合、质量和性价比视角核对履约证据；全部选完后确认准确总价。":
+		"Review delivery evidence from overall, quality, and value perspectives, then confirm the exact total after every stage is selected.",
+	"托管、执行与验收": "Escrow, execution, and approval",
+	"确认 USDC 托管后按依赖派发。你可以追踪交付、验收、要求返工或发起争议。":
+		"After USDC escrow is confirmed, work is dispatched by dependency. Track delivery, approve, request rework, or open a dispute.",
 	"托管并匹配 Agent": "Secure funds and match an Agent",
 	"资金确认后才进入匹配；平台按能力、状态、预算和历史质量过滤候选。":
 		"Matching begins after funding is confirmed. Candidates are filtered by capability, availability, budget, and verified history.",
@@ -222,13 +241,17 @@ export const EN_MESSAGES = {
 	"可验证的 Agent 协作网络": "A verifiable Agent collaboration network",
 	"从发布任务开始，走完托管、匹配、执行与验收":
 		"From task posting to escrow, matching, execution, and approval",
+	"从发布任务开始，完成选人、托管、执行与验收":
+		"From posting through Agent selection, escrow, execution, and approval",
 	"安全派发、资金托管、过程追踪与人工验收共同保障交付，每一步都有状态和证据可查。":
 		"Secure dispatch, escrow, progress tracking, and human approval protect delivery, with inspectable state and evidence at every step.",
+	"可解释推荐、准确报价、资金托管、过程追踪与人工验收共同保障交付，每一步都有状态和证据可查。":
+		"Explainable recommendations, exact quotes, escrow, progress tracking, and human approval protect delivery with inspectable evidence at every step.",
 	"任务、预算与状态清晰可见": "Clear tasks, budgets, and status",
 	发现等待执行的: "Discover execution-ready",
 	真实任务: "real tasks",
-	"发现正在寻找 Agent 的公开任务。草稿、待托管任务、附件、发布者身份与私密验收内容不会出现在这里。":
-		"Discover public tasks currently looking for Agents. Drafts, unfunded tasks, attachments, client identity, and private acceptance details never appear here.",
+	"发现正在寻找 Agent 的公开任务。平台不会公开附件、发布者身份与私密验收内容。":
+		"Discover public tasks looking for Agents. Attachments, client identity, and private approval details stay hidden.",
 	公开任务: "Public tasks",
 	匹配与执行中: "Matching & executing",
 	"待处理 / 争议": "Action needed / disputed",
@@ -238,24 +261,26 @@ export const EN_MESSAGES = {
 	搜索任务: "Search tasks",
 	按任务分类筛选: "Filter by task category",
 	全部分类: "All categories",
-	输入精确标签: "Enter an exact tag",
-	按任务标签筛选: "Filter by task tag",
 	按任务状态筛选: "Filter by task status",
 	全部交易状态: "All transaction states",
 	任务市场统计暂时不可用: "Marketplace metrics are temporarily unavailable",
 	任务列表暂时不可用: "Task list is temporarily unavailable",
 	重新加载: "Reload",
 	"{count} 个结果": "{count} results",
+	列表分页: "List pagination",
+	上一页: "Previous",
+	下一页: "Next",
+	"第 {page} 页": "Page {page}",
+	"第 {page} / {total} 页": "Page {page} of {total}",
 	未分类: "Uncategorized",
 	没有匹配的任务: "No matching tasks",
-	"调整关键词、分类、标签或交易状态后重试。":
-		"Adjust the keyword, category, tag, or transaction state and try again.",
+	"调整关键词、分类或交易状态后重试。":
+		"Adjust the keyword, category, or transaction state and try again.",
 	预算上限: "Maximum budget",
 	截止时间: "Deadline",
 	所需能力: "Required capability",
 	"发布于 {date}": "Posted {date}",
-	任务周期: "Task window",
-	"约 {count} 天": "About {count} days",
+	"任务周期约 {count} 天": "Approx. {count}-day task window",
 	查看任务: "View task",
 	正在加载任务市场: "Loading task marketplace",
 	"能力、质量与成本透明可比": "Transparent capability, quality, and cost",
@@ -278,14 +303,19 @@ export const EN_MESSAGES = {
 		"Adjust the capability category or search terms and try again.",
 	已通过平台审核: "Platform reviewed",
 	受控上线: "Controlled rollout",
+	新入驻: "New",
 	暂无: "N/A",
 	"{count} 份评分": "{count} ratings",
 	"{count} 次完成": "{count} completions",
 	正常: "Healthy",
 	异常: "Degraded",
 	待探测: "Pending",
+	可用: "Available",
+	待检测: "Pending",
+	服务状态: "Service status",
 	最近健康状态: "Latest health",
 	参考报价: "Reference price",
+	单次服务价: "Price per service",
 	计费方式: "Pricing model",
 	按任务计费: "Per task",
 	自定义计费: "Custom pricing",
@@ -312,8 +342,7 @@ export const EN_MESSAGES = {
 	进入管理: "Open workspace",
 	钱包资产: "Wallet assets",
 	链上实时余额: "Live onchain balances",
-	当前钱包网络: "Current wallet network",
-	钱包网络未连接: "Wallet network disconnected",
+	"当前交易网络 {network}": "Current transaction network: {network}",
 	刷新钱包余额: "Refresh wallet balances",
 	任务结算: "Task settlement",
 	"DAO 激励": "DAO incentives",
@@ -329,6 +358,11 @@ export const EN_MESSAGES = {
 	"只读链上数据，不会触发签名或交易。":
 		"Read-only onchain data. No signature or transaction will be requested.",
 	争议与仲裁: "Disputes & Arbitration",
+	争议处理: "Dispute Resolution",
+	"查看争议证据、托管资金和处理进度，确保每次处理可追溯。":
+		"Review dispute evidence, escrowed funds, and resolution progress with a complete audit trail.",
+	"查看与当前钱包相关的争议卷宗、资金冻结状态和仲裁进度；裁决操作仅向有权限的仲裁成员开放。":
+		"Review disputes related to the connected wallet, including frozen funds and arbitration progress. Decisions remain restricted to authorized arbitrators.",
 	"我的 Agent": "My Agents",
 	发布新任务: "Post new task",
 	全部任务: "All tasks",
@@ -349,6 +383,8 @@ export const EN_MESSAGES = {
 	还没有发布任务: "You have not posted a task yet",
 	"创建第一个任务即可开始托管、匹配和执行流程。":
 		"Create your first task to begin escrow, matching, and execution.",
+	"创建第一个任务即可开始工作流规划、Agent 选择、托管和执行。":
+		"Create your first task to begin workflow planning, Agent selection, escrow, and execution.",
 	公开: "Public",
 	私密: "Private",
 	私密任务: "Private task",
@@ -396,13 +432,13 @@ export const EN_MESSAGES = {
 	返回任务市场: "Back to Task Marketplace",
 	发布一项: "Post a",
 	可验证任务: "verifiable task",
-	"任务会先保存为正式草稿，通过服务端校验后进入待托管状态。":
-		"The task is first saved as a production draft, then moves to awaiting escrow after server validation.",
-	发布你的需求: "Post your request",
+	发布你的: "Post your",
+	需求: "request",
 	"告诉我们你想完成什么，平台会为你推荐合适的 Agent。":
 		"Tell us what you want to accomplish, and we’ll recommend the right Agents.",
 	填写需求: "Describe request",
 	托管预算: "Escrow budget",
+	"托管 USDC": "Fund USDC escrow",
 	"选择 Agent": "Select Agent",
 	任务基础信息: "Task basics",
 	先说清楚要完成什么: "Start with the outcome",
@@ -522,13 +558,14 @@ export const EN_MESSAGES = {
 		"Your budget is protected by escrow and paid to the Agent only after approval.",
 	"这是你愿意托管的最高金额，已包含平台服务费，不会额外加收。":
 		"This is the maximum amount you are willing to escrow. It includes the platform service fee, with no extra platform charge.",
+	"预算用于规划工作流和比较报价；选完所有阶段的 Agent 后，平台才展示准确托管总额。":
+		"The budget guides workflow planning and quote comparison. The exact escrow total appears after you select an Agent for every stage.",
 	"例如：50": "Example: 50",
 	"截止时间至少晚于当前时间 30 分钟；最终校验使用服务端时间。":
 		"The deadline must be at least 30 minutes away. Final validation uses server time.",
 	请选择截止日期: "Select a deadline",
 	选择截止日期: "Choose a deadline",
-	"选择预计完成日期，当天结束前均可交付。":
-		"Choose the expected completion date. Delivery is due by the end of that day.",
+	所选日期当天结束前均可交付: "Delivery is due by the end of the selected day.",
 	所选日期当天结束前为交付截止时间:
 		"Delivery is due by the end of the selected day",
 	"选择 {date}": "Choose {date}",
@@ -543,9 +580,6 @@ export const EN_MESSAGES = {
 	我来选择: "I will choose",
 	"查看候选的质量、成本和时长后确认":
 		"Review candidate quality, cost, and duration before confirming",
-	平台自动分配: "Platform auto-assignment",
-	"中间阶段自动推进，最终交付由你验收":
-		"Intermediate stages advance automatically; you approve the final delivery",
 	"平台会在预算内选择最合适的候选；没有合适结果时再由你选择。":
 		"The platform selects the best candidate within budget. If none is suitable, you choose instead.",
 	结果验收: "Result approval",
@@ -561,6 +595,8 @@ export const EN_MESSAGES = {
 	可见范围: "Visibility",
 	"托管后进入市场，不展示附件、身份和私密验收信息":
 		"Listed after escrow without attachments, identity, or private acceptance details",
+	"发布后可在任务市场展示，不公开附件、身份和私密验收信息":
+		"Listed in the marketplace after posting without exposing attachments, identity, or private approval details",
 	"仅发布者、已分配 Agent 和平台可信边界可见":
 		"Visible only to the client, assigned Agent, and trusted platform boundary",
 	"草稿已安全保存：{id}": "Draft safely saved: {id}",
@@ -586,12 +622,12 @@ export const EN_MESSAGES = {
 	手动选择候选: "Manual candidate selection",
 	验收方式: "Approval mode",
 	发布者人工验收: "Client human approval",
-	"本按钮只创建并提交任务，不会直接广播链上交易。托管仍在任务详情页单独确认。":
-		"This action only creates and submits the task. It does not broadcast an onchain transaction; escrow is confirmed separately on the task page.",
-	"发布需求不会立即付款。确认预算后，平台才会开始匹配 Agent。":
-		"Posting a request does not charge you immediately. Matching begins after you confirm the budget.",
-	"发布需求后，在任务详情页确认 USDC 托管。资金进入托管合约并完成链上确认后才开始匹配，验收前不会支付给 Agent。":
-		"After posting, confirm USDC escrow on the task page. Matching starts only after the funds enter the escrow contract and receive onchain confirmation; the Agent is not paid before approval.",
+	执行流程: "Workflow",
+	发布后自动拆分: "Auto-planned after posting",
+	最终验收: "Final approval",
+	最终交付由你确认: "You approve the final delivery",
+	"选择 Agent 后确认报价并托管 USDC":
+		"Choose Agents, confirm the quote, then fund USDC escrow.",
 	正在保存草稿: "Saving draft",
 	正在准备任务: "Preparing your request",
 	正在提交任务: "Submitting task",
@@ -599,26 +635,32 @@ export const EN_MESSAGES = {
 	确认并发布任务: "Confirm and post task",
 	发布需求: "Post request",
 	发布并继续托管: "Post and continue to escrow",
+	"发布并选择 Agent": "Post and choose Agents",
 	连接钱包后发布: "Connect wallet to post",
 	所有业务写入都绑定已验证的钱包会话:
 		"Every business write is bound to a verified wallet session",
-	所有操作都会与你当前连接的钱包绑定:
-		"Every action is bound to your connected wallet",
 	发布检查: "Posting checks",
-	发布保障: "Posting protection",
 	"USDC 金额以十进制最小单位字符串传输":
 		"USDC value is transmitted as an exact decimal minor-unit string",
 	预算金额会被精确记录: "Your budget is recorded precisely",
-	发布前会自动整理并检查需求:
-		"Your request is organized and checked automatically before posting",
 	重复请求使用幂等键重放: "Repeated requests replay through idempotency keys",
-	重复点击不会创建多个任务: "Repeated clicks will not create duplicate tasks",
 	"服务端再次校验分类、标签和截止时间":
 		"The server revalidates category, tags, and deadline",
 	"发布前会检查分类、标签和截止时间":
 		"Category, tags, and deadline are checked before posting",
 	预算: "Budget",
 	返回工作台: "Back to Workspace",
+	删除任务: "Delete task",
+	"确认删除这个任务？": "Delete this task?",
+	"任务将从市场和工作台移除；工作流与审计记录会被安全保留。":
+		"The task will be removed from the marketplace and workspace. Workflow and audit records will be retained safely.",
+	确认删除: "Confirm deletion",
+	发布时的需求记录: "Original task record",
+	"原始记录，不是 Agent 产物": "Original record, not Agent output",
+	补充说明: "Additional context",
+	"发布时未填写补充说明，需求整理 Agent 会从任务标题开始澄清。":
+		"No additional context was provided at publication. The requirements Agent will clarify the task from its title.",
+	平台预设的验收要点: "Platform baseline acceptance points",
 	"Agent 审核台": "Agent Review Desk",
 	"核对提供者资料、服务可用性和上架条件。审核权限由平台统一验证，普通用户无法进入审核流程。":
 		"Review provider information, service availability, and listing requirements. Review access is verified by the platform and is unavailable to regular users.",
@@ -641,12 +683,22 @@ export const EN_MESSAGES = {
 	市场资料: "Marketplace profile",
 	"这些信息用于候选匹配与 Agent 市场展示":
 		"Used for candidate matching and the Agent Marketplace",
-	"仅用于服务验证与异常通知，不会在市场公开。":
-		"Used only for service verification and incident notifications; never shown publicly.",
 	服务接入: "Service integration",
 	"填写平台调用 Agent 时使用的地址和访问密钥":
 		"Enter the service URL and access key the platform will use to call your Agent",
 	查看接入示例: "View integration example",
+	测试连接: "Test connection",
+	"测试中…": "Testing…",
+	连接状态: "Connection status",
+	连接成功: "Connected",
+	尚未测试: "Not tested",
+	"Agent 执行地址不能为空": "Agent execution endpoint is required",
+	"请先测试 Agent 连接，确认服务可用后再提交":
+		"Test the Agent connection and confirm availability before submitting.",
+	"填写完成后测试连接，确认平台可以访问你的 Agent。":
+		"Test the connection when ready to confirm the platform can reach your Agent.",
+	"正在检查 Agent 服务…": "Checking the Agent service…",
+	"连接成功，响应耗时 {latency} ms": "Connected · {latency} ms response time",
 	"平台会向该地址派发任务，并自动检查服务是否正常运行。":
 		"The platform dispatches tasks to this URL and automatically checks that the service is available.",
 	报价与收款: "Pricing & payout",
@@ -662,38 +714,29 @@ export const EN_MESSAGES = {
 		"Defaults to your signed-in wallet. You may enter another wallet that supports the current network asset.",
 	"提交后，平台将自动检查服务连通性和接入要求。":
 		"After submission, the platform automatically checks service availability and integration requirements.",
-	上架前只需准备三样: "Prepare just three things",
-	平台可访问的服务地址: "A service URL accessible to the platform",
-	用于接收任务并报告运行状态: "Receives tasks and reports service availability",
-	用于验证平台请求的访问密钥: "An access key that verifies platform requests",
-	"防止未经授权的请求调用 Agent":
-		"Prevents unauthorized requests from calling the Agent",
-	已连接的钱包: "A connected wallet",
-	作为提供者身份与收款地址: "Acts as provider identity and payout address",
-	"用于确认 Agent 所有者身份": "Confirms the Agent owner's identity",
-	"AICP 接入示例": "AICP integration example",
-	"可直接使用的 AICP 接入模板": "Ready-to-use AICP integration template",
-	"实现两个端点，并对每次正式调用校验签名与幂等键。":
-		"Implement two endpoints and verify the signature and idempotency key on every production call.",
-	"复制为 server.ts，设置共享密钥后即可启动并接收平台任务。":
-		"Copy this as server.ts, set the shared secret, and start receiving platform tasks.",
-	"无需 Web 框架，保存后运行 npx tsx server.ts":
-		"No web framework required. Save it and run npx tsx server.ts",
-	复制完整代码: "Copy full code",
+	"快速接入你的 Agent": "Connect your Agent quickly",
+	"保留现有 Agent，只需让执行地址接收任务并返回交付结果。":
+		"Keep your existing Agent. Its endpoint only needs to receive tasks and return deliverables.",
+	"保留现有 Agent": "Keep your existing Agent",
+	无需更换模型或重写执行逻辑: "No model change or execution rewrite required",
+	返回交付结果: "Return deliverables",
+	按示例返回产物类型与内容: "Return artifact types and content as shown",
+	填写接入信息: "Enter connection details",
+	"填写地址，按需填写访问密钥":
+		"Enter the endpoint and add an access key only when needed",
+	"已有 Agent 只需暴露一个可访问的执行地址":
+		"Your existing Agent only needs one reachable execution endpoint",
+	"提供执行地址，并在同域开放 /healthz":
+		"Provide the execution endpoint and expose /healthz on the same origin",
+	复制接入模板: "Copy integration template",
+	"平台负责任务状态、重试和产物保存；Agent 只需完成任务并返回结果。":
+		"The platform handles task state, retries, and artifact storage; the Agent only completes the task and returns results.",
 	代码已复制: "Code copied",
 	"复制失败，请选中代码手动复制。":
 		"Copy failed. Select the code and copy it manually.",
 	关闭接入示例: "Close integration example",
-	"1. 健康检查": "1. Health check",
-	"2. 正式任务端点": "2. Production task endpoint",
-	"3. HMAC 签名基串": "3. HMAC signature base string",
-	"注意：": "Note: ",
-	"上线前：": "Before production: ",
-	"模板中的 Nonce 与幂等记录存放在内存中。正式部署请改用 Redis 或数据库，并先把任务持久化再返回 202。":
-		"The template stores nonces and idempotency records in memory. For production, use Redis or a database and persist the task before returning 202.",
 	"服务地址不是钱包地址。它必须是你的 Agent 后端可公开访问的 HTTPS 请求地址。":
 		"The service endpoint is not a wallet address. It must be a publicly accessible HTTPS endpoint for your Agent backend.",
-	"两步上架你的 Agent": "List your Agent in two steps",
 	"先连接执行地址与签名密钥，再确认能力和报价。提交后平台会进行协议检查与准入审核。":
 		"Connect an execution endpoint and signing key, then confirm capabilities and pricing. The platform performs protocol checks and admission review after submission.",
 	"查看审核与健康状态，维护配置，并通过受控生命周期操作管理是否接单。":
@@ -707,7 +750,6 @@ export const EN_MESSAGES = {
 	"Agent 上架步骤": "Agent listing steps",
 	"连接 Agent": "Connect Agent",
 	确认上架信息: "Confirm listing details",
-	"第 1 步，共 2 步": "Step 1 of 2",
 	"先连接你的 Agent": "Connect your Agent first",
 	"只需执行地址和双方共享的签名密钥，其他资料下一步再确认。":
 		"Start with the execution endpoint and a shared signing secret. Confirm the remaining details in the next step.",
@@ -717,13 +759,18 @@ export const EN_MESSAGES = {
 	访问密钥: "Access key",
 	"粘贴与 Agent 配置一致的访问密钥":
 		"Paste the access key configured in your Agent",
-	"提交后无法查看明文，只能整体替换。":
-		"The plaintext cannot be viewed after submission; the secret can only be replaced.",
+	"如 Agent 需要鉴权，请填写访问密钥":
+		"Enter an access key only if your Agent requires authentication",
+	"公开 Agent 可以留空；填写后会加密保存，提交后不再显示明文。":
+		"Leave this blank for a public Agent. If provided, the key is encrypted and its plaintext is hidden after submission.",
+	"连接测试通过后即可提交；平台上架后会持续记录服务运行状态。":
+		"Submit after the connection test passes. The platform will continue monitoring service status after listing.",
+	"访问密钥会加密保存，提交后不再显示明文；修改时请整体替换。":
+		"The access key is stored encrypted and its plaintext is hidden after submission; replace the entire key to update it.",
 	"接入前确认：": "Before connecting: ",
 	"Agent 能校验 AICP v1 签名、幂等键与 Nonce，并能回调接单、进度和结果。":
 		"the Agent must verify AICP v1 signatures, idempotency keys, and nonces, and send acceptance, progress, and result callbacks.",
 	继续填写上架信息: "Continue to listing details",
-	"第 2 步，共 2 步": "Step 2 of 2",
 	确认市场档案与报价: "Confirm marketplace profile and pricing",
 	"这些信息会用于匹配和市场展示。":
 		"These details are used for matching and marketplace presentation.",
@@ -732,7 +779,6 @@ export const EN_MESSAGES = {
 	"例如：前端代码生成 Agent": "Example: Frontend Code Agent",
 	能力分类: "Capability category",
 	正在加载分类: "Loading categories",
-	联系邮箱: "Contact email",
 	收款钱包: "Payout wallet",
 	能力说明: "Capability description",
 	"说明最擅长完成什么任务，以及交付物形式。":
@@ -741,10 +787,8 @@ export const EN_MESSAGES = {
 	"使用逗号分隔，平台据此筛选候选。":
 		"Separate tags with commas; the platform uses them to filter candidates.",
 	"单次服务报价（USDC）": "Per-service quote (USDC)",
-	"Agent 每完成一次匹配需求的基础报价；成功结算时平台服务费从该收入中扣除。":
-		"The base quote for each matched request the Agent completes. The platform service fee is deducted from this income upon successful settlement.",
-	"你的报价是发布者看到的成交金额；平台服务费仅在成功结算时从 Agent 收入中扣除，最终明细会在验收前展示。":
-		"Your quote is the agreed amount shown to the client. The platform service fee is deducted from Agent earnings only after successful settlement, with the final breakdown shown before approval.",
+	"发布者将看到此报价；平台服务费从成功结算的收入中扣除。":
+		"Clients see this quote; the platform service fee is deducted only from successfully settled earnings.",
 	"例如：25": "Example: 25",
 	"金额会按 USDC 的 6 位精度无损保存；当前默认固定按任务计价。":
 		"The amount is stored losslessly at USDC's six-decimal precision. Fixed per-task pricing is currently the default.",
@@ -757,17 +801,10 @@ export const EN_MESSAGES = {
 	"提交成功，等待平台验证，": "Submitted and awaiting platform verification. ",
 	继续配置: "Continue setup",
 	"（可重试）": " (retryable)",
-	两步完成: "Two steps",
 	"先连接，再确认资料": "Connect first, then confirm details",
 	执行地址和共享密钥: "Execution endpoint and shared secret",
 	提交市场档案: "Submit marketplace profile",
 	"能力、报价和收款钱包": "Capabilities, pricing, and payout wallet",
-	凭证安全: "Credential security",
-	"访问密钥会加密保存。": "Access keys are stored encrypted.",
-	"平台不会公开或返回密钥明文。":
-		"The platform never exposes or returns the plaintext key.",
-	"如需修改，只能使用新密钥整体替换。":
-		"To change it, replace the existing key with a new one.",
 	请检查输入内容: "Check the input and try again.",
 	"Agent Lab 返回了无法识别的数据": "Agent Lab returned unrecognized data.",
 	"Agent Lab 请求失败，请确认 Web 服务仍在运行":
@@ -849,8 +886,8 @@ export const EN_MESSAGES = {
 	"只有审核通过且可接单的 Agent 才会出现在市场，服务地址和提供者敏感信息不会公开。":
 		"Only reviewed Agents that can accept work appear in the marketplace. Service URLs and sensitive provider information remain private.",
 	评分样本可追溯: "Traceable rating evidence",
-	"当前没有正式评分快照，平台明确显示为空。":
-		"No production rating snapshot exists yet, so the platform explicitly shows no score.",
+	"当前没有真实用户评分，平台不会用冷启动分数补位。":
+		"No verified user ratings yet. Cold-start scores are never shown as rating evidence.",
 	"规则 {rule} 固化了 {ratings} 条评分、{tasks} 个已完成任务和 {decisions} 条仲裁决定。":
 		"Rule {rule} records {ratings} ratings, {tasks} completed tasks, and {decisions} arbitration decisions.",
 	持续健康探测: "Continuous health monitoring",
@@ -1026,6 +1063,7 @@ export const EN_MESSAGES = {
 	"先规划实现范围，再生成可运行代码制品。":
 		"Plan implementation scope before generating a runnable code artifact.",
 	"规划测试修复 Coding Agent": "Plan-Test-Repair Coding Agent",
+	"可靠前端开发 Agent": "Reliable Frontend Development Agent",
 	"规划、编码、静态评审并最多修复一次。":
 		"Plan, code, statically review, and apply up to one repair pass.",
 	设计: "Design",
@@ -1171,8 +1209,14 @@ export const EN_MESSAGES = {
 	资金正在链上确认: "Funds awaiting onchain confirmation",
 	"确认完成后将自动开始匹配；链重组会触发回退或人工复核。":
 		"Matching starts automatically after confirmation. A chain reorganization triggers rollback or manual review.",
+	"确认完成后将按依赖顺序派发已选 Agent；链重组会触发回退或人工复核。":
+		"After confirmation, selected Agents are dispatched in dependency order. A chain reorganization triggers rollback or manual review.",
 	托管需要人工复核: "Escrow requires manual review",
 	检测到链上状态不一致: "Onchain state mismatch detected",
+	托管结果需要核实: "Escrow result requires verification",
+	检测到交易哈希或链上记录: "Transaction hash or onchain record detected",
+	"平台不会清除已有交易信息或重新发送资金。请先确认原交易最终状态，再决定继续登记、退款或人工处理。":
+		"The platform will not clear existing transaction information or resend funds. Verify the original transaction's final state before continuing registration, refund, or manual recovery.",
 	"资金操作已冻结，完成对账前不会继续。":
 		"Fund operations are frozen until reconciliation completes.",
 	"交易已广播 · 等待平台登记": "Transaction broadcast · awaiting registration",
@@ -1196,8 +1240,19 @@ export const EN_MESSAGES = {
 		"The platform service fee has a {minimum} minimum and is deducted from Agent earnings only after successful settlement. The publisher is not charged beyond the escrow amount.",
 	重新开始托管: "Restart escrow",
 	"开始托管 {amount}": "Start escrow for {amount}",
+	"确认 MetaMask 中没有待处理的存入交易":
+		"Confirm there is no pending deposit in MetaMask",
+	"平台尚未记录 Deposit 交易。继续前，请确认 MetaMask 中没有待确认或已提交但页面尚未登记的 USDC 存入交易；Approve 只保留授权额度，不会扣款。":
+		"The platform has no recorded Deposit transaction. Before continuing, confirm MetaMask has no pending or submitted USDC deposit that the page has not recorded. Approve only preserves allowance and does not charge funds.",
+	"继续保留当前 Agent": "Keep the current Agent",
+	"确认并查看候选 Agent": "Confirm and view Agent candidates",
 	托管操作未完成: "Escrow operation did not complete",
 	"等待 MetaMask 返回结果": "Waiting for MetaMask",
+	正在准备托管交易: "Preparing escrow transaction",
+	"正在完成 USDC 授权": "Completing USDC approval",
+	"请在 MetaMask 确认存入": "Confirm the deposit in MetaMask",
+	正在登记托管交易: "Recording escrow transaction",
+	正在处理托管: "Processing escrow",
 	任务预算: "Task budget",
 	正在生成候选: "Generating candidates",
 	匹配记录尚未就绪: "Match record not ready",
@@ -1237,6 +1292,9 @@ export const EN_MESSAGES = {
 	未满足平台硬约束: "Platform hard constraint not met",
 	需要发布者补充信息: "Client input required",
 	"Agent 正在处理返工": "Agent is handling revisions",
+	"返工已提交，等待 Agent 开始": "Revision submitted, waiting for the Agent",
+	"平台已受理返工请求；收到 Agent 的新签名进度回调后，才会显示正在执行。":
+		"The revision request is accepted. Execution appears only after a new signed progress callback arrives.",
 	"Agent 正在执行": "Agent is executing",
 	"正式回调进度 {progress}%": "Verified callback progress {progress}%",
 	"Agent 的问题": "Question from the Agent",
@@ -1470,7 +1528,6 @@ export const EN_MESSAGES = {
 	钱包地址: "Wallet address",
 	名称: "Name",
 	"分类 ID": "Category ID",
-	邮箱: "Email",
 	服务地址: "Service endpoint",
 	计价方式: "Pricing model",
 	"报价（最小单位整数）": "Price (integer minor units)",
@@ -1492,20 +1549,22 @@ export const EN_MESSAGES = {
 	"已替换（key_version {version}）": "Replaced (key_version {version})",
 	"多 Agent 执行图": "Multi-Agent execution graph",
 	"Agent 分配关系图": "Agent allocation graph",
-	"重新显示全部节点": "Show all nodes",
+	重新显示全部节点: "Show all nodes",
 	"展示任务阶段、候选 Agent 与最终分配结果；高亮连线表示已经正式选中的 Agent。":
 		"Shows task stages, candidate Agents, and final assignments. Highlighted connections represent formally selected Agents.",
+	"默认只展示每阶段已选 Agent；重新选择时才展开冻结候选。":
+		"Only the selected Agent for each stage is shown by default. Frozen candidates expand only when you choose to revise a selection.",
 	"多 Agent 执行进度": "Multi-Agent execution progress",
 	"按正式节点查看执行状态、真实进度和当前执行 Agent。":
 		"Review execution status, verified progress, and the active Agent for each formal stage.",
 	阶段交付与验收: "Stage delivery and approval",
 	"选择一个阶段查看完整产物，并进行返工或验收。":
 		"Choose a stage to review its full deliverable, request revisions, or approve it.",
-	里程碑结算记录: "Milestone settlement records",
-	"查看每个阶段的成交金额、服务费和资金释放状态。":
-		"Review each stage's agreed amount, service fee, and fund release status.",
+	统一结算记录: "Unified settlement record",
+	"查看每个阶段的成交金额、服务费和最终统一结算状态。":
+		"Review each stage's agreed amount, service fee, and final unified settlement status.",
 	"Agent 匹配与分配": "Agent matching and allocation",
-	里程碑结算: "Milestone settlement",
+	统一结算: "Unified settlement",
 	"等待该阶段分配 Agent": "Waiting for an Agent assignment",
 	"该阶段尚未产生正式分配结果，可返回候选列表重新匹配。":
 		"This stage has no formal assignment yet. Return to the candidate list to rematch.",
@@ -1539,6 +1598,53 @@ export const EN_MESSAGES = {
 	"Agent 正在整理需求与拆分任务":
 		"Agent is structuring requirements and breaking down tasks",
 	"Agent 正在生成界面设计": "Agent is producing the interface design",
+	界面设计生成失败: "Interface design generation failed",
+	代码生成失败: "Code generation failed",
+	需求整理失败: "Requirements processing failed",
+	"Agent 执行失败": "Agent execution failed",
+	"模型服务响应超时。本阶段未产生制品，可安全重试当前 Agent。":
+		"The model service timed out. No artifact was produced, so you can safely retry this Agent.",
+	"模型服务暂时不可用。本阶段未产生制品，请稍后重试当前 Agent。":
+		"The model service is temporarily unavailable. No artifact was produced; please retry this Agent shortly.",
+	"模型连续两次输出不完整，未通过制品校验。可重试当前 Agent，或更换实现策略。":
+		"The model returned incomplete output twice and artifact validation failed. Retry this Agent or choose another implementation.",
+	"模型输出未通过结构与安全校验，没有作为正式产物提交。可重试当前 Agent。":
+		"The model output failed structural and safety validation and was not submitted as an artifact. You can retry this Agent.",
+	"已验收的上游产物缺失或不符合本阶段输入契约，需要检查工作流数据后再重试。":
+		"An accepted upstream artifact is missing or violates this stage's input contract. Check the workflow data before retrying.",
+	"本阶段没有生成可验收产物，Coding 阶段尚未开始。":
+		"This stage produced no reviewable deliverable, so Coding has not started.",
+	"本次代码生成未通过产物验收，没有提交不可用代码。":
+		"This code generation did not pass artifact validation, so unusable code was not submitted.",
+	"本次界面设计未通过产物验收，没有提交不可用设计稿。":
+		"This interface design did not pass artifact validation, so an unusable design was not submitted.",
+	"本次需求整理未通过产物验收，没有提交不完整文档。":
+		"This requirements draft did not pass artifact validation, so an incomplete document was not submitted.",
+	"本次执行未通过产物验收，没有提交不可用结果。":
+		"This run did not pass artifact validation, so an unusable result was not submitted.",
+	"模型执行未能完成。可安全重试当前 Agent；若再次失败，再更换 Agent。":
+		"The model could not complete execution. You can safely retry this Agent; if it fails again, choose another Agent.",
+	"Agent 未能完成本阶段执行，请安全重试。":
+		"The Agent could not complete this stage. Please retry safely.",
+	失败阶段: "Failure stage",
+	需求文档生成: "Requirements draft",
+	设计稿生成: "Design draft",
+	页面结构生成: "Page structure",
+	页面样式生成: "Page styles",
+	"重试当前 Agent": "Retry current Agent",
+	"重试会复用当前托管与已验收上游，不会再次请求钱包交易。":
+		"Retry reuses the current escrow and accepted upstream work; no new wallet transaction is required.",
+	正在提交重新生成请求: "Submitting regeneration request",
+	"正在安全恢复当前阶段，不会重复托管或回退已验收上游。":
+		"Safely restoring this stage without duplicating escrow or reverting accepted upstream work.",
+	正在重新生成界面设计: "Regenerating the interface design",
+	正在重新生成代码: "Regenerating code",
+	正在重新整理需求: "Regenerating requirements",
+	"Agent 正在重新执行": "Agent is running again",
+	"平台已受理重新生成请求，正在等待 Agent 启动；收到新的签名进度后将显示真实进度。":
+		"The regeneration request is accepted and waiting for the Agent to start. Real progress will appear after a new signed progress update.",
+	重新生成中: "Regenerating",
+	"等待 Agent 启动": "Waiting for Agent to start",
 	"Agent 正在开发并验证代码": "Agent is developing and validating the code",
 	"已收到 Agent 的签名进度回调，正在准备可验收的阶段产物。":
 		"A signed progress callback has been received. The Agent is preparing a reviewable stage deliverable.",
@@ -1560,6 +1666,10 @@ export const EN_MESSAGES = {
 	"匹配 Agent": "Matching Agents",
 	已取消: "Cancelled",
 	"为该阶段选择 Agent": "Choose an Agent for this stage",
+	"重新选择该阶段 Agent": "Choose a different Agent for this stage",
+	取消重新选择: "Cancel reselection",
+	"当前选择仍然有效；确认新 Agent 后才会重算最终总价。":
+		"Your current selection remains active. The final total changes only after you confirm a different Agent.",
 	"候选只代表匹配结果；点击确认后才会锁定报价并正式派发。":
 		"Candidates are matching results only. Confirming locks the quote and formally dispatches the Agent.",
 	重新匹配该阶段: "Rematch this stage",
@@ -1567,6 +1677,72 @@ export const EN_MESSAGES = {
 		"No candidate Agents have been generated for this stage",
 	阶段报价: "Stage quote",
 	选择并派发: "Select and dispatch",
+	"已选择 Agent": "Selected Agents",
+	阶段预算参考: "Stage budget reference",
+	已冻结报价: "Frozen quote",
+	当前报价: "Current quote",
+	"等待该阶段选择 Agent": "Waiting for an Agent selection",
+	"该阶段尚未冻结 Agent 报价，可返回候选列表继续选择。":
+		"No Agent quote is frozen for this stage yet. Return to the candidates to choose one.",
+	"当前 Agent 和报价已选定；托管交易广播前仍可重新选择。":
+		"The current Agent and quote are selected. You can still change them before the escrow transaction is broadcast.",
+	"托管交易已经开始，当前 Agent 与报价不能再修改。":
+		"The escrow transaction has started, so the current Agent and quote can no longer be changed.",
+	"先比较真实履约证据并冻结报价；所有阶段选完后才计算总价和托管，不会提前派发。":
+		"Compare real delivery evidence and freeze a quote first. The platform calculates escrow only after all stages are selected, with no early dispatch.",
+	综合推荐: "Best overall",
+	当前选择: "Current selection",
+	"更换为此 Agent": "Switch to this Agent",
+	"正在更换…": "Switching…",
+	质量优先: "Quality first",
+	性价比优先: "Best value",
+	当前偏好排序: "Current preference rank",
+	任务匹配度: "Task fit",
+	相似任务完成: "Similar tasks completed",
+	按时交付率: "On-time delivery",
+	返工率: "Rework rate",
+	责任争议率: "Agent-fault dispute rate",
+	相关交付案例: "Relevant delivery cases",
+	平台已验证交付: "Platform-verified delivery",
+	"Agent 自行提供": "Agent-provided case",
+	查看案例: "View case",
+	交付案例: "Delivery cases",
+	可选: "Optional",
+	"添加案例，帮助用户提前了解 Agent 的实际交付效果。平台任务完成后，已验收交付会自动沉淀为平台验证案例。":
+		"Add cases to help users understand the Agent's real delivery quality. Accepted platform work will automatically become platform-verified cases.",
+	添加案例: "Add case",
+	"案例 {number}": "Case {number}",
+	"删除案例 {number}": "Remove case {number}",
+	案例标题: "Case title",
+	案例类型: "Case type",
+	公开预览地址: "Public preview URL",
+	案例说明: "Case description",
+	"例如：电商营销首页设计": "For example: ecommerce campaign landing page",
+	"说明这个案例解决了什么问题，以及最终交付结果。":
+		"Explain the problem this case solved and the final deliverable.",
+	公开案例: "Public cases",
+	文档: "Document",
+	图片: "Image",
+	视频: "Video",
+	网站: "Website",
+	代码: "Code",
+	其他: "Other",
+	冻结阶段报价: "Freeze stage quote",
+	"选择此 Agent": "Select this Agent",
+	"正在选择…": "Selecting…",
+	高置信度: "High confidence",
+	中等置信度: "Medium confidence",
+	低样本参考: "Low-sample reference",
+	履约完成: "Completion",
+	历史规模: "Delivery history",
+	报价已冻结: "Quote frozen",
+	"Agent 已选定": "Agent selected",
+	需要重新发布需求: "Republish required",
+	"该任务尚未冻结 Agent 与报价":
+		"Agents and quotes have not been locked for this task",
+	"该任务创建于新版多 Agent 工作流上线前，无法直接进入托管。请重新发布需求，平台会先拆分执行阶段、推荐 Agent，并在你完成选择后计算准确托管金额。":
+		"This task was created before the new multi-Agent workflow was introduced, so it cannot proceed directly to escrow. Republish the request so the platform can plan the execution stages, recommend Agents, and calculate the exact escrow amount after you finish selecting them.",
+	重新发布需求: "Republish request",
 	重新登录: "Sign in again",
 	"登录已过期，请重新签名登录":
 		"Your session has expired. Sign in with your wallet again.",
@@ -1575,6 +1751,186 @@ export const EN_MESSAGES = {
 	当前钱包不是任务发布者: "This wallet is not the task publisher",
 	"请使用发布这个任务的钱包重新登录，公开视图不会展示候选报价、托管、验收和交付内容。":
 		"Sign in with the wallet that published this task. The public view hides candidate quotes, escrow, approvals, and deliverables.",
+	"填写标题、服务分类和截止时间即可开始，补充说明可选":
+		"Add a title, service category, and deadline to get started. Additional context is optional.",
+	能力需求: "Capability requirements",
+	最终报价: "Final quote",
+	阶段价格偏好: "Stage price preference",
+	未设置: "Not set",
+	匹配偏好: "Matching preferences",
+	"先看价格区间，再决定预算上限":
+		"Review the price range before setting a budget limit",
+	"预算上限是可选的推荐偏好，不会立即扣款。所有阶段选完后，平台才按冻结报价计算准确托管金额。":
+		"The budget limit is an optional recommendation preference and does not charge you. Escrow is calculated from locked quotes only after every stage is selected.",
+	当前候选组合区间: "Current candidate combination range",
+	候选生成中: "Generating candidates",
+	"期望总预算上限（可选）": "Preferred total budget limit (optional)",
+	"例如：100": "For example: 100",
+	"预算上限须在 1–100,000 USDC 之间，最多保留 6 位小数":
+		"The budget limit must be between 1 and 100,000 USDC with up to 6 decimal places.",
+	"已有阶段选定 Agent，预算偏好已锁定，避免改变正在确认的报价。":
+		"An Agent has already been selected, so the budget preference is locked to protect the quotes being confirmed.",
+	"该上限低于当前最低组合，平台会优先寻找低成本候选；仍不足时可调整需求范围。":
+		"This limit is below the current lowest combination. The platform will prioritize lower-cost candidates; adjust the scope if it is still insufficient.",
+	"留空时按质量与价格平衡推荐，可随时重新匹配。":
+		"Leave this blank for a balanced quality-and-price recommendation. You can rematch at any time.",
+	应用预算并重新推荐: "Apply budget and refresh recommendations",
+	平台识别的能力需求: "Platform-identified capability requirements",
+	当前阶段按服务分类和任务描述匹配:
+		"This stage is matched by service category and task description",
+	"识别不准确时可调整；能力只影响推荐排序，不会直接淘汰候选。":
+		"Adjust anything that looks inaccurate. Capabilities influence ranking but do not automatically exclude candidates.",
+	调整能力: "Adjust capabilities",
+	"移除能力 {tag}": "Remove capability {tag}",
+	请输入需要补充的能力: "Enter a capability to add",
+	"每个能力最多 {count} 个字符":
+		"Each capability can contain up to {count} characters",
+	能力名称不能包含逗号或控制字符:
+		"Capability names cannot contain commas or control characters",
+	"最多保留 {count} 项能力": "Keep up to {count} capabilities",
+	"搜索平台能力，或输入自定义能力":
+		"Search platform capabilities or enter a custom capability",
+	"可从平台建议中选择，也可以补充更具体的技术、风格或专业能力。":
+		"Choose a platform suggestion or add a more specific technical, style, or professional capability.",
+	"已保留 {count}/{max} 项": "{count}/{max} capabilities selected",
+	保存并重新推荐: "Save and refresh recommendations",
+	"能力标签用于解释排序，不会因为某个标签未命中就直接淘汰候选。":
+		"Capability tags explain ranking and do not eliminate a candidate solely because one tag is missing.",
+	已匹配能力: "Matched capabilities",
+	暂无标签证据: "No tag evidence yet",
+	尚未覆盖: "Not yet covered",
+	当前能力均有标签证据: "All current capabilities have tag evidence",
+	"预算参考 {amount}": "Budget reference {amount}",
+	"已选报价 {amount}": "Selected quote {amount}",
+	待选择后确认: "Confirmed after selection",
+	待确认: "Pending confirmation",
+	"AGENT 交付反馈": "AGENT DELIVERY FEEDBACK",
+	评价每个阶段的实际交付: "Review each stage's actual delivery",
+	"评分会进入 Agent 的真实接单历史；经你单独许可的文字反馈才会在脱敏后用于模型改进。":
+		"Ratings become part of the Agent's verified delivery history. Written feedback is used for model improvement only after your separate consent and anonymization.",
+	需求理解准确: "Understood the requirements",
+	交付质量高: "High-quality delivery",
+	设计还原到位: "Strong design fidelity",
+	结果易于使用: "Easy to use",
+	沟通清晰: "Clear communication",
+	执行效率高: "Efficient execution",
+	当前评价: "Current review",
+	已验收交付: "Accepted delivery",
+	"这次 Agent 做得好的地方": "What this Agent did well",
+	"交付反馈（选填）": "Delivery feedback (optional)",
+	"希望改进的地方（选填）": "Suggested improvements (optional)",
+	"例如：页面结构清晰，交互可以直接体验。":
+		"For example: The page structure is clear and the interactions are ready to try.",
+	"例如：移动端间距可以更紧凑。":
+		"For example: Mobile spacing could be more compact.",
+	允许将这条文字反馈用于模型改进:
+		"Allow this written feedback to be used for model improvement",
+	"平台只使用脱敏后的反馈文字和评价标签，不包含任务正文、附件、钱包地址或密钥。":
+		"The platform uses only anonymized feedback text and review tags—not task content, attachments, wallet addresses, or secrets.",
+	"同意用于模型改进时，请至少填写 4 个字的交付反馈。":
+		"Write at least four characters of delivery feedback before allowing model improvement use.",
+	提交该阶段反馈: "Submit feedback for this stage",
+	该阶段反馈已记录: "Feedback for this stage has been recorded",
+	"已授权：脱敏文字可用于模型改进":
+		"Authorized: anonymized text may be used for model improvement",
+	"未授权用于模型训练；评分仍用于 Agent 履约记录":
+		"Not authorized for model training; ratings still count toward the Agent's delivery record",
+	"{label} {score} 分": "{label}: {score} stars",
+	"DAO 数据加载失败": "Failed to load DAO data",
+	"DAO 成员操作失败": "DAO membership action failed",
+	让交付争议由: "Let delivery disputes be resolved by",
+	可信共识: "trusted consensus",
+	裁决: "adjudication",
+	"质押 YD 成为仲裁候选成员。系统会排除任务双方，随机组成独立小组；多数票形成裁决后，USDC 才会退款或原子分配。":
+		"Stake YD to become an arbitration candidate. The system excludes all task participants and randomly forms an independent panel. USDC is refunded or atomically distributed only after a majority decision.",
+	"连接钱包查看 DAO 身份": "Connect your wallet to view your DAO identity",
+	"成员资格与仲裁案件都绑定签名钱包，连接后才能读取或质押 YD。":
+		"Membership and arbitration cases are bound to your signed wallet. Connect it to view your status or stake YD.",
+	"DAO 服务暂时不可用": "DAO service is temporarily unavailable",
+	仲裁成员资格: "Arbitrator membership",
+	已具备仲裁资格: "Eligible to arbitrate",
+	退出冷静期: "Exit cooldown",
+	尚未加入: "Not joined",
+	"已质押 YD": "YD staked",
+	资格门槛: "Eligibility threshold",
+	待处理案件: "Open cases",
+	"冷静期已结束，可以取回全部 YD":
+		"The cooldown has ended. You can withdraw all YD.",
+	"可于 {date} 后取回全部 YD": "You can withdraw all YD after {date}",
+	管理你的成员身份: "Manage your membership",
+	质押至成员门槛: "Stake up to the membership threshold",
+	"退出请求提交后会立即停止新分案，YD 在冷静期结束前仍保持锁定。":
+		"Submitting an exit request immediately stops new case assignments. YD remains locked until the cooldown ends.",
+	"钱包会先授权所需 YD，再提交质押。只有服务端核验链上事件后才会获得资格。":
+		"Your wallet first approves the required YD and then submits the stake. Eligibility is granted only after the server verifies the onchain event.",
+	"申请退出 DAO": "Request DAO exit",
+	"取回 YD": "Withdraw YD",
+	取消退出: "Cancel exit",
+	"质押并加入 DAO": "Stake and join the DAO",
+	补足质押并加入: "Top up and join",
+	"DAO 合约": "DAO contract",
+	我的仲裁案件: "My arbitration cases",
+	"这里只显示随机分配给当前钱包且已排除利益冲突的案件。":
+		"Only cases randomly assigned to this wallet after conflict-of-interest screening appear here.",
+	当前没有分配给你的案件: "No cases are currently assigned to you",
+	"具备资格后，系统会在新争议中随机选择无利益冲突的成员。":
+		"Once eligible, you may be randomly selected for new disputes where you have no conflict of interest.",
+	投票提交失败: "Failed to submit vote",
+	"已有 {count}/{quorum} 票": "{count}/{quorum} votes submitted",
+	查看完整证据: "View full evidence",
+	提交你的独立裁决: "Submit your independent decision",
+	"支付给 Agent 的比例（1–99%）": "Percentage paid to Agents (1–99%)",
+	"Agent 责任判断": "Agent responsibility assessment",
+	裁决理由: "Decision rationale",
+	"结合双方证据说明理由，至少 10 个字符":
+		"Explain your reasoning from both parties' evidence (at least 10 characters)",
+	确认并提交投票: "Confirm and submit vote",
+	"你已完成本案投票，等待法定多数":
+		"Your vote is recorded. Waiting for the required majority.",
+	正在核对钱包网络: "Checking wallet network",
+	"正在授权本次所需 YD": "Approving the required YD",
+	"请在钱包中确认 DAO 交易": "Confirm the DAO transaction in your wallet",
+	正在等待链上确认: "Waiting for onchain confirmation",
+	正在同步成员资格: "Syncing membership",
+	投票中: "Voting",
+	已形成裁决: "Decision reached",
+	等待成组: "Awaiting panel",
+	全部结算: "Release all funds",
+	全部退款: "Refund all funds",
+	"Agent 主要责任": "Agent primarily responsible",
+	暂不判定责任: "Responsibility not determined",
+	"验收全部阶段并结算 {amount}": "Approve all stages and settle {amount}",
+	"通过该阶段质量验收 {amount}": "Approve this stage's quality · {amount}",
+	"提交后全部 USDC 继续冻结，由无利益冲突的 DAO 仲裁小组投票裁决。":
+		"All USDC remains frozen after submission while a conflict-free DAO panel votes on the dispute.",
+	"当前说明将作为第一份文字证据；已交付制品和结算清单会生成摘要供链上核验。":
+		"Your statement becomes the first written evidence. Deliverables and the settlement manifest are hashed for onchain verification.",
+	确认冻结资金并发起争议: "Freeze funds and open dispute",
+	该阶段已通过质量验收: "This stage passed quality review",
+	"资金仍在托管，等待全部阶段完成":
+		"Funds remain in escrow until every stage is complete",
+	"阶段产物验收后会固化成交与费用明细；资金仍保持托管，直到全部阶段完成并由发布者最终确认。":
+		"Approving a stage locks its delivery and fee details. Funds remain in escrow until every stage is complete and the publisher gives final approval.",
+	资金状态: "Funds status",
+	统一结算前保持托管: "Held in escrow until unified settlement",
+	"DAO 仲裁进度": "DAO arbitration progress",
+	"仲裁成员 {count}/{total}": "Panel members {count}/{total}",
+	"有效投票 {count}/{quorum}": "Valid votes {count}/{quorum}",
+	"前往 DAO 投票": "Go to DAO voting",
+	等待符合条件的仲裁成员成组:
+		"Waiting for eligible arbitrators to form a panel",
+	"仲裁小组投票中，资金继续冻结":
+		"The arbitration panel is voting; funds remain frozen",
+	"已形成多数裁决，等待链上执行":
+		"A majority decision has been reached; awaiting onchain execution",
+	"本轮 DAO 仲裁已取消": "This DAO arbitration round was cancelled",
+	"请在 DAO 仲裁页提交投票": "Submit your vote on the DAO arbitration page",
+	当前钱包没有平台仲裁权限:
+		"This wallet does not have platform arbitration access",
+	"DAO 小组通过独立投票形成多数裁决，不能使用平台内部的直接裁决入口。":
+		"DAO panels reach a majority through independent votes and cannot use the platform's direct decision form.",
+	"发布者和 Agent 只能提交证据；平台仲裁员角色由服务端权限表验证。":
+		"Publishers and Agents can only submit evidence. Platform arbitrator access is verified by server-side roles.",
 } as const;
 
 export type MessageId = keyof typeof EN_MESSAGES;

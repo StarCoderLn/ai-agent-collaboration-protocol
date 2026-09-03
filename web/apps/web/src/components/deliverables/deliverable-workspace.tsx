@@ -16,6 +16,7 @@ import {
 	MonitorPlay,
 	RefreshCw,
 	ShieldCheck,
+	Smartphone,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
@@ -26,10 +27,10 @@ import type { MessageId, MessageValues } from "@/lib/i18n/messages";
 import {
 	type CodeArtifact,
 	type DesignArtifact,
+	isDesignArtifact,
 	type RequirementsArtifact,
 	type WorkflowArtifact,
 	WorkflowArtifactSchema,
-	isDesignArtifact,
 } from "@/lib/workflow/contracts";
 
 type DeliverableTab = "preview" | "files" | "verification" | "raw";
@@ -86,16 +87,17 @@ export default function DeliverableWorkspace({
 	const shellRef = useRef<HTMLDivElement>(null);
 	const [tab, setTab] = useState<DeliverableTab>("preview");
 	const [runnablePreviewReady, setRunnablePreviewReady] = useState(
-		artifact.schemaVersion === "requirements.artifact.v0.1",
+		artifact.schemaVersion !== "code.artifact.v0.1",
 	);
-	const ready = artifact.schemaVersion === "requirements.artifact.v0.1"
-		? true
-		: runnablePreviewReady;
+	const ready =
+		artifact.schemaVersion === "code.artifact.v0.1"
+			? runnablePreviewReady
+			: true;
 
 	useEffect(() => onReadinessChange?.(ready), [onReadinessChange, ready]);
 	useEffect(() => {
 		setTab("preview");
-		setRunnablePreviewReady(artifact.schemaVersion === "requirements.artifact.v0.1");
+		setRunnablePreviewReady(artifact.schemaVersion !== "code.artifact.v0.1");
 	}, [artifact]);
 
 	const tabs = useMemo<
@@ -204,18 +206,77 @@ function ArtifactPreview({
 		return <RequirementsDocument artifact={artifact} />;
 	}
 	if (isDesignArtifact(artifact)) {
-		return (
-			<RunnablePreviewFrame
-				artifact={artifact}
-				onReadinessChange={onRunnableReadinessChange}
-			/>
-		);
+		return <DesignScreensPreview artifact={artifact} />;
 	}
 	return (
 		<RunnablePreviewFrame
 			artifact={artifact}
 			onReadinessChange={onRunnableReadinessChange}
 		/>
+	);
+}
+
+/**
+ * 设计阶段的主验收对象是平台可信渲染器生成的静态图片。这里保留足够大的滚动画布，并
+ * 让桌面端与移动端明确切换；不再把设计稿发送到代码编译 API，也不会执行 SVG 内代码。
+ */
+function DesignScreensPreview({ artifact }: { artifact: DesignArtifact }) {
+	const { t } = useLocale();
+	const [breakpoint, setBreakpoint] = useState<"desktop" | "mobile">("desktop");
+	const screen =
+		artifact.renderedScreens.find((item) => item.id === breakpoint) ??
+		artifact.renderedScreens[0];
+	if (screen === undefined) return null;
+	const imageUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(screen.content)}`;
+
+	return (
+		<section className="overflow-hidden rounded-xl border bg-card">
+			<header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 sm:px-5">
+				<div>
+					<h4 className="font-semibold">{t("设计稿图片")}</h4>
+					<p className="mt-1 text-muted-foreground text-xs">
+						{t("图片用于人工验收，结构化设计规范将继续传递给 Coding Agent。")}
+					</p>
+				</div>
+				<div
+					className="flex rounded-xl border bg-accent/60 p-1"
+					role="tablist"
+					aria-label={t("设计稿断点")}
+				>
+					{(["desktop", "mobile"] as const).map((id) => {
+						const Icon = id === "desktop" ? MonitorPlay : Smartphone;
+						return (
+							<button
+								key={id}
+								type="button"
+								role="tab"
+								aria-selected={breakpoint === id}
+								onClick={() => setBreakpoint(id)}
+								className={`flex min-h-10 cursor-pointer items-center gap-2 rounded-lg px-4 text-sm transition-colors ${breakpoint === id ? "bg-background font-semibold text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+							>
+								<Icon className="size-4" />
+								{id === "desktop" ? t("桌面端") : t("移动端")}
+							</button>
+						);
+					})}
+				</div>
+			</header>
+			<div className="h-[72vh] min-h-155 overflow-auto bg-[radial-gradient(circle_at_center,var(--color-primary-container),transparent_72%)] p-3 sm:p-7">
+				<div
+					className={`mx-auto overflow-hidden rounded-xl bg-white shadow-[0_24px_80px_rgb(0_0_0/20%)] ${breakpoint === "desktop" ? "w-full min-w-200 max-w-360" : "w-97.5 max-w-full"}`}
+				>
+					{/* biome-ignore lint/performance/noImgElement: 这是已校验 SVG 的本地 data URL 验收画布，不应交给图片优化服务重新编码或发起网络请求。 */}
+					<img
+						src={imageUrl}
+						alt={t("{title} 的{breakpoint}设计稿", {
+							title: artifact.title,
+							breakpoint: breakpoint === "desktop" ? t("桌面端") : t("移动端"),
+						})}
+						className="block h-auto w-full"
+					/>
+				</div>
+			</div>
+		</section>
 	);
 }
 
@@ -301,7 +362,7 @@ function RunnablePreviewFrame({
 	artifact,
 	onReadinessChange,
 }: {
-	artifact: CodeArtifact | DesignArtifact;
+	artifact: CodeArtifact;
 	onReadinessChange: (ready: boolean) => void;
 }) {
 	const { t } = useLocale();
@@ -309,6 +370,7 @@ function RunnablePreviewFrame({
 	const [revision, setRevision] = useState(0);
 	const [state, setState] = useState<CodePreviewState>({ kind: "loading" });
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: revision 是“重新编译”按钮产生的显式刷新信号，不属于请求正文。
 	useEffect(() => {
 		const controller = new AbortController();
 		setState({ kind: "loading" });
@@ -651,11 +713,28 @@ function downloadArtifact(artifact: WorkflowArtifact): void {
 		return;
 	}
 	if (isDesignArtifact(artifact)) {
-		const archive = zipSync({
-			"app/page.tsx": strToU8(artifact.prototype.pageTsx),
-			"app/globals.css": strToU8(artifact.prototype.globalsCss),
-		}, { level: 6 });
-		downloadBlob(`${safeName}.zip`, "application/zip", Uint8Array.from(archive).buffer);
+		// 下载包把人类验收图片与机器消费规范放在一起；Coding Agent 读取的是同一份
+		// DesignSpec，而不是从图片反推布局，避免视觉链路再次丢失。
+		const { renderedScreens, ...designSpec } = artifact;
+		const archive = zipSync(
+			{
+				"desktop.svg": strToU8(
+					renderedScreens.find((screen) => screen.id === "desktop")?.content ??
+						"",
+				),
+				"mobile.svg": strToU8(
+					renderedScreens.find((screen) => screen.id === "mobile")?.content ??
+						"",
+				),
+				"design-spec.json": strToU8(JSON.stringify(designSpec, null, 2)),
+			},
+			{ level: 6 },
+		);
+		downloadBlob(
+			`${safeName}.zip`,
+			"application/zip",
+			Uint8Array.from(archive).buffer,
+		);
 		return;
 	}
 	const files = Object.fromEntries(

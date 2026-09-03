@@ -79,6 +79,8 @@ type CapabilityTaxonomyFieldsProps = Readonly<{
 	selectedTags: readonly string[];
 	onCategoryChange(categoryId: string): void;
 	onTagsChange(tags: readonly string[]): void;
+	/** 任务发布页只收集分类；Agent 上架页仍展示完整标签编辑器。 */
+	showTags?: boolean;
 	categoryError?: string;
 	tagsError?: string;
 }>;
@@ -94,6 +96,7 @@ export function CapabilityTaxonomyFields({
 	selectedTags,
 	onCategoryChange,
 	onTagsChange,
+	showTags = true,
 	categoryError,
 	tagsError,
 }: CapabilityTaxonomyFieldsProps) {
@@ -153,7 +156,7 @@ export function CapabilityTaxonomyFields({
 	}
 
 	return (
-		<div className="grid gap-4 sm:grid-cols-2">
+		<div className={showTags ? "grid gap-4 sm:grid-cols-2" : "grid gap-4"}>
 			<TaxonomyField
 				label={t("服务分类")}
 				htmlFor={categoryFieldId}
@@ -196,90 +199,94 @@ export function CapabilityTaxonomyFields({
 				)}
 			</TaxonomyField>
 
-			<TaxonomyField
-				label={t("技能标签")}
-				htmlFor={tagsInputId}
-				hint={t("填写最能代表需求或 Agent 能力的技术、风格或专业标签")}
-				error={tagsError}
-			>
-				<fieldset className="space-y-3 rounded-xl border border-primary/20 bg-card/70 p-3">
-					<legend className="sr-only">{t("技能标签")}</legend>
-					{selectedTags.length > 0 && (
-						<div className="flex flex-wrap gap-2">
-							{selectedTags.map((tag) => (
-								<span
-									key={tag}
-									className="inline-flex items-center gap-1 rounded-full border border-primary/35 bg-primary-container px-2.5 py-1 font-medium text-primary text-xs shadow-[0_0_12px_var(--brand-glow)]"
-								>
-									{tag}
-									<button
-										type="button"
-										aria-label={t("移除标签 {tag}", { tag })}
-										onClick={() => {
-											onTagsChange(selectedTags.filter((item) => item !== tag));
-											setCustomTagError(null);
-										}}
-										className="cursor-pointer rounded-full p-0.5 transition-colors hover:bg-primary/15"
+			{showTags && (
+				<TaxonomyField
+					label={t("技能标签")}
+					htmlFor={tagsInputId}
+					hint={t("填写最能代表需求或 Agent 能力的技术、风格或专业标签")}
+					error={tagsError}
+				>
+					<fieldset className="space-y-3 rounded-xl border border-primary/20 bg-card/70 p-3">
+						<legend className="sr-only">{t("技能标签")}</legend>
+						{selectedTags.length > 0 && (
+							<div className="flex flex-wrap gap-2">
+								{selectedTags.map((tag) => (
+									<span
+										key={tag}
+										className="inline-flex items-center gap-1 rounded-full border border-primary/35 bg-primary-container px-2.5 py-1 font-medium text-primary text-xs shadow-[0_0_12px_var(--brand-glow)]"
 									>
-										<X className="size-3" aria-hidden />
-									</button>
-								</span>
-							))}
-						</div>
-					)}
+										{tag}
+										<button
+											type="button"
+											aria-label={t("移除标签 {tag}", { tag })}
+											onClick={() => {
+												onTagsChange(
+													selectedTags.filter((item) => item !== tag),
+												);
+												setCustomTagError(null);
+											}}
+											className="cursor-pointer rounded-full p-0.5 transition-colors hover:bg-primary/15"
+										>
+											<X className="size-3" aria-hidden />
+										</button>
+									</span>
+								))}
+							</div>
+						)}
 
-					<div className="flex gap-2">
-						<input
-							id={tagsInputId}
-							aria-invalid={tagsError !== undefined}
-							aria-describedby={
-								tagsError === undefined ? undefined : `${tagsInputId}-error`
-							}
-							value={customTagInput}
-							onChange={(event) => {
-								setCustomTagInput(event.target.value);
-								if (customTagError !== null) setCustomTagError(null);
-							}}
-							onKeyDown={(event) => {
-								if (event.key !== "Enter") return;
-								// 中文、日文等输入法会用回车确认正在组合的候选词。此时既不能
-								// 提交标签，也不能阻止输入法完成上屏；229 兼容仍未正确暴露
-								// isComposing 的部分 WebKit/旧版浏览器实现。
-								if (event.nativeEvent.isComposing || event.keyCode === 229)
-									return;
-								event.preventDefault();
-								addCustomTag();
-							}}
-							placeholder={t("输入自定义标签，按回车添加")}
-							className="h-10 min-w-0 flex-1 rounded-lg border border-primary/15 bg-background/70 px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
-						/>
-						<button
-							type="button"
-							onClick={addCustomTag}
-							className="inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-lg border border-primary/30 bg-primary-container px-3 font-medium text-primary text-sm transition-colors hover:bg-primary/15"
-						>
-							<Plus className="size-4" aria-hidden />
-							{t("添加")}
-						</button>
-					</div>
-					<div className="flex items-center justify-between gap-3 text-xs">
-						<span
-							className={
-								customTagError ? "text-destructive" : "text-muted-foreground"
-							}
-							role={customTagError ? "alert" : undefined}
-						>
-							{customTagError ?? t("输入后按回车即可添加")}
-						</span>
-						<span className="shrink-0 text-muted-foreground">
-							{t("已添加 {count}/{max}", {
-								count: selectedTags.length,
-								max: MAX_MATCHING_TAG_COUNT,
-							})}
-						</span>
-					</div>
-				</fieldset>
-			</TaxonomyField>
+						<div className="flex gap-2">
+							<input
+								id={tagsInputId}
+								aria-invalid={tagsError !== undefined}
+								aria-describedby={
+									tagsError === undefined ? undefined : `${tagsInputId}-error`
+								}
+								value={customTagInput}
+								onChange={(event) => {
+									setCustomTagInput(event.target.value);
+									if (customTagError !== null) setCustomTagError(null);
+								}}
+								onKeyDown={(event) => {
+									if (event.key !== "Enter") return;
+									// 中文、日文等输入法会用回车确认正在组合的候选词。此时既不能
+									// 提交标签，也不能阻止输入法完成上屏；229 兼容仍未正确暴露
+									// isComposing 的部分 WebKit/旧版浏览器实现。
+									if (event.nativeEvent.isComposing || event.keyCode === 229)
+										return;
+									event.preventDefault();
+									addCustomTag();
+								}}
+								placeholder={t("输入自定义标签，按回车添加")}
+								className="h-10 min-w-0 flex-1 rounded-lg border border-primary/15 bg-background/70 px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
+							/>
+							<button
+								type="button"
+								onClick={addCustomTag}
+								className="inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-lg border border-primary/30 bg-primary-container px-3 font-medium text-primary text-sm transition-colors hover:bg-primary/15"
+							>
+								<Plus className="size-4" aria-hidden />
+								{t("添加")}
+							</button>
+						</div>
+						<div className="flex items-center justify-between gap-3 text-xs">
+							<span
+								className={
+									customTagError ? "text-destructive" : "text-muted-foreground"
+								}
+								role={customTagError ? "alert" : undefined}
+							>
+								{customTagError ?? t("输入后按回车即可添加")}
+							</span>
+							<span className="shrink-0 text-muted-foreground">
+								{t("已添加 {count}/{max}", {
+									count: selectedTags.length,
+									max: MAX_MATCHING_TAG_COUNT,
+								})}
+							</span>
+						</div>
+					</fieldset>
+				</TaxonomyField>
+			)}
 		</div>
 	);
 }

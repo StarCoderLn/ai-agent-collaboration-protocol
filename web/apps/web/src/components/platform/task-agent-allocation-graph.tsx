@@ -3,12 +3,12 @@ import {
 	BackgroundVariant,
 	Controls,
 	type Edge,
+	Panel as FlowPanel,
 	Handle,
 	MarkerType,
 	type Node,
 	type NodeProps,
 	type NodeTypes,
-	Panel as FlowPanel,
 	Position,
 	ReactFlow,
 } from "@xyflow/react";
@@ -187,7 +187,10 @@ export default function TaskAgentAllocationGraph({
 						</span>
 						<div>
 							<div className="flex flex-wrap items-center gap-2">
-								<h2 id="agent-allocation-title" className="font-semibold text-xl">
+								<h2
+									id="agent-allocation-title"
+									className="font-semibold text-xl"
+								>
 									{displaysExecutionRelation
 										? t("Agent 执行关系")
 										: t("Agent 候选关系")}
@@ -214,9 +217,7 @@ export default function TaskAgentAllocationGraph({
 								agents.filter((agent) => !agent.placeholder).length,
 							)}
 							label={
-								displaysExecutionRelation
-									? t("执行 Agent")
-									: t("候选 Agent")
+								displaysExecutionRelation ? t("执行 Agent") : t("候选 Agent")
 							}
 						/>
 						<GraphMetric
@@ -224,7 +225,11 @@ export default function TaskAgentAllocationGraph({
 							label={t("最终分配")}
 							tone="secondary"
 						/>
-						<GraphMetric value={`${execution?.progress ?? 0}%`} label={t("执行进度")} tone="success" />
+						<GraphMetric
+							value={`${execution?.progress ?? 0}%`}
+							label={t("执行进度")}
+							tone="success"
+						/>
 					</div>
 				</div>
 			</header>
@@ -310,7 +315,9 @@ function AllocationTaskNode({ data }: NodeProps<TaskGraphNode>) {
 					{data.statusLabel}
 				</span>
 			</div>
-			<p className="mt-3 font-mono text-[9px] text-muted-foreground">TASK · {data.shortTaskId}</p>
+			<p className="mt-3 font-mono text-[9px] text-muted-foreground">
+				TASK · {data.shortTaskId}
+			</p>
 			<h3 className="mt-1 line-clamp-1 font-semibold text-sm">{data.title}</h3>
 			<p className="mt-2 flex items-center gap-1.5 text-[10px] text-muted-foreground">
 				<GitBranch className="size-3.5 text-secondary" aria-hidden />
@@ -349,20 +356,34 @@ function AllocationAgentNode({ data }: NodeProps<AgentGraphNode>) {
 			>
 				<span className="flex items-start justify-between gap-3">
 					<span className="flex min-w-0 items-center gap-3">
-						<span className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${data.selected ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
-							{data.selected ? <Zap className="size-4" aria-hidden /> : <Bot className="size-4" aria-hidden />}
+						<span
+							className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${data.selected ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+						>
+							{data.selected ? (
+								<Zap className="size-4" aria-hidden />
+							) : (
+								<Bot className="size-4" aria-hidden />
+							)}
 						</span>
 						<span className="min-w-0">
-							<span className="block truncate font-semibold text-sm">{agent.name}</span>
-							<span className={`mt-0.5 block text-[10px] ${data.selected ? "text-primary" : "text-muted-foreground"}`}>
+							<span className="block truncate font-semibold text-sm">
+								{agent.name}
+							</span>
+							<span
+								className={`mt-0.5 block text-[10px] ${data.selected ? "text-primary" : "text-muted-foreground"}`}
+							>
 								{data.statusLabel}
 							</span>
 						</span>
 					</span>
 					{data.selected ? (
-						<span className="rounded-full bg-primary px-2 py-1 font-semibold text-[9px] text-primary-foreground">SELECTED</span>
+						<span className="rounded-full bg-primary px-2 py-1 font-semibold text-[9px] text-primary-foreground">
+							SELECTED
+						</span>
 					) : agent.recommended ? (
-						<span className="rounded-full border border-secondary/25 bg-secondary-container/30 px-2 py-1 font-semibold text-[9px] text-secondary">TOP MATCH</span>
+						<span className="rounded-full border border-secondary/25 bg-secondary-container/30 px-2 py-1 font-semibold text-[9px] text-secondary">
+							TOP MATCH
+						</span>
 					) : null}
 				</span>
 				<span className="mt-auto flex items-end justify-between gap-2 border-white/5 border-t pt-2 text-[9px]">
@@ -370,8 +391,12 @@ function AllocationAgentNode({ data }: NodeProps<AgentGraphNode>) {
 						<Star className="size-3 fill-warning text-warning" aria-hidden />
 						{agent.score === null ? "--" : agent.score.toFixed(1)}
 					</span>
-					<span className="max-w-23 truncate text-muted-foreground">{agent.matchedTags.join(" · ") || "MATCHED"}</span>
-					<span className="font-semibold text-foreground">{data.quoteLabel}</span>
+					<span className="max-w-23 truncate text-muted-foreground">
+						{agent.matchedTags.join(" · ") || "MATCHED"}
+					</span>
+					<span className="font-semibold text-foreground">
+						{data.quoteLabel}
+					</span>
 				</span>
 			</button>
 		</article>
@@ -395,45 +420,103 @@ function AgentInspection({
 }) {
 	const { t } = useLocale();
 	return (
-		<section id="stage-execution-record" className="scroll-mt-28 border-primary/15 border-t bg-background/55 p-5 sm:p-6">
+		<section
+			id="stage-execution-record"
+			className="scroll-mt-28 border-primary/15 border-t bg-background/55 p-5 sm:p-6"
+		>
 			{agent === null || agent.placeholder ? (
-				<div className="flex min-h-28 items-center justify-center rounded-xl border border-dashed border-primary/20 bg-primary-container/10 text-center">
+				<div className="flex min-h-28 items-center justify-center rounded-xl border border-primary/20 border-dashed bg-primary-container/10 text-center">
 					<div>
 						<CircleDashed className="mx-auto size-6 text-primary" aria-hidden />
-						<p className="mt-2 font-semibold text-sm">{t("等待生成候选 Agent")}</p>
-						<p className="mt-1 text-muted-foreground text-xs">{t("资金托管确认后，平台会在这里展示真实匹配结果。")}</p>
+						<p className="mt-2 font-semibold text-sm">
+							{t("等待生成候选 Agent")}
+						</p>
+						<p className="mt-1 text-muted-foreground text-xs">
+							{t("平台正在为该阶段生成真实候选与履约证据，请稍后刷新。")}
+						</p>
 					</div>
 				</div>
 			) : (
 				<div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(420px,1.2fr)] lg:items-center">
 					<div>
-						<p className={`font-semibold text-[11px] ${selected ? "text-primary" : "text-muted-foreground"}`}>
+						<p
+							className={`font-semibold text-[11px] ${selected ? "text-primary" : "text-muted-foreground"}`}
+						>
 							{selected ? t("最终分配的执行 Agent") : t("正在查看候选 Agent")}
 						</p>
 						<div className="mt-2 flex items-center gap-3">
-							<span className={`flex size-10 items-center justify-center rounded-xl ${selected ? "bg-primary text-primary-foreground shadow-[0_0_24px_var(--brand-glow-strong)]" : "bg-muted text-muted-foreground"}`}>
-								{selected ? <CheckCircle2 className="size-5" aria-hidden /> : <Bot className="size-5" aria-hidden />}
+							<span
+								className={`flex size-10 items-center justify-center rounded-xl ${selected ? "bg-primary text-primary-foreground shadow-[0_0_24px_var(--brand-glow-strong)]" : "bg-muted text-muted-foreground"}`}
+							>
+								{selected ? (
+									<CheckCircle2 className="size-5" aria-hidden />
+								) : (
+									<Bot className="size-5" aria-hidden />
+								)}
 							</span>
 							<div>
 								<h3 className="font-semibold text-lg">{agent.name}</h3>
-								<p className="text-muted-foreground text-xs">{selected ? selectedStatusLabel : t("候选，尚未分配")}</p>
+								<p className="text-muted-foreground text-xs">
+									{selected ? selectedStatusLabel : t("候选，尚未分配")}
+								</p>
 							</div>
 						</div>
 					</div>
 					<dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-						<InspectionMetric label={t("报价")} value={agent.quoteMinor === null ? t("未读取到") : formatMinorAmount(agent.quoteMinor, currency)} />
-						<InspectionMetric label={t("匹配评分")} value={agent.score === null ? "--" : agent.score.toFixed(1)} />
-						<InspectionMetric label={t("历史完成")} value={agent.completed === null ? "--" : t("{count} 次", { count: agent.completed })} />
+						<InspectionMetric
+							label={t("报价")}
+							value={
+								agent.quoteMinor === null
+									? t("未读取到")
+									: formatMinorAmount(agent.quoteMinor, currency)
+							}
+						/>
+						<InspectionMetric
+							label={t("匹配评分")}
+							value={agent.score === null ? "--" : agent.score.toFixed(1)}
+						/>
+						<InspectionMetric
+							label={t("历史完成")}
+							value={
+								agent.completed === null
+									? "--"
+									: t("{count} 次", { count: agent.completed })
+							}
+						/>
 						<InspectionMetric
 							label={selected ? t("执行进度") : t("响应速度")}
-							value={selected ? `${execution?.progress ?? 0}%` : agent.responseMinutes === null ? "--" : t("{count} 分钟", { count: agent.responseMinutes })}
+							value={
+								selected
+									? `${execution?.progress ?? 0}%`
+									: agent.responseMinutes === null
+										? "--"
+										: t("{count} 分钟", { count: agent.responseMinutes })
+							}
 						/>
 					</dl>
 					{selected && assignment !== null && (
-						<div className="lg:col-span-2 flex flex-wrap items-center gap-x-5 gap-y-2 border-primary/10 border-t pt-4 text-muted-foreground text-xs">
-							<span>{t("成交价")} <strong className="ml-1 text-foreground">{formatMinorAmount(assignment.assignment.agreedAmountMinor, currency)}</strong></span>
-							<span>{t("接单状态")} <strong className="ml-1 text-foreground">{assignment.assignment.status}</strong></span>
-							<span>{t("派发状态")} <strong className="ml-1 text-foreground">{assignment.dispatchAttempt.status}</strong></span>
+						<div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-primary/10 border-t pt-4 text-muted-foreground text-xs lg:col-span-2">
+							<span>
+								{t("成交价")}{" "}
+								<strong className="ml-1 text-foreground">
+									{formatMinorAmount(
+										assignment.assignment.agreedAmountMinor,
+										currency,
+									)}
+								</strong>
+							</span>
+							<span>
+								{t("接单状态")}{" "}
+								<strong className="ml-1 text-foreground">
+									{assignment.assignment.status}
+								</strong>
+							</span>
+							<span>
+								{t("派发状态")}{" "}
+								<strong className="ml-1 text-foreground">
+									{assignment.dispatchAttempt.status}
+								</strong>
+							</span>
 						</div>
 					)}
 				</div>
@@ -442,13 +525,36 @@ function AgentInspection({
 	);
 }
 
-function GraphMetric({ value, label, tone = "primary" }: { value: string; label: string; tone?: "primary" | "secondary" | "success" }) {
-	const toneClass = tone === "secondary" ? "border-secondary/20 bg-secondary-container/25" : tone === "success" ? "border-success/20 bg-success/10" : "border-primary/20 bg-primary-container/25";
-	return <div className={`min-w-20 rounded-xl border px-3 py-2 ${toneClass}`}><p className="font-mono font-bold text-base">{value}</p><p className="text-muted-foreground text-[9px]">{label}</p></div>;
+function GraphMetric({
+	value,
+	label,
+	tone = "primary",
+}: {
+	value: string;
+	label: string;
+	tone?: "primary" | "secondary" | "success";
+}) {
+	const toneClass =
+		tone === "secondary"
+			? "border-secondary/20 bg-secondary-container/25"
+			: tone === "success"
+				? "border-success/20 bg-success/10"
+				: "border-primary/20 bg-primary-container/25";
+	return (
+		<div className={`min-w-20 rounded-xl border px-3 py-2 ${toneClass}`}>
+			<p className="font-bold font-mono text-base">{value}</p>
+			<p className="text-[9px] text-muted-foreground">{label}</p>
+		</div>
+	);
 }
 
 function InspectionMetric({ label, value }: { label: string; value: string }) {
-	return <div className="rounded-xl border border-primary/10 bg-primary-container/10 px-3 py-2.5"><dt className="text-muted-foreground text-[10px]">{label}</dt><dd className="mt-1 font-semibold text-sm">{value}</dd></div>;
+	return (
+		<div className="rounded-xl border border-primary/10 bg-primary-container/10 px-3 py-2.5">
+			<dt className="text-[10px] text-muted-foreground">{label}</dt>
+			<dd className="mt-1 font-semibold text-sm">{value}</dd>
+		</div>
+	);
 }
 
 function buildAgentPresentations(
@@ -494,7 +600,10 @@ function buildAgentPresentations(
 	];
 }
 
-function candidatePresentation(candidate: TaskCandidate, recommended: boolean): AgentPresentation {
+function candidatePresentation(
+	candidate: TaskCandidate,
+	recommended: boolean,
+): AgentPresentation {
 	return {
 		id: candidate.agentId,
 		name: candidate.name,
@@ -536,8 +645,7 @@ function createNodes({
 	// 任务节点与 Agent 节点高度不同，不能直接使用同一个 y。这里按整个 Agent 列的
 	// 垂直中心反推任务节点起点；只有一个 Agent 时两侧 Handle 中心完全同高，Bezier
 	// 连线自然成为水平线，多个候选时任务节点仍居中面对整列候选。
-	const agentColumnHeight =
-		(agents.length - 1) * verticalGap + agentNodeHeight;
+	const agentColumnHeight = (agents.length - 1) * verticalGap + agentNodeHeight;
 	const taskY = agentStartY + agentColumnHeight / 2 - taskNodeHeight / 2;
 	return [
 		{
@@ -553,26 +661,31 @@ function createNodes({
 			draggable: false,
 			selectable: false,
 		},
-		...agents.map(
-			(agent, index): AgentGraphNode => {
-				const selected = agent.id === assignedAgentId;
-				return {
-					id: `agent-${agent.id}`,
-					type: "agent",
-					position: { x: 500, y: agentStartY + index * verticalGap },
-					data: {
-						agent,
-						selected,
-						inspected: agent.id === inspectedAgentId,
-						statusLabel: agent.placeholder ? "WAITING" : selected ? selectedStatusLabel : "CANDIDATE",
-						quoteLabel: agent.quoteMinor === null ? "--" : formatMinorAmount(agent.quoteMinor, currency),
-						onInspect,
-					},
-					draggable: false,
-					selectable: false,
-				};
-			},
-		),
+		...agents.map((agent, index): AgentGraphNode => {
+			const selected = agent.id === assignedAgentId;
+			return {
+				id: `agent-${agent.id}`,
+				type: "agent",
+				position: { x: 500, y: agentStartY + index * verticalGap },
+				data: {
+					agent,
+					selected,
+					inspected: agent.id === inspectedAgentId,
+					statusLabel: agent.placeholder
+						? "WAITING"
+						: selected
+							? selectedStatusLabel
+							: "CANDIDATE",
+					quoteLabel:
+						agent.quoteMinor === null
+							? "--"
+							: formatMinorAmount(agent.quoteMinor, currency),
+					onInspect,
+				},
+				draggable: false,
+				selectable: false,
+			};
+		}),
 	];
 }
 
@@ -601,7 +714,9 @@ function createEdges(
 			// 在每次状态轮询时产生警告，因此使用受支持的默认类型保留相同视觉。
 			type: "default",
 			animated: selected,
-			className: selected ? "allocation-edge-selected workflow-edge-flow" : "allocation-edge-candidate",
+			className: selected
+				? "allocation-edge-selected workflow-edge-flow"
+				: "allocation-edge-candidate",
 			markerEnd: {
 				type: MarkerType.ArrowClosed,
 				color: selected ? "#a855f7" : "#64748b",
@@ -623,7 +738,8 @@ function taskStatusLabel(
 	if (status === "matching") return t("匹配中");
 	if (status === "awaiting_agent_acceptance") return t("等待接单");
 	if (status === "executing" || status === "rework") return t("执行中");
-	if (status === "execution_failed" || status === "timed_out") return t("执行失败");
+	if (status === "execution_failed" || status === "timed_out")
+		return t("执行失败");
 	if (status === "awaiting_review") return t("等待验收");
 	if (status === "settled") return t("已完成");
 	if (status === "disputed") return t("争议中");
@@ -640,8 +756,10 @@ function selectedAgentStatusLabel(
 	if (assignment === null) return t("尚未分配");
 	if (assignment.assignment.status === "accept_failed") return t("接单失败");
 	if (assignment.assignment.status === "cancelled") return t("分配已取消");
-	if (assignment.assignment.status === "pending_ack") return t("等待 Agent 接单");
-	if (status === "execution_failed" || execution?.executionState === "failed") return t("执行失败");
+	if (assignment.assignment.status === "pending_ack")
+		return t("等待 Agent 接单");
+	if (status === "execution_failed" || execution?.executionState === "failed")
+		return t("执行失败");
 	if (status === "executing" || status === "rework") return t("正在执行");
 	if (status === "awaiting_review") return t("已交付，等待验收");
 	if (status === "settled") return t("已验收并结算");

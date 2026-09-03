@@ -5,7 +5,7 @@ import type { QueryExecutor } from "../db/pool.js";
 const WALLET = "0x1234567890123456789012345678901234567890";
 
 describe("PgSessionStore", () => {
-  it("create() inserts a high-entropy session_id with a 24h expiry by default", async () => {
+  it("create() inserts a high-entropy session_id with a 7-day expiry by default", async () => {
     const query = vi.fn(async () => ({ rows: [], rowCount: 1 }));
     const db: QueryExecutor = { query };
     const now = () => new Date("2026-08-22T00:00:00.000Z");
@@ -19,7 +19,7 @@ describe("PgSessionStore", () => {
     expect(params).toEqual([session.sessionId, WALLET, session.expiresAt]);
     // 32 bytes hex-encoded = 64 hex chars，足够的熵防止会话 ID 被猜测。
     expect(session.sessionId).toMatch(/^[0-9a-f]{64}$/);
-    expect(session.expiresAt).toEqual(new Date("2026-08-23T00:00:00.000Z"));
+    expect(session.expiresAt).toEqual(new Date("2026-08-29T00:00:00.000Z"));
   });
 
   it("create() generates distinct session ids across calls", async () => {

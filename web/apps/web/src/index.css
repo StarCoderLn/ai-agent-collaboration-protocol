@@ -145,7 +145,6 @@
 /* 浏览器全屏会把画布节点提升为独立视口；覆盖行内预览高度后才能真正铺满屏幕。 */
 .formal-workflow-react-flow:fullscreen {
 	width: 100vw;
-	height: 100vh !important;
 	background: var(--canvas);
 }
 
@@ -200,27 +199,26 @@
 }
 
 .allocation-flow-handle {
-	width: 11px !important;
-	height: 11px !important;
-	border: 2px solid var(--canvas) !important;
-	background: #64748b !important;
+	width: 11px;
+	height: 11px;
+	border: 2px solid var(--canvas);
+	background: #64748b;
 }
 
 .allocation-task-handle {
-	background: var(--secondary) !important;
+	background: var(--secondary);
 	box-shadow: 0 0 17px var(--secondary);
 }
 
 .allocation-agent-node[data-selected="true"] .allocation-flow-handle {
-	background: #a855f7 !important;
+	background: #a855f7;
 	box-shadow:
 		0 0 0 3px rgb(168 85 247 / 18%),
 		0 0 18px #a855f7;
 }
 
 .allocation-edge-selected .react-flow__edge-path {
-	filter:
-		drop-shadow(0 0 5px rgb(168 85 247 / 80%))
+	filter: drop-shadow(0 0 5px rgb(168 85 247 / 80%))
 		drop-shadow(0 0 13px rgb(124 58 237 / 54%));
 }
 
@@ -257,6 +255,29 @@
 @keyframes workflow-edge-flow {
 	to {
 		stroke-dashoffset: -28;
+	}
+}
+
+/* 执行进度使用流动的品牌渐变表达“仍在工作”，宽度仍严格对应服务端真实百分比。 */
+.execution-progress-fill {
+	background: linear-gradient(
+		90deg,
+		var(--primary),
+		var(--secondary),
+		var(--primary)
+	);
+	background-size: 200% 100%;
+	box-shadow: 0 0 14px var(--brand-glow);
+	transition: width 420ms ease-out;
+}
+
+.execution-progress-fill-active {
+	animation: execution-progress-flow 1.6s linear infinite;
+}
+
+@keyframes execution-progress-flow {
+	to {
+		background-position: -200% 0;
 	}
 }
 
@@ -471,7 +492,8 @@
 	.interactive-card,
 	.interactive-card::before,
 	.scan-beam,
-	.workflow-edge-flow {
+	.workflow-edge-flow,
+	.execution-progress-fill-active {
 		transition: none;
 		animation: none;
 	}

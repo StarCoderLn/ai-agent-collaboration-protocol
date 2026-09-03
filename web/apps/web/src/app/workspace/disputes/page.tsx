@@ -20,11 +20,11 @@ export default function WorkspaceDisputesPage() {
 						</span>
 						<div>
 							<h1 className="font-bold text-3xl tracking-tight">
-								{t("争议与仲裁")}
+								{t("争议处理")}
 							</h1>
 							<p className="mt-2 max-w-2xl text-muted-foreground">
 								{t(
-									"独立核对双方证据、托管金额与资金去向。服务端会再次验证仲裁员角色，普通发布者无法在这里作出决定。",
+									"查看与当前钱包相关的争议卷宗、资金冻结状态和仲裁进度；裁决操作仅向有权限的仲裁成员开放。",
 								)}
 							</p>
 						</div>

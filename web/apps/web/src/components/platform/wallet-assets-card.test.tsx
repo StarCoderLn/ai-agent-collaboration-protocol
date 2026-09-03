@@ -19,10 +19,6 @@ const wallet = vi.hoisted(() => ({
 	connect: vi.fn(async () => undefined),
 }));
 
-vi.mock("wagmi", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("wagmi")>();
-	return { ...actual, useConnection: () => ({ chainId: 31_337 }) };
-});
 vi.mock("@/components/auth/wallet-session-provider", () => ({
 	useWalletSession: () => wallet,
 }));
@@ -78,7 +74,11 @@ describe("Wallet assets card", () => {
 				status: "available",
 				amountMinor: "12800000",
 			},
-			{ asset: directory.assets[1], status: "unavailable" },
+			{
+				asset: directory.assets[1],
+				status: "available",
+				amountMinor: "970005000000000000000000",
+			},
 			{
 				asset: directory.assets[2],
 				status: "available",
@@ -96,20 +96,23 @@ describe("Wallet assets card", () => {
 		renderCard();
 
 		expect(await screen.findByText("12.8")).toBeInTheDocument();
-		expect(screen.getByText("当前钱包网络")).toBeInTheDocument();
-		expect(
-			screen.getAllByText("AICP Local Anvil").length,
-		).toBeGreaterThanOrEqual(1);
+		// 资产目录允许 USDC/ETH 与产品 YD 位于不同网络。每行已经展示权威链，
+		// 卡片不能再用 Wagmi 扩展连接态虚构一个覆盖全部资产的“当前钱包网络”。
+		expect(screen.queryByText("当前钱包网络")).not.toBeInTheDocument();
+		expect(screen.queryByText("钱包网络未连接")).not.toBeInTheDocument();
 		expect(screen.getByText("USDC")).toBeInTheDocument();
 		expect(screen.getByText("任务结算 · AICP Local Anvil")).toBeInTheDocument();
 		expect(screen.getByText("YD")).toBeInTheDocument();
 		expect(screen.getByText("DAO 激励 · Sepolia")).toBeInTheDocument();
+		expect(screen.getByText("970,005")).toBeInTheDocument();
 		// ETH 是资产符号，“网络手续费”才是用途。把 Gas 写进资产名会让用户误认为
 		// 本地链使用了不同于 Sepolia 的特殊代币。
 		expect(screen.getByText("ETH")).toBeInTheDocument();
 		expect(screen.queryByText("Gas ETH")).not.toBeInTheDocument();
-		expect(screen.getByText("网络手续费 · AICP Local Anvil")).toBeInTheDocument();
-		expect(screen.getByText("暂时无法读取")).toBeInTheDocument();
+		expect(
+			screen.getByText("网络手续费 · AICP Local Anvil"),
+		).toBeInTheDocument();
+		expect(screen.queryByText("暂时无法读取")).not.toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole("button", { name: "刷新钱包余额" }));
 		await waitFor(() =>

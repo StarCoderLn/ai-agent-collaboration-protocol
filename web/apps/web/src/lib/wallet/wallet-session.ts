@@ -9,6 +9,7 @@ import {
 import {
 	connect,
 	getConnection,
+	getTransactionCount,
 	readContract,
 	sendTransaction,
 	signMessage,
@@ -19,6 +20,7 @@ import { z } from "zod";
 
 import { BUSINESS_API_BASE_URL } from "../api/base-url";
 import {
+	anvil,
 	metaMaskConnector,
 	requireSupportedChainId,
 	wagmiConfig,
@@ -35,6 +37,7 @@ const nonceSchema = z.object({
 const authenticatedSchema = z.object({
 	authenticated: z.literal(true),
 	walletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+	chainId: z.number().int().positive(),
 });
 const verifiedSchema = z.object({
 	walletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
@@ -42,8 +45,16 @@ const verifiedSchema = z.object({
 const authErrorSchema = z.object({ message: z.string().min(1) }).passthrough();
 const WALLET_PROMPT_TIMEOUT_MS = 60_000;
 const TRANSACTION_RECEIPT_TIMEOUT_MS = 180_000;
+const LOCAL_TRANSACTION_RECEIPT_TIMEOUT_MS = 30_000;
 
-export type WalletSession = Readonly<{ walletAddress: string }>;
+/**
+ * 已认证钱包会话同时携带服务端认可的交易链。`chainId` 不是浏览器扩展的临时
+ * 连接状态，而是本次登录、托管和结算必须遵循的权威网络。
+ */
+export type WalletSession = Readonly<{
+	walletAddress: string;
+	chainId: number;
+}>;
 
 /**
  * 钱包扩展可能在页面与后台消息通道中断后既不成功也不拒绝 Promise。该错误只表示
@@ -68,7 +79,10 @@ export async function restoreWalletSession(): Promise<WalletSession | null> {
 	if (!response.ok) return null;
 	const parsed = authenticatedSchema.safeParse(await safeJson(response));
 	return parsed.success
-		? { walletAddress: parsed.data.walletAddress.toLowerCase() }
+		? {
+				walletAddress: parsed.data.walletAddress.toLowerCase(),
+				chainId: parsed.data.chainId,
+			}
 		: null;
 }
 
@@ -105,7 +119,9 @@ export async function connectWalletSession(): Promise<WalletSession> {
 	) {
 		throw new Error("钱包签名验证失败，请确认网络和账户后重试");
 	}
-	return { walletAddress };
+	// nonce 中的 chainId 来自服务端 SIWE 配置，并已实际用于本次签名；直接把它
+	// 带入会话状态即可，无需为了显示网络再次读取或自动连接 MetaMask。
+	return { walletAddress, chainId };
 }
 
 /**
@@ -160,6 +176,18 @@ export async function sendEscrowTransaction(
 	if (activeAddress.toLowerCase() !== walletAddress.toLowerCase()) {
 		throw new Error("当前 MetaMask 账户与登录钱包不一致，请重新连接钱包");
 	}
+	// MetaMask 会按 chainId 缓存账户 nonce；本地 Anvil 即使使用持久化文件，也可能因
+	// 开发者切换过链实例而让钱包缓存领先于当前链，进而把交易放进永不出块的 queued
+	// 队列。仅在本地验收链显式采用 RPC 的 pending nonce；Sepolia 和主网继续完全交由
+	// 钱包管理，避免覆盖真实网络中的并发交易与加速/替换语义。
+	const localNonce =
+		chainId === anvil.id
+			? await getTransactionCount(wagmiConfig, {
+					address: walletAddress,
+					blockTag: "pending",
+					chainId,
+				})
+			: null;
 	return walletAction(
 		() =>
 			sendTransaction(wagmiConfig, {
@@ -168,6 +196,7 @@ export async function sendEscrowTransaction(
 				to: getAddress(input.transaction.to),
 				data: input.transaction.data as Hex,
 				value: BigInt(0),
+				...(localNonce === null ? {} : { nonce: localNonce }),
 			}),
 		"托管交易未能提交到 MetaMask",
 	);
@@ -234,7 +263,10 @@ export async function ensureEscrowAllowance(
 				hash: approvalHash as Hex,
 			}),
 		"USDC 授权交易未能确认",
-		TRANSACTION_RECEIPT_TIMEOUT_MS,
+		chainId === anvil.id
+			? LOCAL_TRANSACTION_RECEIPT_TIMEOUT_MS
+			: TRANSACTION_RECEIPT_TIMEOUT_MS,
+		"USDC 授权交易长时间未确认。请在钱包活动中检查交易是否仍待处理；资金尚未托管，请勿连续重试。",
 	);
 	if (receipt.status !== "success") {
 		throw new Error("USDC 授权交易执行失败，资金尚未托管");
@@ -300,6 +332,7 @@ async function walletAction<T>(
 	action: () => Promise<T>,
 	fallback: string,
 	timeoutMs = WALLET_PROMPT_TIMEOUT_MS,
+	timeoutMessage = "MetaMask 长时间没有返回交易结果。当前交易状态仍不确定，请先打开 MetaMask 检查待处理或失败记录，再决定是否重试。",
 ): Promise<T> {
 	let timeoutId: ReturnType<typeof setTimeout> | null = null;
 	try {
@@ -307,11 +340,7 @@ async function walletAction<T>(
 			action(),
 			new Promise<never>((_resolve, reject) => {
 				timeoutId = setTimeout(() => {
-					reject(
-						new WalletRequestTimeoutError(
-							"MetaMask 长时间没有返回交易结果。当前交易状态仍不确定，请先打开 MetaMask 检查待处理或失败记录，再决定是否重试。",
-						),
-					);
+					reject(new WalletRequestTimeoutError(timeoutMessage));
 				}, timeoutMs);
 			}),
 		]);

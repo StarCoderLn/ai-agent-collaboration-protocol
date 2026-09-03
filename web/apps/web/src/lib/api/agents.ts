@@ -1,7 +1,6 @@
 import { z } from "zod";
-
-import { BUSINESS_API_BASE_URL } from "./base-url";
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
+import { BUSINESS_API_BASE_URL } from "./base-url";
 
 /**
  * business-api（2.agent-registration）Agent 档案接口的前端客户端。
@@ -38,7 +37,8 @@ const agentSchema = z.object({
 	priceAmount: z.string(),
 	priceCurrency: z.string(),
 	serviceEndpoint: z.string(),
-	email: z.string(),
+	// 历史 Agent 可能保留联系方式；新上架流程不再收集，因此读取边界必须接受 NULL。
+	email: z.string().nullable(),
 	status: z.enum(["pending_review", "active", "paused", "delisted"]),
 	pauseReason: z.enum(["health_check", "manual"]).nullable(),
 	createdAt: z.string(),
@@ -57,7 +57,6 @@ export interface AgentPatchInput {
 	priceAmount?: string;
 	priceCurrency?: string;
 	serviceEndpoint?: string;
-	email?: string;
 }
 
 export interface AgentApiErrorBody {
@@ -168,7 +167,9 @@ export async function replaceAgentCredentials(
 }
 
 /** Agent 私有接口统一处理认证失效，避免读取、编辑和换密钥三条路径产生不同表现。 */
-async function assertAuthenticatedAgentResponse(response: Response): Promise<void> {
+async function assertAuthenticatedAgentResponse(
+	response: Response,
+): Promise<void> {
 	if (response.status === 401) notifyAuthSessionExpired();
 	if (!response.ok) {
 		throw new AgentApiRequestError(

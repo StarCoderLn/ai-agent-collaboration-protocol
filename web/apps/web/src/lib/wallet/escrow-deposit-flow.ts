@@ -18,6 +18,7 @@ const pendingSubmissionSchema = z
 	.object({
 		taskId: z.uuid(),
 		txHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+		amountMinor: z.string().regex(/^\d+$/),
 		createdAt: z.iso.datetime(),
 	})
 	.strict();
@@ -27,6 +28,11 @@ export type PendingEscrowSubmission = Readonly<
 >;
 
 type EscrowDepositStage = "prepare" | "wallet" | "record";
+export type EscrowDepositProgressStage =
+	| "preparing"
+	| "authorizing"
+	| "depositing"
+	| "recording";
 
 /**
  * 托管失败必须区分“尚未广播”和“已经广播”。如果已经拿到交易哈希，页面绝不能把
@@ -52,10 +58,12 @@ export async function startEscrowDeposit(
 		prepareIdempotencyKey: string;
 		submissionIdempotencyKey: string;
 		failureIdempotencyKey: string;
+		onProgress?(stage: EscrowDepositProgressStage): void;
 	}>,
 ): Promise<void> {
 	let prepared: EscrowPrepared | Awaited<ReturnType<typeof retryTaskEscrow>>;
 	try {
+		input.onProgress?.("preparing");
 		prepared = input.retry
 			? await retryTaskEscrow(input.taskId, input.prepareIdempotencyKey)
 			: await prepareTaskEscrow(input.taskId, input.prepareIdempotencyKey);
@@ -73,6 +81,7 @@ export async function startEscrowDeposit(
 		// Escrow 固定绑定一个 USDC 合约。先做“仅当前任务金额”的精确授权，再执行
 		// deposit；不使用无限授权，避免 Escrow 合约失陷时暴露钱包中的其他 USDC。
 		// 授权交易即使成功也不代表资金已托管，平台只登记随后 deposit 的 txHash。
+		input.onProgress?.("authorizing");
 		await ensureEscrowAllowance({
 			walletAddress: input.walletAddress,
 			chainId: safeChainId(prepared.chainId),
@@ -81,6 +90,7 @@ export async function startEscrowDeposit(
 			amountMinor: prepared.amountMinor,
 			approveTransaction: prepared.transactions.approve,
 		});
+		input.onProgress?.("depositing");
 		txHash = await sendEscrowTransaction({
 			walletAddress: input.walletAddress,
 			chainId: safeChainId(prepared.chainId),
@@ -99,11 +109,16 @@ export async function startEscrowDeposit(
 		throw new EscrowDepositFlowError("wallet", failureReason, null, { cause });
 	}
 
-	const pending = rememberPendingSubmission(input.taskId, txHash);
+	const pending = rememberPendingSubmission(
+		input.taskId,
+		txHash,
+		prepared.amountMinor,
+	);
 	try {
+		input.onProgress?.("recording");
 		await submitTaskEscrowTransaction(
 			input.taskId,
-			{ status: "submitted", txHash },
+			{ status: "submitted", txHash, amountMinor: prepared.amountMinor },
 			input.submissionIdempotencyKey,
 		);
 	} catch (cause) {
@@ -141,7 +156,11 @@ export async function resumeEscrowSubmission(
 	try {
 		await submitTaskEscrowTransaction(
 			input.taskId,
-			{ status: "submitted", txHash: input.pendingSubmission.txHash },
+			{
+				status: "submitted",
+				txHash: input.pendingSubmission.txHash,
+				amountMinor: input.pendingSubmission.amountMinor,
+			},
 			input.idempotencyKey,
 		);
 	} catch (cause) {
@@ -240,10 +259,12 @@ async function waitAtMost<T>(
 function rememberPendingSubmission(
 	taskId: string,
 	txHash: string,
+	amountMinor: string,
 ): PendingEscrowSubmission {
 	const pending = pendingSubmissionSchema.parse({
 		taskId,
 		txHash,
+		amountMinor,
 		createdAt: new Date().toISOString(),
 	});
 	try {

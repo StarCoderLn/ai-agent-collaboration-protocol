@@ -212,7 +212,9 @@ function TaskList({ tasks }: { tasks: readonly OwnedTaskSummary[] }) {
 				<WorkspaceState
 					icon={ShieldCheck}
 					title={t("还没有发布任务")}
-					description={t("创建第一个任务即可开始托管、匹配和执行流程。")}
+					description={t(
+						"创建第一个任务即可开始工作流规划、Agent 选择、托管和执行。",
+					)}
 					action={
 						<Button size="lg" render={<Link href="/tasks/new" />}>
 							<CirclePlus className="size-4" />
@@ -231,17 +233,14 @@ function TaskRow({ task }: { task: OwnedTaskSummary }) {
 	return (
 		<article className="grid items-center gap-4 px-5 py-4 md:grid-cols-[minmax(0,1fr)_180px_150px_auto]">
 			<div className="min-w-0">
-				<div className="flex flex-wrap items-center gap-2">
+				<div className="flex items-center">
 					<StatusBadge status={task.status} />
-					<span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-						{task.visibility === "public" ? t("公开") : t("私密")}
-					</span>
-					<span className="font-mono text-[10px] text-muted-foreground">
-						v{task.statusVersion}
-					</span>
 				</div>
 				<h3 className="mt-2 truncate font-semibold">
-					<Link className="hover:text-primary" href={`/tasks/${task.id}`}>
+					<Link
+						className="cursor-pointer hover:text-primary"
+						href={`/tasks/${task.id}?from=workspace`}
+					>
 						{task.title || t("未命名草稿")}
 					</Link>
 				</h3>
@@ -268,7 +267,7 @@ function TaskRow({ task }: { task: OwnedTaskSummary }) {
 			<Button
 				variant="outline"
 				size="lg"
-				render={<Link href={`/tasks/${task.id}`} />}
+				render={<Link href={`/tasks/${task.id}?from=workspace`} />}
 			>
 				{t("继续处理")}
 				<ArrowRight className="size-4" />

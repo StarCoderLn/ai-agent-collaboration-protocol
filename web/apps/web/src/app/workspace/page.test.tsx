@@ -10,7 +10,7 @@ vi.mock("@/components/platform/wallet-assets-card", () => ({
 describe("Workspace entry page", () => {
 	afterEach(cleanup);
 
-	it("通过三个独立入口进入工作台业务模块", () => {
+	it("只展示任务、Agent 与争议处理三个工作台入口", () => {
 		render(<WorkspacePage />);
 
 		expect(
@@ -27,9 +27,13 @@ describe("Workspace entry page", () => {
 			"href",
 			"/workspace/agents",
 		);
-		expect(screen.getByRole("link", { name: /争议与仲裁/ })).toHaveAttribute(
+		expect(screen.getByRole("link", { name: /争议处理/ })).toHaveAttribute(
 			"href",
 			"/workspace/disputes",
 		);
+		// DAO 仲裁是全站级治理能力，入口由主导航统一承载；工作台不再重复展示。
+		expect(
+			screen.queryByRole("link", { name: /DAO 仲裁组织/ }),
+		).not.toBeInTheDocument();
 	});
 });

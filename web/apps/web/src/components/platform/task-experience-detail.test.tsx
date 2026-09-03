@@ -11,28 +11,45 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
 	acceptTaskResult,
+	archiveTask,
+	confirmWorkflowNodeCandidate,
+	type FormalWorkflow,
 	getLatestTaskAssignment,
+	getPublicTask,
 	getTaskAcceptancePreview,
 	getTaskCandidates,
 	getTaskDispute,
 	getTaskEscrowStatus,
 	getTaskExecutionStatus,
 	getTaskPreview,
-	getPublicTask,
 	getTaskWorkflow,
 	listOwnedTasks,
 	listTaskResults,
+	listWorkflowFeedback,
 	rematchTaskCandidates,
+	requestWorkflowNodeRework,
+	retryFailedWorkflowNodeExecution,
+	submitTaskEscrowTransaction,
+	submitWorkflowNodeFeedback,
 	subscribeTaskEvents,
-	updateTaskMatchCriteria,
 	TaskApiRequestError,
-	type FormalWorkflow,
+	type TaskStatus,
+	updateTaskMatchCriteria,
 } from "@/lib/api/tasks";
 import {
 	EscrowDepositFlowError,
 	startEscrowDeposit,
 } from "@/lib/wallet/escrow-deposit-flow";
 import TaskExperienceDetail from "./task-experience-detail";
+
+const navigationMock = vi.hoisted(() => ({
+	replace: vi.fn(),
+	refresh: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+	useRouter: () => navigationMock,
+}));
 
 const walletMock = vi.hoisted(() => ({
 	status: "connected" as
@@ -65,9 +82,16 @@ vi.mock("@/lib/api/tasks", async (importOriginal) => {
 		getTaskWorkflow: vi.fn(),
 		getTaskDispute: vi.fn(),
 		listTaskResults: vi.fn(),
+		listWorkflowFeedback: vi.fn(),
 		getTaskAcceptancePreview: vi.fn(),
 		acceptTaskResult: vi.fn(),
+		archiveTask: vi.fn(),
+		confirmWorkflowNodeCandidate: vi.fn(),
 		rematchTaskCandidates: vi.fn(),
+		requestWorkflowNodeRework: vi.fn(),
+		retryFailedWorkflowNodeExecution: vi.fn(),
+		submitTaskEscrowTransaction: vi.fn(),
+		submitWorkflowNodeFeedback: vi.fn(),
 		subscribeTaskEvents: vi.fn(() => vi.fn()),
 		updateTaskMatchCriteria: vi.fn(),
 	};
@@ -84,6 +108,12 @@ vi.mock("@/lib/wallet/escrow-deposit-flow", async (importOriginal) => {
 
 const taskId = "11111111-1111-4111-8111-111111111111";
 const agentId = "22222222-2222-4222-8222-222222222222";
+
+/** 测试夹具缺失时立即给出明确原因，避免用非空断言掩盖夹具初始化错误。 */
+function requireFixture<T>(value: T | null | undefined, message: string): T {
+	if (value === null || value === undefined) throw new Error(message);
+	return value;
+}
 const categoryId = "40000000-0000-4000-8000-000000000001";
 let subscribedHandlers: Parameters<typeof subscribeTaskEvents>[1] | undefined;
 
@@ -99,6 +129,48 @@ describe("formal task detail", () => {
 			return vi.fn();
 		});
 		vi.mocked(startEscrowDeposit).mockResolvedValue();
+		vi.mocked(listWorkflowFeedback).mockResolvedValue([]);
+		vi.mocked(submitWorkflowNodeFeedback).mockResolvedValue({
+			taskId,
+			workflowNodeId: "33333333-3333-4333-8333-333333333331",
+			feedbackId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			agentId,
+			statusVersion: "12",
+			submittedAt: "2026-08-29T00:30:00.000Z",
+		});
+		vi.mocked(submitTaskEscrowTransaction).mockResolvedValue({
+			taskId,
+			status: "failed",
+			chainId: "31337",
+			contractAddress: "0x1111111111111111111111111111111111111111",
+			taskKey: `0x${"ab".repeat(32)}`,
+			amountMinor: "128000000",
+			txHash: null,
+			confirmations: "0",
+			requiredConfirmations: "12",
+			failureReason: "用户主动放弃了尚未广播的托管准备",
+			updatedAt: "2026-08-23T00:00:00.000Z",
+			chainEventStatus: null,
+		});
+		vi.mocked(archiveTask).mockResolvedValue({ taskId, archived: true });
+		vi.mocked(requestWorkflowNodeRework).mockResolvedValue({
+			taskId,
+			workflowNodeId: "33333333-3333-4333-8333-333333333331",
+			resultId: "77777777-7777-4777-8777-777777777771",
+			requestId: "99999999-9999-4999-8999-999999999991",
+			requestNo: 1,
+			nodeStatus: "rework",
+			nodeVersion: "4",
+			runStatus: "running",
+			runVersion: "4",
+		});
+		vi.mocked(retryFailedWorkflowNodeExecution).mockResolvedValue({
+			taskId,
+			workflowNodeId: "33333333-3333-4333-8333-333333333331",
+			assignmentId: "55555555-5555-4555-8555-555555555555",
+			transitionEventId: "99999999-9999-4999-8999-999999999992",
+			replayed: false,
+		});
 		vi.mocked(getTaskWorkflow).mockRejectedValue(
 			new TaskApiRequestError(404, {
 				error_code: "WORKFLOW_NOT_FOUND",
@@ -279,7 +351,9 @@ describe("formal task detail", () => {
 
 		render(<TaskExperienceDetail taskId={taskId} />);
 
-		expect(await screen.findByRole("heading", { name: "登录已过期" })).toBeInTheDocument();
+		expect(
+			await screen.findByRole("heading", { name: "登录已过期" }),
+		).toBeInTheDocument();
 		expect(screen.getByText("登录已过期，请重新签名登录")).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "重新签名登录" }));
 		expect(walletMock.connect).toHaveBeenCalledTimes(1);
@@ -294,7 +368,9 @@ describe("formal task detail", () => {
 		expect(
 			await screen.findByRole("heading", { name: "当前钱包不是任务发布者" }),
 		).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "重新签名登录" })).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "重新签名登录" }),
+		).not.toBeInTheDocument();
 	});
 
 	it("我的任务接口返回 401 时不再静默降级成公开脱敏视图", async () => {
@@ -330,11 +406,46 @@ describe("formal task detail", () => {
 		);
 	});
 
+	it("根据受控入口返回工作台，直接打开详情时默认返回任务市场", async () => {
+		const view = render(
+			<TaskExperienceDetail taskId={taskId} returnSource="workspace" />,
+		);
+
+		expect(
+			await screen.findByRole("link", { name: "返回工作台" }),
+		).toHaveAttribute("href", "/workspace/tasks");
+
+		view.unmount();
+		render(<TaskExperienceDetail taskId={taskId} />);
+		expect(
+			await screen.findByRole("link", { name: "返回任务市场" }),
+		).toHaveAttribute("href", "/tasks");
+	});
+
+	it("只允许规划前任务通过确认操作软删除，并在成功后返回工作台", async () => {
+		await setTaskStatus("planning");
+		render(<TaskExperienceDetail taskId={taskId} returnSource="workspace" />);
+
+		const archiveButton = await screen.findByRole("button", {
+			name: "删除任务",
+		});
+		expect(archiveButton).toHaveClass("rounded-xl", "border-destructive/20");
+		fireEvent.click(archiveButton);
+		expect(screen.getByText("确认删除这个任务？")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+		await waitFor(() =>
+			expect(archiveTask).toHaveBeenCalledWith(taskId, expect.any(String)),
+		);
+		expect(navigationMock.replace).toHaveBeenCalledWith("/workspace/tasks");
+		expect(navigationMock.refresh).toHaveBeenCalled();
+	});
+
 	it("使用 Tab 切换已发生阶段，并删除重复的分配图按钮", async () => {
 		render(<TaskExperienceDetail taskId={taskId} />);
 
 		const publishTab = await screen.findByRole("tab", {
-			name: "查看发布与托管阶段详情",
+			name: "查看发布需求阶段详情",
 		});
 		const matchingTab = screen.getByRole("tab", {
 			name: "查看匹配与接单阶段详情",
@@ -355,7 +466,7 @@ describe("formal task detail", () => {
 
 		fireEvent.click(publishTab);
 		expect(publishTab).toHaveAttribute("aria-selected", "true");
-		expect(screen.getByText("任务说明")).toBeInTheDocument();
+		expect(screen.getByText("发布时的需求记录")).toBeInTheDocument();
 		expect(screen.queryByText("Agent 执行关系")).not.toBeInTheDocument();
 
 		fireEvent.click(matchingTab);
@@ -381,7 +492,9 @@ describe("formal task detail", () => {
 		});
 
 		// 持久化产物已经出现，因此页面首次加载应直接定位到交付验收阶段。
-		await waitFor(() => expect(reviewTab).toHaveAttribute("aria-selected", "true"));
+		await waitFor(() =>
+			expect(reviewTab).toHaveAttribute("aria-selected", "true"),
+		);
 		expect(screen.getByText("阶段交付与验收")).toBeInTheDocument();
 		expect(screen.queryByText("Agent 分配关系图")).not.toBeInTheDocument();
 
@@ -395,6 +508,174 @@ describe("formal task detail", () => {
 		fireEvent.click(reviewTab);
 		expect(screen.getByText("阶段交付与验收")).toBeInTheDocument();
 		expect(screen.queryByText("Agent 分配关系图")).not.toBeInTheDocument();
+	});
+
+	it("任务结算后把最后阶段显示为绿色完成态并开放逐阶段反馈", async () => {
+		await setTaskStatus("settled");
+		const workflow = formalWorkflowFixture();
+		vi.mocked(getTaskWorkflow).mockResolvedValue({
+			...workflow,
+			run: { ...workflow.run, status: "completed" },
+		});
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		const settlementTab = await screen.findByRole("tab", {
+			name: "查看结算或争议阶段详情",
+		});
+		expect(settlementTab).toHaveAttribute("aria-selected", "true");
+		expect(settlementTab).toHaveClass(
+			"bg-primary-container/70",
+			"text-primary",
+		);
+		expect(settlementTab).not.toHaveClass("bg-success/10");
+		expect(within(settlementTab).queryByText("5")).not.toBeInTheDocument();
+		expect(settlementTab.querySelector("svg.lucide-check")).not.toBeNull();
+		expect(
+			await screen.findByRole("heading", {
+				name: "评价每个阶段的实际交付",
+			}),
+		).toBeInTheDocument();
+		expect(screen.getAllByText("快速需求整理 Agent").length).toBeGreaterThan(0);
+
+		fireEvent.click(screen.getByRole("tab", { name: "查看交付验收阶段详情" }));
+		expect(settlementTab).toHaveClass("text-success");
+		expect(settlementTab).not.toHaveClass("bg-primary-container/70");
+	});
+
+	it("逐阶段反馈只提交评分内容和节点 ID，不允许客户端指定 Agent", async () => {
+		await setTaskStatus("settled");
+		const workflow = formalWorkflowFixture();
+		vi.mocked(getTaskWorkflow).mockResolvedValue({
+			...workflow,
+			run: { ...workflow.run, status: "completed" },
+		});
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		await screen.findByRole("heading", {
+			name: "评价每个阶段的实际交付",
+		});
+		fireEvent.click(screen.getByRole("button", { name: "交付质量 4 分" }));
+		fireEvent.click(screen.getByRole("button", { name: "沟通体验 3 分" }));
+		fireEvent.click(screen.getByRole("button", { name: "设计还原到位" }));
+		fireEvent.change(
+			screen.getByPlaceholderText("例如：页面结构清晰，交互可以直接体验。"),
+			{
+				target: { value: "页面结构清晰，交互可以直接体验。" },
+			},
+		);
+		fireEvent.click(screen.getByRole("button", { name: "提交该阶段反馈" }));
+
+		await waitFor(() =>
+			expect(submitWorkflowNodeFeedback).toHaveBeenCalledWith(
+				taskId,
+				workflow.nodes[0]?.id,
+				{
+					quality: 4,
+					communication: 3,
+					comment: "页面结构清晰，交互可以直接体验。",
+					strengths: ["design_fidelity"],
+					allowModelTraining: false,
+				},
+				expect.stringMatching(/^workflow-feedback:/),
+			),
+		);
+	});
+
+	it("返工命令成功后自动切回 Agent 执行阶段并展示返工状态", async () => {
+		await setTaskStatus("awaiting_review");
+		const reviewWorkflow = formalWorkflowNodeStateFixture("awaiting_review");
+		const reworkWorkflow = formalWorkflowNodeStateFixture("rework", 95);
+		vi.mocked(getTaskWorkflow)
+			.mockResolvedValueOnce(reviewWorkflow)
+			.mockResolvedValue(reworkWorkflow);
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		const reviewTab = await screen.findByRole("tab", {
+			name: "查看交付验收阶段详情",
+		});
+		expect(reviewTab).toHaveAttribute("aria-selected", "true");
+		fireEvent.change(screen.getByLabelText("返工说明"), {
+			target: { value: "导航和配色没有达到验收标准，请按设计稿返工。" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "要求该阶段返工" }));
+
+		await waitFor(() =>
+			expect(requestWorkflowNodeRework).toHaveBeenCalledWith(
+				taskId,
+				reviewWorkflow.nodes[0]?.id,
+				expect.objectContaining({
+					reason: "导航和配色没有达到验收标准，请按设计稿返工。",
+				}),
+				expect.stringMatching(/^workflow-rework:/),
+			),
+		);
+		const executionTab = screen.getByRole("tab", {
+			name: "查看Agent 执行阶段详情",
+		});
+		await waitFor(() =>
+			expect(executionTab).toHaveAttribute("aria-selected", "true"),
+		);
+		expect(
+			(await screen.findAllByText("返工中")).length,
+		).toBeGreaterThanOrEqual(2);
+		expect(screen.queryByText("该阶段执行已完成")).not.toBeInTheDocument();
+	});
+
+	it("重试后即使产物随后进入验收，也不强制把用户从执行阶段切走", async () => {
+		await setTaskStatus("execution_failed");
+		const failedWorkflow = formalWorkflowNodeStateFixture(
+			"execution_failed",
+			10,
+			false,
+		);
+		const executingWorkflow = formalWorkflowNodeStateFixture(
+			"executing",
+			20,
+			false,
+		);
+		const reviewWorkflow = formalWorkflowNodeStateFixture(
+			"awaiting_review",
+			100,
+		);
+		vi.mocked(getTaskWorkflow)
+			.mockResolvedValueOnce(failedWorkflow)
+			.mockResolvedValue(executingWorkflow);
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		const executionTab = await screen.findByRole("tab", {
+			name: "查看Agent 执行阶段详情",
+		});
+		expect(executionTab).toHaveAttribute("aria-selected", "true");
+		fireEvent.click(screen.getByRole("button", { name: "重试当前 Agent" }));
+		await waitFor(() =>
+			expect(retryFailedWorkflowNodeExecution).toHaveBeenCalledWith(
+				taskId,
+				failedWorkflow.nodes[0]?.id,
+				expect.stringMatching(/^workflow-execution-retry:/),
+			),
+		);
+		await waitFor(() => expect(screen.getByText("20%")).toBeInTheDocument());
+
+		// 模拟 Agent 很快完成并由 SSE 触发权威补拉。产物可验收不等于页面应抢走
+		// 用户当前视角；交付验收 Tab 会开放，但仍由用户自己决定何时切换。
+		vi.mocked(getTaskWorkflow).mockResolvedValue(reviewWorkflow);
+		await waitFor(() => expect(subscribedHandlers).toBeDefined());
+		act(() =>
+			subscribedHandlers?.onEvent({
+				id: "99",
+				type: "task.execution_completed",
+				taskId,
+				statusVersion: "99",
+				payload: { status: "awaiting_review" },
+				createdAt: "2026-08-29T00:30:00.000Z",
+			}),
+		);
+		await waitFor(() => expect(getTaskWorkflow).toHaveBeenCalledTimes(3));
+		expect(executionTab).toHaveAttribute("aria-selected", "true");
 	});
 
 	it("shows the authoritative pending-confirmation state after MetaMask submission", async () => {
@@ -412,51 +693,161 @@ describe("formal task detail", () => {
 		expect(await screen.findByText("资金正在链上确认")).toBeInTheDocument();
 		expect(
 			screen.getByText(
-				"确认完成后将自动开始匹配；链重组会触发回退或人工复核。",
+				"确认完成后将按依赖顺序派发已选 Agent；链重组会触发回退或人工复核。",
 			),
 		).toBeInTheDocument();
-		expect(screen.getAllByText("确认中").length).toBeGreaterThanOrEqual(1);
 		expect(
 			screen.queryByRole("button", { name: /托管/ }),
 		).not.toBeInTheDocument();
 	});
 
-	it("offers a real retry only for a server-confirmed failed deposit", async () => {
+	it("旧版任务缺少工作流且只有未广播的准备记录时不再展示托管入口", async () => {
+		await setTaskStatus("awaiting_escrow");
+		vi.mocked(getTaskEscrowStatus).mockResolvedValue({
+			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
+			status: "prepared",
+			txHash: null,
+			chainEventStatus: null,
+		});
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		expect(
+			await screen.findByText("该任务尚未冻结 Agent 与报价"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(/平台会先拆分执行阶段、推荐 Agent/),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "重新发布需求" }),
+		).toHaveAttribute("href", "/tasks/new");
+		expect(
+			screen.queryByRole("button", { name: /托管/ }),
+		).not.toBeInTheDocument();
+		expect(screen.queryByText("Agent 执行关系")).not.toBeInTheDocument();
+	});
+
+	it("offers retry and reselection only for a verified pre-broadcast wallet failure", async () => {
 		await setTaskStatus("awaiting_escrow");
 		vi.mocked(getTaskEscrowStatus).mockResolvedValue({
 			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
 			status: "failed",
 			failureReason: "钱包拒绝了上一笔交易",
-			chainEventStatus: "failed",
+			txHash: null,
+			chainEventStatus: null,
 		});
+		vi.mocked(getTaskWorkflow).mockResolvedValue(
+			planningWorkflowFixture("128000000"),
+		);
 
 		render(<TaskExperienceDetail taskId={taskId} />);
 
 		expect(
 			await screen.findByText("托管未完成，可以安全重试"),
 		).toBeInTheDocument();
-		expect(
-			screen.getByRole("button", { name: "重新开始托管" }),
-		).toBeEnabled();
+		expect(screen.getByRole("button", { name: "重新开始托管" })).toBeEnabled();
 		expect(screen.getByText("钱包拒绝了上一笔交易")).toBeInTheDocument();
 	});
 
-	it("先展示任务要求，再用简明摘要确认托管金额并按需展开费用分配", async () => {
+	it("存在交易哈希或链事件的失败状态只允许核实，不开放重试和改选", async () => {
+		await setTaskStatus("awaiting_escrow");
+		vi.mocked(getTaskEscrowStatus).mockResolvedValue({
+			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
+			status: "failed",
+			failureReason: "链上结果尚未确认",
+			txHash: `0x${"ef".repeat(32)}`,
+			chainEventStatus: "failed",
+		});
+		vi.mocked(getTaskWorkflow).mockResolvedValue(reselectionWorkflowFixture());
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		expect(await screen.findByText("托管结果需要核实")).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "重新开始托管" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "重新选择该阶段 Agent" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("在已选 Agent 区直接放弃尚未广播的托管准备并恢复改选", async () => {
+		await setTaskStatus("awaiting_escrow");
+		const preparedStatus = {
+			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
+			status: "prepared" as const,
+			txHash: null,
+			chainEventStatus: null,
+		};
+		vi.mocked(getTaskEscrowStatus)
+			.mockResolvedValueOnce(preparedStatus)
+			.mockResolvedValue({
+				...preparedStatus,
+				status: "failed",
+				failureReason: "用户主动放弃了尚未广播的托管准备",
+			});
+		vi.mocked(getTaskWorkflow).mockResolvedValue(reselectionWorkflowFixture());
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		fireEvent.click(
+			await screen.findByRole("button", {
+				name: "重新选择该阶段 Agent",
+			}),
+		);
+		expect(
+			screen.getByText("确认 MetaMask 中没有待处理的存入交易"),
+		).toBeInTheDocument();
+		fireEvent.click(
+			screen.getByRole("button", { name: "确认并查看候选 Agent" }),
+		);
+		await waitFor(() =>
+			expect(submitTaskEscrowTransaction).toHaveBeenCalledWith(
+				taskId,
+				{
+					status: "failed",
+					failureReason: "用户主动放弃了尚未广播的托管准备",
+				},
+				expect.stringContaining("escrow-abandoned-for-reselection"),
+			),
+		);
+		expect(
+			screen.queryByRole("button", {
+				name: "想更换 Agent？先放弃本次托管准备",
+			}),
+		).not.toBeInTheDocument();
+
+		// 提交成功后必须等待父页面刷新到 failed 权威状态，再自动展开刚才所选阶段的
+		// 冻结候选；不能只把按钮解锁后仍要求用户重复点击一次。
+		expect(
+			await screen.findByRole("button", { name: "更换为此 Agent" }),
+		).toBeEnabled();
+	});
+
+	it("先在发布需求阶段展示任务要求，再在规划阶段确认托管金额与费用分配", async () => {
 		await setTaskStatus("awaiting_escrow");
 		vi.mocked(getTaskEscrowStatus).mockResolvedValue({
 			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
 			status: "prepared",
 		});
+		vi.mocked(getTaskWorkflow).mockResolvedValue(
+			planningWorkflowFixture("128000000"),
+		);
 
 		render(<TaskExperienceDetail taskId={taskId} />);
 
-		const escrowHeading = await screen.findByText("将 128 USDC 存入托管");
-		const taskOverviewHeading = screen.getByText("任务说明");
-		// 资金操作必须在任务要求之后出现，避免发布者尚未复核需求就先看到付款动作。
-		expect(
-			taskOverviewHeading.compareDocumentPosition(escrowHeading) &
-				Node.DOCUMENT_POSITION_FOLLOWING,
-		).not.toBe(0);
+		const publishTab = await screen.findByRole("tab", {
+			name: "查看发布需求阶段详情",
+		});
+		const planningTab = screen.getByRole("tab", {
+			name: "查看匹配与接单阶段详情",
+		});
+		fireEvent.click(publishTab);
+		expect(screen.getByText("发布时的需求记录")).toBeInTheDocument();
+		expect(screen.queryByText("将 128 USDC 存入托管")).not.toBeInTheDocument();
+
+		fireEvent.click(planningTab);
+		await screen.findByText("将 128 USDC 存入托管");
 
 		expect(screen.getByLabelText("托管金额确认")).toBeInTheDocument();
 		expect(screen.getByText("本次需托管")).toBeInTheDocument();
@@ -478,12 +869,82 @@ describe("formal task detail", () => {
 		).toBeEnabled();
 	});
 
+	it("正式工作流按冻结报价总和展示托管与费用，不再沿用发布时的预算上限", async () => {
+		await setTaskStatus("awaiting_escrow");
+		vi.mocked(getTaskEscrowStatus).mockResolvedValue({
+			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
+			status: "prepared",
+		});
+		vi.mocked(getTaskWorkflow).mockResolvedValue(planningWorkflowFixture());
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		expect(await screen.findByText("将 60 USDC 存入托管")).toBeInTheDocument();
+		expect(screen.getByText("59.76 USDC")).toBeInTheDocument();
+		expect(screen.getByText("0.24 USDC")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "开始托管 60 USDC" }),
+		).toBeEnabled();
+		const allocationGraph = screen
+			.getByText("Agent 分配关系图")
+			.closest("section");
+		const escrowPanel = screen
+			.getByText("将 60 USDC 存入托管")
+			.closest("section");
+		expect(allocationGraph).not.toBeNull();
+		expect(escrowPanel).not.toBeNull();
+		expect(
+			allocationGraph?.compareDocumentPosition(escrowPanel as Node) ?? 0,
+		).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+	});
+
+	it("改选 Agent 失败时只在候选区就地提示，不在页面顶部重复报错", async () => {
+		await setTaskStatus("awaiting_escrow");
+		vi.mocked(getTaskEscrowStatus).mockRejectedValue(
+			new TaskApiRequestError(404, {
+				error_code: "ESCROW_NOT_FOUND",
+				message: "尚未创建托管意图",
+				retryable: false,
+			}),
+		);
+		vi.mocked(getTaskWorkflow).mockResolvedValue(reselectionWorkflowFixture());
+		vi.mocked(confirmWorkflowNodeCandidate).mockRejectedValue(
+			new TaskApiRequestError(409, {
+				error_code: "ESCROW_SELECTION_LOCKED",
+				message: "托管已经开始，请刷新后查看当前状态",
+				retryable: false,
+			}),
+		);
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		fireEvent.click(
+			await screen.findByRole("button", {
+				name: "重新选择该阶段 Agent",
+			}),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "更换为此 Agent" }));
+
+		expect(
+			await screen.findByText("托管已经开始，请刷新后查看当前状态"),
+		).toHaveAttribute("role", "alert");
+		expect(
+			screen.getAllByText("托管已经开始，请刷新后查看当前状态"),
+		).toHaveLength(1);
+		expect(
+			screen.getByRole("button", { name: "更换为此 Agent" }),
+		).toBeEnabled();
+	});
+
 	it("托管失败后恢复按钮并在资金操作旁显示原因", async () => {
 		await setTaskStatus("awaiting_escrow");
 		vi.mocked(getTaskEscrowStatus).mockResolvedValue({
 			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
 			status: "prepared",
 		});
+		vi.mocked(getTaskWorkflow).mockResolvedValue(
+			planningWorkflowFixture("128000000"),
+		);
 		vi.mocked(startEscrowDeposit).mockRejectedValue(
 			new EscrowDepositFlowError(
 				"wallet",
@@ -508,12 +969,53 @@ describe("formal task detail", () => {
 		expect(screen.queryByText("重试")).not.toBeInTheDocument();
 	});
 
+	it("Approve 返回后明确展示正在完成授权，不再误称仍在等待 MetaMask", async () => {
+		await setTaskStatus("awaiting_escrow");
+		vi.mocked(getTaskEscrowStatus).mockResolvedValue({
+			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
+			status: "prepared",
+		});
+		vi.mocked(getTaskWorkflow).mockResolvedValue(
+			planningWorkflowFixture("128000000"),
+		);
+		let finishDeposit: (() => void) | undefined;
+		vi.mocked(startEscrowDeposit).mockImplementation(
+			(input) =>
+				new Promise<void>((resolve) => {
+					input.onProgress?.("authorizing");
+					finishDeposit = resolve;
+				}),
+		);
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		fireEvent.click(
+			await screen.findByRole("button", { name: "开始托管 128 USDC" }),
+		);
+		expect(
+			await screen.findByRole("button", { name: "正在完成 USDC 授权" }),
+		).toBeDisabled();
+		expect(
+			screen.queryByText("等待 MetaMask 返回结果"),
+		).not.toBeInTheDocument();
+
+		await act(async () => finishDeposit?.());
+		await waitFor(() =>
+			expect(
+				screen.getByRole("button", { name: "开始托管 128 USDC" }),
+			).toBeEnabled(),
+		);
+	});
+
 	it("托管交易已提交后即使状态补拉卡住也不会继续锁住按钮", async () => {
 		await setTaskStatus("awaiting_escrow");
 		vi.mocked(getTaskEscrowStatus).mockResolvedValue({
 			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
 			status: "prepared",
 		});
+		vi.mocked(getTaskWorkflow).mockResolvedValue(
+			planningWorkflowFixture("128000000"),
+		);
 
 		render(<TaskExperienceDetail taskId={taskId} />);
 
@@ -533,7 +1035,10 @@ describe("formal task detail", () => {
 	it("shows the complete candidate comparison fields from the frozen matching record", async () => {
 		await setTaskStatus("matching");
 		vi.mocked(getTaskCandidates).mockResolvedValue({
-			...(await vi.mocked(getTaskCandidates)(taskId))!,
+			...requireFixture(
+				await vi.mocked(getTaskCandidates)(taskId),
+				"测试夹具必须包含候选快照",
+			),
 			candidates: [
 				{
 					agentId,
@@ -603,7 +1108,10 @@ describe("formal task detail", () => {
 	it("explains concrete filter reasons when no candidate satisfies the hard constraints", async () => {
 		await setTaskStatus("matching");
 		vi.mocked(getTaskCandidates).mockResolvedValue({
-			...(await vi.mocked(getTaskCandidates)(taskId))!,
+			...requireFixture(
+				await vi.mocked(getTaskCandidates)(taskId),
+				"测试夹具必须包含候选快照",
+			),
 			candidates: [],
 			filterReasons: {
 				"33333333-3333-4333-8333-333333333331": "over_budget",
@@ -628,7 +1136,10 @@ describe("formal task detail", () => {
 	it("lets the publisher adjust safe criteria and creates a new matching request", async () => {
 		await setTaskStatus("matching");
 		vi.mocked(getTaskCandidates).mockResolvedValue({
-			...(await vi.mocked(getTaskCandidates)(taskId))!,
+			...requireFixture(
+				await vi.mocked(getTaskCandidates)(taskId),
+				"测试夹具必须包含候选快照",
+			),
 			candidates: [],
 			filterReasons: {
 				"33333333-3333-4333-8333-333333333331": "cannot_meet_deadline",
@@ -689,9 +1200,13 @@ describe("formal task detail", () => {
 	});
 
 	it("shows an actionable, sanitized failure state while keeping funds in escrow", async () => {
+		const task = requireFixture(
+			(await vi.mocked(listOwnedTasks)())[0],
+			"测试夹具必须包含任务",
+		);
 		vi.mocked(listOwnedTasks).mockResolvedValue([
 			{
-				...(await vi.mocked(listOwnedTasks)())[0]!,
+				...task,
 				status: "execution_failed",
 				statusVersion: "9",
 			},
@@ -730,7 +1245,10 @@ describe("formal task detail", () => {
 	});
 
 	it("shows a signed request for more information and the Agent ETA", async () => {
-		const task = (await vi.mocked(listOwnedTasks)())[0]!;
+		const task = requireFixture(
+			(await vi.mocked(listOwnedTasks)())[0],
+			"测试夹具必须包含任务",
+		);
 		const preview = await vi.mocked(getTaskPreview)(taskId);
 		vi.mocked(listOwnedTasks).mockResolvedValue([
 			{ ...task, status: "executing", statusVersion: "8" },
@@ -763,7 +1281,10 @@ describe("formal task detail", () => {
 	});
 
 	it("recovers the dispute id from replayed task events after a page refresh", async () => {
-		const task = (await vi.mocked(listOwnedTasks)())[0]!;
+		const task = requireFixture(
+			(await vi.mocked(listOwnedTasks)())[0],
+			"测试夹具必须包含任务",
+		);
 		const preview = await vi.mocked(getTaskPreview)(taskId);
 		vi.mocked(listOwnedTasks).mockResolvedValue([
 			{ ...task, status: "disputed", statusVersion: "10" },
@@ -797,6 +1318,8 @@ describe("formal task detail", () => {
 			evidence: [],
 			decision: null,
 			viewerRole: "publisher",
+			viewerCanPlatformDecide: false,
+			daoArbitration: null,
 		});
 
 		render(<TaskExperienceDetail taskId={taskId} />);
@@ -824,7 +1347,10 @@ describe("formal task detail", () => {
 
 	it("shows authoritative settlement terms before enabling acceptance", async () => {
 		const resultId = "66666666-6666-4666-8666-666666666666";
-		const task = (await vi.mocked(listOwnedTasks)())[0]!;
+		const task = requireFixture(
+			(await vi.mocked(listOwnedTasks)())[0],
+			"测试夹具必须包含任务",
+		);
 		const taskPreview = await vi.mocked(getTaskPreview)(taskId);
 		vi.mocked(listOwnedTasks).mockResolvedValue([
 			{
@@ -908,9 +1434,7 @@ describe("formal task detail", () => {
 	});
 });
 
-async function setTaskStatus(
-	status: "matching" | "awaiting_escrow" | "executing",
-) {
+async function setTaskStatus(status: TaskStatus) {
 	const task = (await vi.mocked(listOwnedTasks)())[0];
 	if (task === undefined) throw new Error("TASK_FIXTURE_REQUIRED");
 	const preview = await vi.mocked(getTaskPreview)(taskId);
@@ -922,9 +1446,10 @@ async function setTaskStatus(
 		statusVersion: task.statusVersion,
 		progress: 0,
 		lastReportedAt: null,
-		executionState: "running",
-		failureCode: null,
-		failedAt: null,
+		executionState: status === "execution_failed" ? "failed" : "running",
+		failureCode:
+			status === "execution_failed" ? "MODEL_EXECUTION_FAILED" : null,
+		failedAt: status === "execution_failed" ? "2026-08-29T00:25:00.000Z" : null,
 		lastEventId: task.statusVersion,
 	});
 }
@@ -946,6 +1471,9 @@ function formalWorkflowFixture(): FormalWorkflow {
 			totalBudgetMinor: "128000000",
 			releasedAmountMinor: "0",
 			refundableAmountMinor: "128000000",
+			budgetPreferenceMinor: null,
+			quotedTotalMinor: "128000000",
+			quoteConfirmedAt: "2026-08-29T00:05:00.000Z",
 			createdAt: "2026-08-29T00:00:00.000Z",
 			updatedAt: "2026-08-29T00:20:00.000Z",
 		},
@@ -962,10 +1490,17 @@ function formalWorkflowFixture(): FormalWorkflow {
 				inputContract: "task.v1",
 				outputContract: "prd.v1",
 				budgetCapMinor: "24000000",
+				pricePreferenceMinor: null,
+				pricePreferenceWeight: 100,
 				positionIndex: 0,
 				status: "accepted",
 				version: "3",
 				acceptedAt: "2026-08-29T00:20:00.000Z",
+				selection: {
+					agentId,
+					agentName: "快速需求整理 Agent",
+					agreedAmountMinor: "12000000",
+				},
 				assignment: {
 					id: "55555555-5555-4555-8555-555555555555",
 					agentId,
@@ -974,7 +1509,13 @@ function formalWorkflowFixture(): FormalWorkflow {
 					agreedAmountMinor: "12000000",
 					acceptBy: "2026-08-29T00:10:00.000Z",
 				},
-				execution: { progress: 100, state: "completed" },
+				execution: {
+					progress: 100,
+					state: "completed",
+					failureCode: null,
+					failureStage: null,
+					attentionMessage: null,
+				},
 				candidateRecord: null,
 				latestResultBatch: {
 					id: "66666666-6666-4666-8666-666666666666",
@@ -1008,5 +1549,125 @@ function formalWorkflowFixture(): FormalWorkflow {
 			},
 		],
 		edges: [],
+	};
+}
+
+/**
+ * 在同一份历史产物上切换节点权威状态，专门复现“返工仍保留旧产物”和“重试后快速
+ * 进入验收”两条真实路径。includeArtifact=false 用于执行失败和刚刚重试的中间态。
+ */
+function formalWorkflowNodeStateFixture(
+	status: FormalWorkflow["nodes"][number]["status"],
+	progress = status === "awaiting_review" ? 100 : 95,
+	includeArtifact = true,
+): FormalWorkflow {
+	const workflow = formalWorkflowFixture();
+	const node = workflow.nodes[0];
+	if (node === undefined) throw new Error("正式工作流测试夹具必须包含一个节点");
+	return {
+		...workflow,
+		run: {
+			...workflow.run,
+			status: status === "awaiting_review" ? "awaiting_review" : "running",
+		},
+		nodes: [
+			{
+				...node,
+				status,
+				acceptedAt: null,
+				execution: {
+					progress,
+					state: status === "execution_failed" ? "failed" : "running",
+					failureCode:
+						status === "execution_failed" ? "MODEL_EXECUTION_FAILED" : null,
+					failureStage: null,
+					attentionMessage: null,
+				},
+				latestResultBatch: includeArtifact ? node.latestResultBatch : null,
+				acceptance: null,
+			},
+		],
+	};
+}
+
+/** 构造已经完成全部选人、但尚未托管的单节点工作流，固定“准确报价替代预算估计”。 */
+function planningWorkflowFixture(
+	quotedTotalMinor = "60000000",
+): FormalWorkflow {
+	const workflow = formalWorkflowFixture();
+	const node = workflow.nodes[0];
+	if (node === undefined) throw new Error("FORMAL_WORKFLOW_NODE_REQUIRED");
+	return {
+		...workflow,
+		run: {
+			...workflow.run,
+			status: "planning",
+			totalBudgetMinor: quotedTotalMinor,
+			refundableAmountMinor: quotedTotalMinor,
+			quotedTotalMinor,
+			quoteConfirmedAt: "2026-08-29T00:05:00.000Z",
+		},
+		nodes: [
+			{
+				...node,
+				status: "selected",
+				acceptedAt: null,
+				selection: {
+					agentId,
+					agentName: "快速需求整理 Agent",
+					agreedAmountMinor: quotedTotalMinor,
+				},
+				assignment: null,
+				execution: null,
+				candidateRecord: null,
+				latestResultBatch: null,
+				acceptance: null,
+			},
+		],
+	};
+}
+
+/** 构造托管前可改选的冻结候选，验证页面错误反馈和真实改选命令共用同一条链路。 */
+function reselectionWorkflowFixture(): FormalWorkflow {
+	const workflow = planningWorkflowFixture();
+	const node = workflow.nodes[0];
+	if (node === undefined) throw new Error("FORMAL_WORKFLOW_NODE_REQUIRED");
+	const sharedCandidate = {
+		matchedTags: ["prd"],
+		unmatchedTags: [] as string[],
+		quoteMinor: "60000000",
+		estimatedDurationSeconds: 600,
+		score: 4.8,
+		completed: 12,
+		responseMinutes: 2,
+		isNew: false,
+		rankScore: "980",
+	};
+	return {
+		...workflow,
+		nodes: [
+			{
+				...node,
+				candidateRecord: {
+					id: "99999999-9999-4999-8999-999999999999",
+					ruleVersion: "ranking-v1",
+					finalSelectionAgentId: agentId,
+					candidates: [
+						{
+							...sharedCandidate,
+							agentId,
+							name: "快速需求整理 Agent",
+						},
+						{
+							...sharedCandidate,
+							agentId: "22222222-2222-4222-8222-222222222223",
+							name: "深度需求分析 Agent",
+							quoteMinor: "52000000",
+							rankScore: "950",
+						},
+					],
+				},
+			},
+		],
 	};
 }

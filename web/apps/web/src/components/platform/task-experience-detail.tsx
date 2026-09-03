@@ -22,11 +22,13 @@ import {
 	ShieldCheck,
 	Sparkles,
 	Star,
+	Trash2,
 	Wallet,
 	WalletCards,
 	XCircle,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
 	useCallback,
 	useEffect,
@@ -39,12 +41,16 @@ import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import ResultDeliverableWorkspace from "@/components/deliverables/result-deliverable-workspace";
 import { useLocale } from "@/components/i18n/locale-provider";
 import { DatePicker } from "@/components/platform/date-picker";
-import FormalWorkflowView from "@/components/platform/formal-workflow-view";
+import FormalWorkflowView, {
+	type SelectionActionResult,
+} from "@/components/platform/formal-workflow-view";
 import TaskAgentAllocationGraph from "@/components/platform/task-agent-allocation-graph";
 import {
 	acceptTaskResult,
+	archiveTask,
 	confirmTaskCandidate,
 	type EscrowStatus,
+	type FormalWorkflow,
 	getLatestTaskAssignment,
 	getPublicTask,
 	getTaskAcceptancePreview,
@@ -56,6 +62,7 @@ import {
 	getTaskWorkflow,
 	listOwnedTasks,
 	listTaskResults,
+	listWorkflowFeedback,
 	type OwnedTaskSummary,
 	openTaskDispute,
 	type PublicTask,
@@ -63,7 +70,9 @@ import {
 	requestTaskRework,
 	retryFailedTaskExecution,
 	submitTaskDisputeEvidence,
+	submitTaskEscrowTransaction,
 	submitTaskRating,
+	submitWorkflowNodeFeedback,
 	subscribeTaskEvents,
 	type TaskAcceptancePreview,
 	TaskApiRequestError,
@@ -72,12 +81,14 @@ import {
 	type TaskDispute,
 	type TaskEventData,
 	type TaskExecutionStatus,
-	type FormalWorkflow,
 	type TaskPreview,
 	type TaskRatingInput,
 	type TaskResult,
 	type TaskStatus,
 	updateTaskMatchCriteria,
+	type WorkflowFeedback,
+	type WorkflowFeedbackInput,
+	type WorkflowFeedbackStrength,
 } from "@/lib/api/tasks";
 import type { MessageId } from "@/lib/i18n/messages";
 import {
@@ -89,6 +100,7 @@ import { formatMinorAmount } from "@/lib/platform/money";
 import {
 	advanceLocalChainForDemo,
 	EscrowDepositFlowError,
+	type EscrowDepositProgressStage,
 	forgetPendingEscrowSubmission,
 	type PendingEscrowSubmission,
 	readPendingEscrowSubmission,
@@ -98,8 +110,16 @@ import {
 import { StatusBadge } from "./status-badge";
 
 const FLOW: readonly { statuses: readonly TaskStatus[]; label: string }[] = [
-	{ statuses: ["draft", "awaiting_escrow"], label: "发布与托管" },
-	{ statuses: ["matching", "awaiting_agent_acceptance"], label: "匹配与接单" },
+	{ statuses: ["draft"], label: "发布需求" },
+	{
+		statuses: [
+			"planning",
+			"awaiting_escrow",
+			"matching",
+			"awaiting_agent_acceptance",
+		],
+		label: "匹配与接单",
+	},
 	{
 		statuses: ["executing", "rework", "execution_failed"],
 		label: "Agent 执行",
@@ -121,6 +141,7 @@ type LoadedTask = Readonly<{
 	execution: TaskExecutionStatus | null;
 	results: readonly TaskResult[];
 	workflow: FormalWorkflow | null;
+	workflowFeedback: readonly WorkflowFeedback[];
 }>;
 
 type TaskDisplay = Readonly<{
@@ -144,14 +165,27 @@ type TaskDisplay = Readonly<{
 type EventSyncMode = "connecting" | "live" | "polling";
 const ACTION_REFRESH_TIMEOUT_MS = 10_000;
 
-export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
-	const { locale, t } = useLocale();
+export default function TaskExperienceDetail({
+	taskId,
+	returnSource = "market",
+}: {
+	taskId: string;
+	/** 只传受控来源枚举，避免详情页接受任意返回地址。 */
+	returnSource?: "market" | "workspace";
+}) {
+	const { t } = useLocale();
+	const router = useRouter();
 	const wallet = useWalletSession();
+	const returnHref =
+		returnSource === "workspace" ? "/workspace/tasks" : "/tasks";
+	const returnLabel =
+		returnSource === "workspace" ? t("返回工作台") : t("返回任务市场");
 	const [data, setData] = useState<LoadedTask | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [escrowError, setEscrowError] = useState<string | null>(null);
 	const [busy, setBusy] = useState<string | null>(null);
+	const [confirmingArchive, setConfirmingArchive] = useState(false);
 	const [events, setEvents] = useState<readonly TaskEventData[]>([]);
 	const [eventSyncMode, setEventSyncMode] =
 		useState<EventSyncMode>("connecting");
@@ -160,6 +194,9 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 	// 这里保存的是用户正在查看的阶段，不是任务的权威状态。两者分开后，用户可以查看
 	// 已完成阶段，同时仍由服务端状态决定哪些阶段已经发生、未来阶段是否允许打开。
 	const [selectedFlowStage, setSelectedFlowStage] = useState(0);
+	// 阶段 Tab 只在“任务或访问身份首次加载”时根据权威状态定位一次。服务端轮询会持续
+	// 更新任务事实，但不能反复覆盖用户正在查看的阶段，更不能在重试后把页面抢回旧产物。
+	const initializedStageKey = useRef<string | null>(null);
 	const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	// httpOnly 会话只能通过异步接口恢复。checking/connecting 期间不能把尚未确定的身份
 	// 当成访客，否则私密任务会先命中公开 404，短暂渲染成“无权访问”。钱包地址纳入
@@ -191,6 +228,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 						execution: null,
 						results: [],
 						workflow: null,
+						workflowFeedback: [],
 					});
 					setError(null);
 					return;
@@ -199,26 +237,39 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 				// executing 之后调用，否则匹配和接单阶段的 SSE 断线只能依赖列表接口碰巧刷新。
 				const execution = await getTaskExecutionStatus(taskId, signal);
 				const currentStatus = execution.status;
-				const [preview, escrow, candidates, assignment, results, workflow] =
-					await Promise.all([
-						getTaskPreview(taskId, signal),
-						currentStatus === "draft"
-							? Promise.resolve(null)
-							: optionalRead(() => getTaskEscrowStatus(taskId, signal)),
-						needsCandidates(currentStatus)
-							? optionalRead(() => getTaskCandidates(taskId, signal))
-							: Promise.resolve(null),
-						needsAssignment(currentStatus)
-							? optionalRead(() => getLatestTaskAssignment(taskId, signal))
-							: Promise.resolve(null),
-						needsResults(currentStatus)
-							? optionalRead(
-									() => listTaskResults(taskId, signal),
-									[] as readonly TaskResult[],
-								)
-							: Promise.resolve([]),
-						optionalWorkflowRead(() => getTaskWorkflow(taskId, signal)),
-					]);
+				const [
+					preview,
+					escrow,
+					candidates,
+					assignment,
+					results,
+					workflow,
+					workflowFeedback,
+				] = await Promise.all([
+					getTaskPreview(taskId, signal),
+					currentStatus === "draft"
+						? Promise.resolve(null)
+						: optionalRead(() => getTaskEscrowStatus(taskId, signal)),
+					needsCandidates(currentStatus)
+						? optionalRead(() => getTaskCandidates(taskId, signal))
+						: Promise.resolve(null),
+					needsAssignment(currentStatus)
+						? optionalRead(() => getLatestTaskAssignment(taskId, signal))
+						: Promise.resolve(null),
+					needsResults(currentStatus)
+						? optionalRead(
+								() => listTaskResults(taskId, signal),
+								[] as readonly TaskResult[],
+							)
+						: Promise.resolve([]),
+					optionalWorkflowRead(() => getTaskWorkflow(taskId, signal)),
+					isSettlementStage(currentStatus)
+						? optionalRead(
+								() => listWorkflowFeedback(taskId, signal),
+								[] as readonly WorkflowFeedback[],
+							)
+						: Promise.resolve([] as readonly WorkflowFeedback[]),
+				]);
 				setData({
 					owned,
 					preview,
@@ -229,6 +280,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 					execution,
 					results: results ?? [],
 					workflow,
+					workflowFeedback: workflowFeedback ?? [],
 				});
 				setError(null);
 			} catch (caught) {
@@ -296,6 +348,7 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 		};
 	}, [ownsTask, refresh, t, taskId]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 新任务事件可能推进同一争议卷宗，事件数量是主动补拉信号。
 	useEffect(() => {
 		if (disputeId === null) return;
 		const controller = new AbortController();
@@ -316,30 +369,43 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 				? flowStageIndex(displayTask(data).status)
 				: formalFlowStageIndex(data.workflow, displayTask(data).status);
 	useLayoutEffect(() => {
-		if (!hasTaskData) return;
-		// 在浏览器绘制任务内容前同步权威阶段，避免异步数据首次返回时短暂闪现第一阶段。
-		// 依赖只包含阶段编号，因此同一阶段内的普通轮询不会打断用户正在查看的历史 Tab。
-		setSelectedFlowStage(currentFlowStage);
-	}, [currentFlowStage, hasTaskData, taskId]);
+		if (!hasTaskData || taskAccessIdentity === null) return;
+		const stageKey = `${taskId}:${taskAccessIdentity}`;
+		if (initializedStageKey.current === stageKey) return;
+		initializedStageKey.current = stageKey;
+		// 在浏览器绘制任务内容前完成首次定位，避免闪现第一阶段。正式工作流返工时虽然
+		// 历史验收阶段仍可回看，但当前工作已经回到执行阶段，因此应优先打开执行现场。
+		setSelectedFlowStage(
+			data?.workflow === null || data?.workflow === undefined
+				? currentFlowStage
+				: formalFlowInitialStageIndex(data.workflow, displayTask(data).status),
+		);
+	}, [currentFlowStage, data, hasTaskData, taskAccessIdentity, taskId]);
 
-	async function run(label: string, action: () => Promise<unknown>) {
+	/**
+	 * 所有详情页命令共享同一套加载与刷新语义，但错误必须出现在用户操作发生的位置。
+	 * local 只供候选改选使用：失败文本由候选区展示，避免长页面顶部再出现一份重复提示。
+	 */
+	async function executeAction(
+		label: string,
+		action: () => Promise<unknown>,
+		errorPlacement: "page" | "local",
+	): Promise<SelectionActionResult> {
 		const escrowAction = isEscrowAction(label);
 		setBusy(label);
 		if (escrowAction) setEscrowError(null);
 		else setError(null);
-		let succeeded = false;
 		try {
 			await action();
-			succeeded = true;
 		} catch (caught) {
 			const message = messageOf(caught, t);
 			// 资金错误必须出现在用户刚刚点击的托管卡片内，不能只显示在长页面顶部。
 			if (escrowAction) setEscrowError(message);
-			else setError(message);
+			else if (errorPlacement === "page") setError(message);
+			return { ok: false, message };
 		} finally {
 			setBusy(null);
 		}
-		if (!succeeded) return;
 
 		// 动作结果刷新只是展示同步，不能继续占用操作按钮。服务端暂时无响应时主动
 		// 中止本次补拉，后续 SSE 和 5 秒轮询仍会同步权威状态。
@@ -353,6 +419,28 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 		} finally {
 			window.clearTimeout(timeoutId);
 		}
+		return { ok: true };
+	}
+
+	async function run(label: string, action: () => Promise<unknown>) {
+		await executeAction(
+			label,
+			async () => {
+				await action();
+				// 返工与失败重试都代表用户重新进入执行现场。命令成功后立即切换，不等待
+				// 下一轮轮询；若命令失败则保留原页面，方便用户修正返工说明或再次操作。
+				if (label === "workflow-rework" || label === "workflow-execution-retry")
+					setSelectedFlowStage(2);
+			},
+			"page",
+		);
+	}
+
+	function runSelection(
+		label: string,
+		action: () => Promise<unknown>,
+	): Promise<SelectionActionResult> {
+		return executeAction(label, action, "local");
 	}
 
 	if (loading && data === null) return <LoadingState />;
@@ -361,6 +449,34 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 			<NotFoundState message={error ?? t("任务不存在或当前钱包无权访问")} />
 		);
 	const task = displayTask(data);
+	// 历史任务可能已经停在 awaiting_escrow，却没有新版工作流和冻结报价。旧流程还可能
+	// 留下未广播交易的 prepared/failed 记录；它们无法通过新版服务端校验，必须引导重新
+	// 发布。已经提交或确认的链上交易仍走原恢复视图，不能被兼容提示遮挡。
+	const requiresWorkflowRepublish =
+		data.workflow === null &&
+		task.status === "awaiting_escrow" &&
+		(data.escrow === null ||
+			(["prepared", "failed"].includes(data.escrow.status) &&
+				data.escrow.txHash === null));
+	const canArchive =
+		data.owned !== null &&
+		(task.status === "draft" || task.status === "planning");
+
+	async function archiveCurrentTask() {
+		setBusy("archive-task");
+		setError(null);
+		try {
+			await archiveTask(task.id, key("archive-task"));
+			// 归档成功后详情地址应立即退出；replace 防止浏览器后退重新打开已归档任务。
+			router.replace("/workspace/tasks");
+			router.refresh();
+		} catch (caught) {
+			setError(messageOf(caught, t));
+			setConfirmingArchive(false);
+		} finally {
+			setBusy(null);
+		}
+	}
 
 	return (
 		<main className="min-h-[75vh] bg-accent">
@@ -369,11 +485,11 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 					<div className="flex flex-wrap items-start justify-between gap-5">
 						<div>
 							<Link
-								href="/tasks"
-								className="inline-flex items-center gap-1.5 text-muted-foreground text-sm hover:text-foreground"
+								href={returnHref}
+								className="inline-flex cursor-pointer items-center gap-1.5 text-muted-foreground text-sm hover:text-foreground"
 							>
 								<ArrowLeft className="size-4" />
-								{t("任务市场")}
+								{returnLabel}
 							</Link>
 							<div className="mt-4 flex flex-wrap items-center gap-2">
 								<StatusBadge status={task.status} />
@@ -395,6 +511,54 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 										: formatMinorAmount(task.budgetMinor, task.currency)}
 								</p>
 							</div>
+							{canArchive && !confirmingArchive && (
+								<Button
+									type="button"
+									variant="destructive"
+									className="min-h-10 cursor-pointer rounded-xl border border-destructive/20 px-4 shadow-destructive/5 shadow-sm"
+									onClick={() => setConfirmingArchive(true)}
+								>
+									<Trash2 className="size-4" aria-hidden />
+									{t("删除任务")}
+								</Button>
+							)}
+							{canArchive && confirmingArchive && (
+								<div className="max-w-sm rounded-xl border border-destructive/25 bg-destructive/5 p-4 text-left">
+									<p className="font-semibold text-destructive text-sm">
+										{t("确认删除这个任务？")}
+									</p>
+									<p className="mt-1 text-muted-foreground text-xs leading-5">
+										{t(
+											"任务将从市场和工作台移除；工作流与审计记录会被安全保留。",
+										)}
+									</p>
+									<div className="mt-3 flex justify-end gap-2">
+										<Button
+											type="button"
+											size="sm"
+											variant="ghost"
+											disabled={busy === "archive-task"}
+											onClick={() => setConfirmingArchive(false)}
+										>
+											{t("取消")}
+										</Button>
+										<Button
+											type="button"
+											size="sm"
+											variant="destructive"
+											disabled={busy === "archive-task"}
+											onClick={() => void archiveCurrentTask()}
+										>
+											{busy === "archive-task" ? (
+												<Loader2 className="size-4 animate-spin" aria-hidden />
+											) : (
+												<Trash2 className="size-4" aria-hidden />
+											)}
+											{t("确认删除")}
+										</Button>
+									</div>
+								</div>
+							)}
 						</div>
 					</div>
 					<FlowProgress
@@ -446,21 +610,63 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 								</aside>
 							</div>
 						) : (
-							<FormalWorkflowView
-								taskTitle={task.title}
-								workflow={data.workflow}
-								viewMode={
-									selectedFlowStage === 1
-										? "allocation"
-										: selectedFlowStage === 2
-											? "execution"
-											: selectedFlowStage === 3
-												? "review"
-												: "settlement"
-								}
-								busy={busy !== null}
-								run={run}
-							/>
+							<div className="space-y-6">
+								<FormalWorkflowView
+									taskTitle={task.title}
+									workflow={data.workflow}
+									viewMode={
+										selectedFlowStage === 1
+											? "allocation"
+											: selectedFlowStage === 2
+												? "execution"
+												: selectedFlowStage === 3
+													? "review"
+													: "settlement"
+									}
+									selectionEditable={
+										data.owned !== null &&
+										data.workflow.run.status === "planning" &&
+										(task.status === "planning" ||
+											task.status === "awaiting_escrow") &&
+										canReviseAgentSelection(data.escrow)
+									}
+									unlockPreparedSelection={
+										canAbandonPreparedEscrow(data.escrow)
+											? () =>
+													runSelection("unlock-workflow-selection", () =>
+														abandonEscrowPreparation(task.id),
+													)
+											: undefined
+									}
+									busy={busy !== null}
+									run={run}
+									runSelection={runSelection}
+								/>
+								{selectedFlowStage === 4 && isFeedbackReady(task.status) && (
+									<WorkflowFeedbackPanel
+										taskId={task.id}
+										workflow={data.workflow}
+										feedback={data.workflowFeedback}
+										busy={busy !== null}
+										run={run}
+									/>
+								)}
+								{/* 用户必须先看完关系图、逐阶段选人和最终报价，再进入不可逆的钱包
+							    操作；托管卡片放在最下方也与服务端“产生意图即锁定选择”保持一致。 */}
+								{selectedFlowStage === 1 &&
+									task.status === "awaiting_escrow" && (
+										<EscrowAction
+											task={task}
+											preview={data.preview}
+											escrow={data.escrow}
+											wallet={wallet}
+											busy={busy !== null}
+											run={run}
+											error={escrowError}
+											exactAmountMinor={data.workflow.run.quotedTotalMinor}
+										/>
+									)}
+							</div>
 						)}
 					</section>
 				) : (
@@ -497,35 +703,46 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 							</div>
 						)}
 
-						{selectedFlowStage === 1 && (
-							<div className="space-y-6">
-								<TaskAgentAllocationGraph
-									task={{ id: task.id, title: task.title, status: task.status }}
-									candidates={data.candidates}
-									assignment={data.assignment}
-									execution={data.execution}
-									currency={task.currency}
-								/>
-								{/* 只有任务仍处于匹配阶段时才展示可操作面板和本次派发状态。
-								    回看历史匹配结果时，关系图已经完整表达结果，不再堆叠失效操作。 */}
-								{currentFlowStage === 1 && (
-									<div className="mx-auto grid max-w-7xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-										<CurrentAction
-											task={task}
-											data={data}
-											wallet={wallet}
-											busy={busy !== null}
-											run={run}
-											dispute={dispute}
-											escrowError={escrowError}
-										/>
-										<aside className="xl:sticky xl:top-28">
-											<AssignmentCard assignment={data.assignment} candidates={data.candidates} currency={task.currency} />
-										</aside>
-									</div>
-								)}
-							</div>
-						)}
+						{selectedFlowStage === 1 &&
+							(requiresWorkflowRepublish ? (
+								<WorkflowRepublishNotice />
+							) : (
+								<div className="space-y-6">
+									<TaskAgentAllocationGraph
+										task={{
+											id: task.id,
+											title: task.title,
+											status: task.status,
+										}}
+										candidates={data.candidates}
+										assignment={data.assignment}
+										execution={data.execution}
+										currency={task.currency}
+									/>
+									{/* 只有任务仍处于匹配阶段时才展示可操作面板和本次派发状态。
+									    回看历史匹配结果时，关系图已经完整表达结果，不再堆叠失效操作。 */}
+									{currentFlowStage === 1 && (
+										<div className="mx-auto grid max-w-7xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+											<CurrentAction
+												task={task}
+												data={data}
+												wallet={wallet}
+												busy={busy !== null}
+												run={run}
+												dispute={dispute}
+												escrowError={escrowError}
+											/>
+											<aside className="xl:sticky xl:top-28">
+												<AssignmentCard
+													assignment={data.assignment}
+													candidates={data.candidates}
+													currency={task.currency}
+												/>
+											</aside>
+										</div>
+									)}
+								</div>
+							))}
 
 						{selectedFlowStage === 2 && (
 							<div className="mx-auto grid max-w-7xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -543,9 +760,17 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 									) : (
 										<ExecutionRecordPanel status={data.execution} />
 									)}
-									<EventTimeline events={events} statusVersion={task.statusVersion} syncMode={eventSyncMode} />
+									<EventTimeline
+										events={events}
+										statusVersion={task.statusVersion}
+										syncMode={eventSyncMode}
+									/>
 								</div>
-								<AssignmentCard assignment={data.assignment} candidates={data.candidates} currency={task.currency} />
+								<AssignmentCard
+									assignment={data.assignment}
+									candidates={data.candidates}
+									currency={task.currency}
+								/>
 							</div>
 						)}
 
@@ -567,7 +792,14 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 										<ResultsHistory results={data.results} />
 									</div>
 								) : currentFlowStage !== 3 ? (
-									<Panel icon={FileCheck2} eyebrow={t("交付记录")} title={t("尚未产生可验收交付")} description={t("任务进入交付验收阶段后，正式结果会显示在这里。")} />
+									<Panel
+										icon={FileCheck2}
+										eyebrow={t("交付记录")}
+										title={t("尚未产生可验收交付")}
+										description={t(
+											"任务进入交付验收阶段后，正式结果会显示在这里。",
+										)}
+									/>
 								) : null}
 							</div>
 						)}
@@ -584,7 +816,11 @@ export default function TaskExperienceDetail({ taskId }: { taskId: string }) {
 										dispute={dispute}
 										escrowError={escrowError}
 									/>
-									<EventTimeline events={events} statusVersion={task.statusVersion} syncMode={eventSyncMode} />
+									<EventTimeline
+										events={events}
+										statusVersion={task.statusVersion}
+										syncMode={eventSyncMode}
+									/>
 								</div>
 								<EscrowCard task={task} escrow={data.escrow} />
 							</div>
@@ -763,6 +999,35 @@ function CurrentAction({
 	);
 }
 
+/**
+ * 新版工作流不能从历史任务缺失的数据中安全反推节点与报价。这里明确引导重新发布，
+ * 既避免展示必然失败的托管按钮，也不在页面读取期间偷偷创建不可审计的业务数据。
+ */
+function WorkflowRepublishNotice() {
+	const { t } = useLocale();
+	return (
+		<div className="mx-auto max-w-3xl">
+			<Panel
+				icon={GitBranch}
+				eyebrow={t("需要重新发布需求")}
+				title={t("该任务尚未冻结 Agent 与报价")}
+				description={t(
+					"该任务创建于新版多 Agent 工作流上线前，无法直接进入托管。请重新发布需求，平台会先拆分执行阶段、推荐 Agent，并在你完成选择后计算准确托管金额。",
+				)}
+				tone="ai"
+			>
+				<Button
+					size="lg"
+					className="min-h-12 rounded-xl px-6"
+					render={<Link href="/tasks/new" />}
+				>
+					{t("重新发布需求")}
+				</Button>
+			</Panel>
+		</div>
+	);
+}
+
 function EscrowAction({
 	task,
 	preview,
@@ -771,6 +1036,7 @@ function EscrowAction({
 	busy,
 	run,
 	error,
+	exactAmountMinor,
 }: {
 	task: TaskDisplay;
 	preview: TaskPreview | null;
@@ -779,18 +1045,25 @@ function EscrowAction({
 	busy: boolean;
 	run: (label: string, action: () => Promise<unknown>) => Promise<void>;
 	error: string | null;
+	exactAmountMinor?: string | null;
 }) {
 	const { t } = useLocale();
 	const [pendingSubmission, setPendingSubmission] =
 		useState<PendingEscrowSubmission | null>(null);
+	const [depositProgress, setDepositProgress] =
+		useState<EscrowDepositProgressStage | null>(null);
+	const escrowStatus = escrow?.status;
 	useEffect(() => {
-		if (escrow !== null && !["prepared", "failed"].includes(escrow.status)) {
+		if (
+			escrowStatus !== undefined &&
+			!["prepared", "failed"].includes(escrowStatus)
+		) {
 			forgetPendingEscrowSubmission(task.id);
 			setPendingSubmission(null);
 			return;
 		}
 		setPendingSubmission(readPendingEscrowSubmission(task.id));
-	}, [escrow?.status, task.id]);
+	}, [escrowStatus, task.id]);
 
 	if (
 		escrow?.status === "submitted" ||
@@ -802,7 +1075,7 @@ function EscrowAction({
 				eyebrow={t("托管交易已提交")}
 				title={t("资金正在链上确认")}
 				description={t(
-					"确认完成后将自动开始匹配；链重组会触发回退或人工复核。",
+					"确认完成后将按依赖顺序派发已选 Agent；链重组会触发回退或人工复核。",
 				)}
 				tone="escrow"
 			>
@@ -825,6 +1098,18 @@ function EscrowAction({
 				description={
 					escrow.failureReason ?? t("资金操作已冻结，完成对账前不会继续。")
 				}
+			/>
+		);
+	if (escrow?.status === "failed" && !canReviseAgentSelection(escrow))
+		return (
+			<Panel
+				icon={AlertCircle}
+				eyebrow={t("托管结果需要核实")}
+				title={t("检测到交易哈希或链上记录")}
+				description={t(
+					"平台不会清除已有交易信息或重新发送资金。请先确认原交易最终状态，再决定继续登记、退款或人工处理。",
+				)}
+				tone="escrow"
 			/>
 		);
 	if (pendingSubmission !== null)
@@ -862,10 +1147,17 @@ function EscrowAction({
 			</Panel>
 		);
 	const failed = escrow?.status === "failed";
+	// 服务端确认失败后，failureReason 才是可重试原因的权威记录；本地 error 只描述
+	// 当前这次钱包操作。两者共用同一个就近错误区，避免用户只看到“可重试”却不知道原因。
+	const visibleError = error ?? (failed ? escrow.failureReason : null);
 	const escrowAmount =
-		task.budgetMinor === null
-			? t("任务预算")
-			: formatMinorAmount(task.budgetMinor, task.currency);
+		exactAmountMinor !== undefined && exactAmountMinor !== null
+			? formatMinorAmount(exactAmountMinor, task.currency)
+			: task.budgetMinor === null
+				? t("任务预算")
+				: formatMinorAmount(task.budgetMinor, task.currency);
+	const breakdown =
+		preview === null ? null : escrowBreakdown(preview, exactAmountMinor);
 	return (
 		<Panel
 			icon={LockKeyhole}
@@ -880,7 +1172,7 @@ function EscrowAction({
 			)}
 			tone="escrow"
 		>
-			{error !== null && (
+			{visibleError !== null && (
 				<div
 					role="alert"
 					aria-label={t("托管操作未完成")}
@@ -889,68 +1181,61 @@ function EscrowAction({
 					<AlertCircle className="mt-0.5 size-4 shrink-0" />
 					<div>
 						<p className="font-semibold text-sm">{t("托管操作未完成")}</p>
-						<p className="mt-1 text-sm leading-6">{error}</p>
+						<p className="mt-1 text-sm leading-6">{visibleError}</p>
 					</div>
 				</div>
 			)}
-			{preview !== null &&
-				preview.amountMinor !== null &&
-				preview.platformFeeMinor !== null &&
-				preview.agentReceivesMinor !== null &&
-				preview.feeBasisPoints !== null &&
-				preview.minimumPlatformFeeMinor !== null && (
-					<section
-						className="mb-5 rounded-xl border border-tertiary/20 bg-background/35 p-4"
-						aria-label={t("托管金额确认")}
-					>
-						<div className="flex items-center justify-between gap-4 rounded-lg bg-tertiary-container/45 px-4 py-3">
-							<p className="text-muted-foreground text-sm">{t("本次需托管")}</p>
-							<p className="shrink-0 font-semibold text-base">
-								{formatMinorAmount(preview.amountMinor, task.currency)}
-							</p>
-						</div>
+			{breakdown !== null && (
+				<section
+					className="mb-5 rounded-xl border border-tertiary/20 bg-background/35 p-4"
+					aria-label={t("托管金额确认")}
+				>
+					<div className="flex items-center justify-between gap-4 rounded-lg bg-tertiary-container/45 px-4 py-3">
+						<p className="text-muted-foreground text-sm">{t("本次需托管")}</p>
+						<p className="shrink-0 font-semibold text-base">
+							{formatMinorAmount(breakdown.amountMinor, task.currency)}
+						</p>
+					</div>
+					<p className="mt-3 text-muted-foreground text-xs leading-5">
+						{t("任务完成并通过验收前，托管资金不会支付给 Agent。")}
+					</p>
+					<details className="group mt-3 border-t pt-3">
+						<summary className="flex cursor-pointer list-none items-center justify-between gap-3 font-medium text-sm marker:hidden">
+							{t("查看费用分配")}
+							<ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+						</summary>
+						<dl className="mt-3 space-y-2 text-sm">
+							<InfoRow
+								label={t("任务完成后最多支付给 Agent")}
+								value={formatMinorAmount(
+									breakdown.agentReceivesMinor,
+									task.currency,
+								)}
+							/>
+							<InfoRow
+								label={t("平台服务费（{rate}）", {
+									rate: formatBasisPoints(breakdown.feeBasisPoints),
+								})}
+								value={formatMinorAmount(
+									breakdown.platformFeeMinor,
+									task.currency,
+								)}
+							/>
+						</dl>
 						<p className="mt-3 text-muted-foreground text-xs leading-5">
 							{t(
-								"任务完成并通过验收前，托管资金不会支付给 Agent。",
+								"平台服务费最低 {minimum}，仅在任务成功结算时从 Agent 收入中扣除；发布者不会在托管金额外被额外收费。",
+								{
+									minimum: formatMinorAmount(
+										breakdown.minimumPlatformFeeMinor,
+										task.currency,
+									),
+								},
 							)}
 						</p>
-						<details className="group mt-3 border-t pt-3">
-							<summary className="flex cursor-pointer list-none items-center justify-between gap-3 font-medium text-sm marker:hidden">
-								{t("查看费用分配")}
-								<ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
-							</summary>
-							<dl className="mt-3 space-y-2 text-sm">
-								<InfoRow
-									label={t("任务完成后最多支付给 Agent")}
-									value={formatMinorAmount(
-										preview.agentReceivesMinor,
-										task.currency,
-									)}
-								/>
-								<InfoRow
-									label={t("平台服务费（{rate}）", {
-										rate: formatBasisPoints(preview.feeBasisPoints),
-									})}
-									value={formatMinorAmount(
-										preview.platformFeeMinor,
-										task.currency,
-									)}
-								/>
-							</dl>
-							<p className="mt-3 text-muted-foreground text-xs leading-5">
-								{t(
-									"平台服务费最低 {minimum}，仅在任务成功结算时从 Agent 收入中扣除；发布者不会在托管金额外被额外收费。",
-									{
-										minimum: formatMinorAmount(
-											preview.minimumPlatformFeeMinor,
-											task.currency,
-										),
-									},
-								)}
-							</p>
-						</details>
-					</section>
-				)}
+					</details>
+				</section>
+			)}
 			{wallet.status !== "connected" ? (
 				<Button
 					size="lg"
@@ -978,6 +1263,7 @@ function EscrowAction({
 								wallet.walletAddress,
 								failed,
 								setPendingSubmission,
+								setDepositProgress,
 							),
 						)
 					}
@@ -988,7 +1274,7 @@ function EscrowAction({
 						<WalletCards className="size-4" />
 					)}
 					{busy
-						? t("等待 MetaMask 返回结果")
+						? escrowProgressLabel(depositProgress, t)
 						: failed
 							? t("重新开始托管")
 							: t("开始托管 {amount}", { amount: escrowAmount })}
@@ -998,11 +1284,95 @@ function EscrowAction({
 	);
 }
 
+/**
+ * 没有托管意图时可以直接改选；失败意图只有在 Deposit 哈希和链事件都不存在时才
+ * 证明资金尚未移动。这里与服务端仓储使用同一条件，但服务端仍是最终安全边界。
+ */
+function canReviseAgentSelection(escrow: EscrowStatus | null): boolean {
+	return (
+		escrow === null ||
+		(escrow.status === "failed" &&
+			escrow.txHash === null &&
+			(escrow.chainEventStatus === null ||
+				escrow.chainEventStatus === undefined))
+	);
+}
+
+/** 只有服务端尚未记录 Deposit 哈希和链事件的 prepared 意图才开放“确认后改选”。 */
+function canAbandonPreparedEscrow(escrow: EscrowStatus | null): boolean {
+	return (
+		escrow?.status === "prepared" &&
+		escrow.txHash === null &&
+		(escrow.chainEventStatus === null || escrow.chainEventStatus === undefined)
+	);
+}
+
+async function abandonEscrowPreparation(taskId: string): Promise<void> {
+	await submitTaskEscrowTransaction(
+		taskId,
+		{
+			status: "failed",
+			failureReason: "用户主动放弃了尚未广播的托管准备",
+		},
+		key("escrow-abandoned-for-reselection"),
+	);
+}
+
+/**
+ * 正式工作流选完 Agent 后，准确总价会替代发布时的预算估计。费率和最低服务费仍来自
+ * 服务端预览快照；这里只用同一整数公式重新展示准确总价的拆分，不能继续显示旧预算
+ * 的手续费明细。最终验收与结算仍由服务端再次计算并校验，浏览器结果不参与资金写入。
+ */
+function escrowBreakdown(
+	preview: TaskPreview,
+	exactAmountMinor?: string | null,
+): Readonly<{
+	amountMinor: string;
+	platformFeeMinor: string;
+	agentReceivesMinor: string;
+	feeBasisPoints: string;
+	minimumPlatformFeeMinor: string;
+}> | null {
+	if (
+		preview.amountMinor === null ||
+		preview.platformFeeMinor === null ||
+		preview.agentReceivesMinor === null ||
+		preview.feeBasisPoints === null ||
+		preview.minimumPlatformFeeMinor === null
+	)
+		return null;
+	if (exactAmountMinor === undefined || exactAmountMinor === null) {
+		return {
+			amountMinor: preview.amountMinor,
+			platformFeeMinor: preview.platformFeeMinor,
+			agentReceivesMinor: preview.agentReceivesMinor,
+			feeBasisPoints: preview.feeBasisPoints,
+			minimumPlatformFeeMinor: preview.minimumPlatformFeeMinor,
+		};
+	}
+	const amount = BigInt(exactAmountMinor);
+	const basisPoints = BigInt(preview.feeBasisPoints);
+	const minimumFee = BigInt(preview.minimumPlatformFeeMinor);
+	const proportionalFee =
+		(amount * basisPoints + BigInt(9_999)) / BigInt(10_000);
+	const uncappedFee =
+		proportionalFee > minimumFee ? proportionalFee : minimumFee;
+	const fee = uncappedFee > amount ? amount : uncappedFee;
+	return {
+		amountMinor: amount.toString(),
+		platformFeeMinor: fee.toString(),
+		agentReceivesMinor: (amount - fee).toString(),
+		feeBasisPoints: preview.feeBasisPoints,
+		minimumPlatformFeeMinor: preview.minimumPlatformFeeMinor,
+	};
+}
+
 async function broadcastEscrow(
 	taskId: string,
 	walletAddress: string,
 	retry: boolean,
 	setPendingSubmission: (pending: PendingEscrowSubmission | null) => void,
+	setProgress: (stage: EscrowDepositProgressStage | null) => void,
 ): Promise<void> {
 	try {
 		await startEscrowDeposit({
@@ -1012,6 +1382,7 @@ async function broadcastEscrow(
 			prepareIdempotencyKey: key(retry ? "escrow-retry" : "escrow-prepare"),
 			submissionIdempotencyKey: key("escrow-submitted"),
 			failureIdempotencyKey: key("escrow-failed"),
+			onProgress: setProgress,
 		});
 		setPendingSubmission(null);
 	} catch (caught) {
@@ -1022,7 +1393,20 @@ async function broadcastEscrow(
 			setPendingSubmission(caught.pendingSubmission);
 		}
 		throw caught;
+	} finally {
+		setProgress(null);
 	}
+}
+
+function escrowProgressLabel(
+	stage: EscrowDepositProgressStage | null,
+	t: ReturnType<typeof useLocale>["t"],
+): string {
+	if (stage === "preparing") return t("正在准备托管交易");
+	if (stage === "authorizing") return t("正在完成 USDC 授权");
+	if (stage === "depositing") return t("请在 MetaMask 确认存入");
+	if (stage === "recording") return t("正在登记托管交易");
+	return t("正在处理托管");
 }
 
 async function resumePendingSubmission(
@@ -1455,7 +1839,9 @@ function ExecutionRecordPanel({
 				status === null
 					? t("尚未读取到正式执行快照。")
 					: failed
-						? t("平台保留失败状态与后续重试、争议记录，资金不会因执行失败自动释放。")
+						? t(
+								"平台保留失败状态与后续重试、争议记录，资金不会因执行失败自动释放。",
+							)
 						: t("平台已收到完整执行进度，后续交付与验收记录请在对应阶段查看。")
 			}
 			tone={failed ? "neutral" : "success"}
@@ -1507,19 +1893,21 @@ function ReviewPanel({
 	const [deliverableReady, setDeliverableReady] = useState(false);
 	const selected =
 		latest.find((result) => result.id === selectedId) ?? latest[0];
+	const selectedResultId = selected?.id;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: previewRevision 是失败后显式重试信号，必须重新请求同一结果。
 	useEffect(() => {
-		if (selected === undefined) return;
+		if (selectedResultId === undefined) return;
 		const controller = new AbortController();
 		setPreview(null);
 		setPreviewError(null);
-		getTaskAcceptancePreview(taskId, selected.id, controller.signal)
+		getTaskAcceptancePreview(taskId, selectedResultId, controller.signal)
 			.then(setPreview)
 			.catch((caught) => {
 				if (!(caught instanceof DOMException && caught.name === "AbortError"))
 					setPreviewError(messageOf(caught, t));
 			});
 		return () => controller.abort();
-	}, [previewRevision, selected?.id, t, taskId]);
+	}, [previewRevision, selectedResultId, t, taskId]);
 	if (latest.length === 0)
 		return (
 			<Panel
@@ -1819,6 +2207,47 @@ function DisputePanel({
 						value={t("{count} 条", { count: dispute.evidence.length })}
 					/>
 				</dl>
+				{dispute.daoArbitration && (
+					<div className="mt-5 rounded-xl border border-primary/20 bg-primary-container/35 p-4">
+						<div className="flex flex-wrap items-start justify-between gap-3">
+							<div>
+								<p className="inline-flex items-center gap-2 font-semibold text-primary text-sm">
+									<ShieldCheck className="size-4" />
+									{t("DAO 仲裁进度")}
+								</p>
+								<p className="mt-1 text-muted-foreground text-xs">
+									{daoRoundStatus(dispute.daoArbitration.status, t)}
+								</p>
+							</div>
+							<div className="flex gap-2 text-xs">
+								<span className="rounded-full border border-primary/20 bg-card/70 px-2.5 py-1">
+									{t("仲裁成员 {count}/{total}", {
+										count: dispute.daoArbitration.panelCount,
+										total: dispute.daoArbitration.panelSize,
+									})}
+								</span>
+								<span className="rounded-full border border-primary/20 bg-card/70 px-2.5 py-1">
+									{t("有效投票 {count}/{quorum}", {
+										count: dispute.daoArbitration.voteCount,
+										quorum: dispute.daoArbitration.quorum,
+									})}
+								</span>
+							</div>
+						</div>
+						{/* DAO 小组成员必须去 DAO 页面独立投票，不能复用平台内部仲裁员的直接裁决表单。 */}
+						{dispute.viewerRole === "arbitrator" &&
+							!dispute.viewerCanPlatformDecide && (
+								<Button
+									size="lg"
+									className="mt-4"
+									render={<Link href={{ pathname: "/dao" }} />}
+								>
+									<Scale className="size-4" />
+									{t("前往 DAO 投票")}
+								</Button>
+							)}
+					</div>
+				)}
 				<ol className="mt-5 space-y-3">
 					{dispute.evidence.map((entry) => (
 						<li key={entry.id} className="rounded-lg border bg-accent p-4">
@@ -1886,7 +2315,7 @@ function DisputePanel({
 						</p>
 					</div>
 				)}
-				{dispute.viewerRole === "arbitrator" && (
+				{dispute.viewerCanPlatformDecide && (
 					<Button
 						className="mt-5"
 						variant="destructive"
@@ -1899,6 +2328,17 @@ function DisputePanel({
 			</div>
 		</section>
 	);
+}
+
+/** DAO 状态文案只描述已落库事实，不把等待成组或投票中提前展示成已形成裁决。 */
+function daoRoundStatus(
+	status: NonNullable<TaskDispute["daoArbitration"]>["status"],
+	t: ReturnType<typeof useLocale>["t"],
+): string {
+	if (status === "awaiting_panel") return t("等待符合条件的仲裁成员成组");
+	if (status === "voting") return t("仲裁小组投票中，资金继续冻结");
+	if (status === "decided") return t("已形成多数裁决，等待链上执行");
+	return t("本轮 DAO 仲裁已取消");
 }
 
 function RatingPanel({
@@ -1965,6 +2405,347 @@ function RatingPanel({
 	);
 }
 
+const WORKFLOW_FEEDBACK_STRENGTHS: readonly {
+	value: WorkflowFeedbackStrength;
+	label: MessageId;
+}[] = [
+	{ value: "requirements_understanding", label: "需求理解准确" },
+	{ value: "delivery_quality", label: "交付质量高" },
+	{ value: "design_fidelity", label: "设计还原到位" },
+	{ value: "usability", label: "结果易于使用" },
+	{ value: "communication", label: "沟通清晰" },
+	{ value: "efficiency", label: "执行效率高" },
+];
+
+/**
+ * 多 Agent 任务按阶段评价实际接单者。表单不接收 Agent ID，提交目标始终来自服务端返回的
+ * workflow node；文字反馈与训练许可分开，避免用户一次评分被默认为模型训练授权。
+ */
+function WorkflowFeedbackPanel({
+	taskId,
+	workflow,
+	feedback,
+	busy,
+	run,
+}: {
+	taskId: string;
+	workflow: FormalWorkflow;
+	feedback: readonly WorkflowFeedback[];
+	busy: boolean;
+	run: (label: string, action: () => Promise<unknown>) => Promise<void>;
+}) {
+	const { t } = useLocale();
+	const nodes = workflow.nodes.filter(
+		(node) => node.status === "accepted" && node.assignment !== null,
+	);
+	const firstPendingNode =
+		nodes.find(
+			(node) => !feedback.some((item) => item.workflowNodeId === node.id),
+		) ?? nodes[0];
+	const [selectedNodeId, setSelectedNodeId] = useState(
+		firstPendingNode?.id ?? "",
+	);
+	const selectedNode =
+		nodes.find((node) => node.id === selectedNodeId) ?? firstPendingNode;
+	const existing =
+		selectedNode === undefined
+			? undefined
+			: feedback.find((item) => item.workflowNodeId === selectedNode.id);
+	if (nodes.length === 0 || selectedNode === undefined) return null;
+
+	return (
+		<section className="overflow-hidden rounded-2xl border border-primary/20 bg-card shadow-[0_20px_70px_rgba(25,10,60,.18)]">
+			<div className="border-b bg-[linear-gradient(135deg,var(--primary-container),transparent_70%)] px-6 py-5">
+				<p className="font-semibold text-primary text-xs tracking-[.18em]">
+					{t("AGENT 交付反馈")}
+				</p>
+				<h2 className="mt-2 font-semibold text-2xl">
+					{t("评价每个阶段的实际交付")}
+				</h2>
+				<p className="mt-2 max-w-3xl text-muted-foreground text-sm leading-6">
+					{t(
+						"评分会进入 Agent 的真实接单历史；经你单独许可的文字反馈才会在脱敏后用于模型改进。",
+					)}
+				</p>
+			</div>
+			<div className="grid gap-0 lg:grid-cols-[300px_minmax(0,1fr)]">
+				<div className="space-y-2 border-b p-4 lg:border-r lg:border-b-0">
+					{nodes.map((node, index) => {
+						const submitted = feedback.some(
+							(item) => item.workflowNodeId === node.id,
+						);
+						const selected = node.id === selectedNode.id;
+						return (
+							<button
+								key={node.id}
+								type="button"
+								onClick={() => setSelectedNodeId(node.id)}
+								className={`flex w-full cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors ${selected ? "border-primary/50 bg-primary-container text-foreground" : "border-transparent bg-accent/50 hover:border-primary/20"}`}
+							>
+								<span
+									className={`flex size-8 shrink-0 items-center justify-center rounded-full text-xs ${submitted ? "bg-success text-white" : "bg-primary/15 text-primary"}`}
+								>
+									{submitted ? <Check className="size-4" /> : index + 1}
+								</span>
+								<span className="min-w-0">
+									<span className="block truncate font-medium text-sm">
+										{node.title}
+									</span>
+									<span className="mt-0.5 block truncate text-muted-foreground text-xs">
+										{node.assignment?.agentName}
+									</span>
+								</span>
+							</button>
+						);
+					})}
+				</div>
+				<div className="p-5 sm:p-6">
+					{existing === undefined ? (
+						<WorkflowFeedbackForm
+							key={selectedNode.id}
+							node={selectedNode}
+							busy={busy}
+							onSubmit={(input) =>
+								run("workflow-feedback", () =>
+									submitWorkflowNodeFeedback(
+										taskId,
+										selectedNode.id,
+										input,
+										key(`workflow-feedback:${selectedNode.id}`),
+									),
+								)
+							}
+						/>
+					) : (
+						<WorkflowFeedbackReceipt feedback={existing} />
+					)}
+				</div>
+			</div>
+		</section>
+	);
+}
+
+function WorkflowFeedbackForm({
+	node,
+	busy,
+	onSubmit,
+}: {
+	node: FormalWorkflow["nodes"][number];
+	busy: boolean;
+	onSubmit: (input: WorkflowFeedbackInput) => Promise<void>;
+}) {
+	const { t } = useLocale();
+	const [quality, setQuality] = useState(5);
+	const [communication, setCommunication] = useState(5);
+	const [comment, setComment] = useState("");
+	const [improvement, setImprovement] = useState("");
+	const [strengths, setStrengths] = useState<WorkflowFeedbackStrength[]>([]);
+	const [allowModelTraining, setAllowModelTraining] = useState(false);
+	const commentReady = comment.trim().length >= 4;
+	return (
+		<div>
+			<div className="flex flex-wrap items-start justify-between gap-3">
+				<div>
+					<p className="text-muted-foreground text-xs">{t("当前评价")}</p>
+					<h3 className="mt-1 font-semibold text-xl">
+						{node.assignment?.agentName}
+					</h3>
+					<p className="mt-1 text-muted-foreground text-sm">{node.title}</p>
+				</div>
+				<span className="rounded-full border border-success/25 bg-success/10 px-3 py-1 font-medium text-success text-xs">
+					{t("已验收交付")}
+				</span>
+			</div>
+			<div className="mt-6 grid gap-5 sm:grid-cols-2">
+				<StarRating
+					label={t("交付质量")}
+					value={quality}
+					onChange={setQuality}
+				/>
+				<StarRating
+					label={t("沟通体验")}
+					value={communication}
+					onChange={setCommunication}
+				/>
+			</div>
+			<div className="mt-6">
+				<p className="font-medium text-sm">{t("这次 Agent 做得好的地方")}</p>
+				<div className="mt-3 flex flex-wrap gap-2">
+					{WORKFLOW_FEEDBACK_STRENGTHS.map((item) => {
+						const selected = strengths.includes(item.value);
+						return (
+							<button
+								key={item.value}
+								type="button"
+								aria-pressed={selected}
+								disabled={!selected && strengths.length >= 4}
+								onClick={() =>
+									setStrengths((current) =>
+										selected
+											? current.filter((value) => value !== item.value)
+											: [...current, item.value],
+									)
+								}
+								className={`cursor-pointer rounded-full border px-3 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${selected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-accent hover:border-primary/40"}`}
+							>
+								{t(item.label)}
+							</button>
+						);
+					})}
+				</div>
+			</div>
+			<div className="mt-6 grid gap-4 sm:grid-cols-2">
+				<label
+					className="text-sm"
+					htmlFor={`workflow-feedback-comment-${node.id}`}
+				>
+					<span className="font-medium">{t("交付反馈（选填）")}</span>
+					<Textarea
+						id={`workflow-feedback-comment-${node.id}`}
+						className="mt-2 min-h-28 rounded-xl"
+						value={comment}
+						onChange={(event) => setComment(event.target.value)}
+						maxLength={2_000}
+						placeholder={t("例如：页面结构清晰，交互可以直接体验。")}
+					/>
+				</label>
+				<label
+					className="text-sm"
+					htmlFor={`workflow-feedback-improvement-${node.id}`}
+				>
+					<span className="font-medium">{t("希望改进的地方（选填）")}</span>
+					<Textarea
+						id={`workflow-feedback-improvement-${node.id}`}
+						className="mt-2 min-h-28 rounded-xl"
+						value={improvement}
+						onChange={(event) => setImprovement(event.target.value)}
+						maxLength={1_000}
+						placeholder={t("例如：移动端间距可以更紧凑。")}
+					/>
+				</label>
+			</div>
+			<label className="mt-5 flex cursor-pointer items-start gap-3 rounded-xl border bg-accent/60 p-4 text-sm">
+				<input
+					type="checkbox"
+					className="mt-0.5 size-4 cursor-pointer accent-primary"
+					checked={allowModelTraining}
+					onChange={(event) => setAllowModelTraining(event.target.checked)}
+				/>
+				<span>
+					<span className="font-medium">
+						{t("允许将这条文字反馈用于模型改进")}
+					</span>
+					<span className="mt-1 block text-muted-foreground text-xs leading-5">
+						{t(
+							"平台只使用脱敏后的反馈文字和评价标签，不包含任务正文、附件、钱包地址或密钥。",
+						)}
+					</span>
+				</span>
+			</label>
+			{allowModelTraining && !commentReady && (
+				<p className="mt-2 text-warning text-xs">
+					{t("同意用于模型改进时，请至少填写 4 个字的交付反馈。")}
+				</p>
+			)}
+			<Button
+				size="lg"
+				className="mt-6 min-h-12 rounded-xl px-6"
+				disabled={busy || (allowModelTraining && !commentReady)}
+				onClick={() =>
+					onSubmit({
+						quality,
+						communication,
+						...(commentReady ? { comment: comment.trim() } : {}),
+						strengths,
+						...(improvement.trim().length >= 4
+							? { improvement: improvement.trim() }
+							: {}),
+						allowModelTraining,
+					})
+				}
+			>
+				{busy ? (
+					<Loader2 className="size-4 animate-spin" />
+				) : (
+					<Star className="size-4" />
+				)}
+				{t("提交该阶段反馈")}
+			</Button>
+		</div>
+	);
+}
+
+function StarRating({
+	label,
+	value,
+	onChange,
+}: {
+	label: string;
+	value: number;
+	onChange: (value: number) => void;
+}) {
+	const { t } = useLocale();
+	return (
+		<fieldset className="rounded-xl border bg-accent/50 p-4">
+			<legend className="px-1 font-medium text-sm">{label}</legend>
+			<div className="mt-2 flex gap-1.5">
+				{[1, 2, 3, 4, 5].map((score) => (
+					<button
+						key={score}
+						type="button"
+						aria-label={t("{label} {score} 分", { label, score })}
+						onClick={() => onChange(score)}
+						className="cursor-pointer rounded-lg p-1.5 transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+					>
+						<Star
+							className={`size-6 ${score <= value ? "fill-warning text-warning" : "text-muted-foreground/35"}`}
+						/>
+					</button>
+				))}
+			</div>
+		</fieldset>
+	);
+}
+
+function WorkflowFeedbackReceipt({ feedback }: { feedback: WorkflowFeedback }) {
+	const { locale, t } = useLocale();
+	return (
+		<div className="rounded-xl border border-success/25 bg-success/5 p-5">
+			<div className="flex items-center gap-3 text-success">
+				<CheckCircle2 className="size-6" />
+				<div>
+					<h3 className="font-semibold">{t("该阶段反馈已记录")}</h3>
+					<p className="mt-0.5 text-muted-foreground text-xs">
+						{formatDate(feedback.submittedAt, locale)}
+					</p>
+				</div>
+			</div>
+			<div className="mt-5 grid gap-3 sm:grid-cols-2">
+				<div className="rounded-xl border bg-card/70 p-4">
+					<p className="text-muted-foreground text-xs">{t("交付质量")}</p>
+					<p className="mt-1 font-semibold text-lg">{feedback.quality}/5</p>
+				</div>
+				<div className="rounded-xl border bg-card/70 p-4">
+					<p className="text-muted-foreground text-xs">{t("沟通体验")}</p>
+					<p className="mt-1 font-semibold text-lg">
+						{feedback.communication}/5
+					</p>
+				</div>
+			</div>
+			{feedback.comment !== null && (
+				<p className="mt-4 whitespace-pre-wrap text-sm leading-6">
+					{feedback.comment}
+				</p>
+			)}
+			<p className="mt-4 text-muted-foreground text-xs">
+				{feedback.allowModelTraining
+					? t("已授权：脱敏文字可用于模型改进")
+					: t("未授权用于模型训练；评分仍用于 Agent 履约记录")}
+			</p>
+		</div>
+	);
+}
+
 const RATINGS: readonly { key: keyof TaskRatingInput; label: string }[] = [
 	{ key: "quality", label: "交付质量" },
 	{ key: "communication", label: "沟通体验" },
@@ -1982,15 +2763,23 @@ function TaskConfiguration({ task }: { task: TaskDisplay }) {
 				/>
 				<InfoRow
 					label={t("分配方式")}
-					value={task.assignmentMode === "manual" ? t("手动选择") : t("自动分配")}
+					value={
+						task.assignmentMode === "manual" ? t("手动选择") : t("自动分配")
+					}
 				/>
 				<InfoRow
 					label={t("验收方式")}
-					value={task.acceptanceMode === "manual" ? t("人工验收") : t("规则验收")}
+					value={
+						task.acceptanceMode === "manual" ? t("人工验收") : t("规则验收")
+					}
 				/>
 				<InfoRow
 					label={t("截止时间")}
-					value={task.deadline === null ? t("尚未填写") : formatDate(task.deadline, locale)}
+					value={
+						task.deadline === null
+							? t("尚未填写")
+							: formatDate(task.deadline, locale)
+					}
 				/>
 			</dl>
 		</section>
@@ -1999,15 +2788,32 @@ function TaskConfiguration({ task }: { task: TaskDisplay }) {
 
 function TaskOverview({ task }: { task: TaskDisplay }) {
 	const { t } = useLocale();
+	const hasSupplement =
+		task.description.trim() !== "" &&
+		task.description.trim() !== task.title.trim();
 	return (
 		<section className="rounded-xl border bg-card p-5">
-			<h2 className="font-semibold text-base">{t("任务说明")}</h2>
-			<p className="mt-3 whitespace-pre-line text-muted-foreground text-sm leading-7">
-				{task.description || t("尚未填写")}
-			</p>
+			<div className="flex flex-wrap items-center gap-2">
+				<h2 className="font-semibold text-base">{t("发布时的需求记录")}</h2>
+				<span className="rounded-full border border-primary/15 bg-primary-container/35 px-2.5 py-1 text-[10px] text-primary">
+					{t("原始记录，不是 Agent 产物")}
+				</span>
+			</div>
+			{hasSupplement ? (
+				<>
+					<h3 className="mt-4 font-medium text-sm">{t("补充说明")}</h3>
+					<p className="mt-2 whitespace-pre-line text-muted-foreground text-sm leading-7">
+						{task.description}
+					</p>
+				</>
+			) : (
+				<p className="mt-3 text-muted-foreground text-sm leading-7">
+					{t("发布时未填写补充说明，需求整理 Agent 会从任务标题开始澄清。")}
+				</p>
+			)}
 			{task.acceptanceCriteria && (
 				<div className="mt-5 border-t pt-4">
-					<h3 className="font-semibold text-base">{t("验收标准")}</h3>
+					<h3 className="font-semibold text-base">{t("平台预设的验收要点")}</h3>
 					<p className="mt-2 whitespace-pre-line text-muted-foreground text-sm leading-6">
 						{task.acceptanceCriteria}
 					</p>
@@ -2297,6 +3103,10 @@ function FlowProgress({
 				{FLOW.map((step, index) => {
 					const occurred = index <= activeStage;
 					const isSelected = selected === index;
+					const terminalStageComplete =
+						index === activeStage &&
+						(status === "settled" || status === "refunded");
+					const stageComplete = index < activeStage || terminalStageComplete;
 					const failedCurrent =
 						index === activeStage &&
 						(status === "execution_failed" || status === "timed_out");
@@ -2317,9 +3127,9 @@ function FlowProgress({
 							})}
 						>
 							<span
-								className={`flex size-7 shrink-0 items-center justify-center rounded-full text-xs ${index < activeStage ? "bg-success text-white" : failedCurrent ? "bg-destructive text-destructive-foreground" : index === activeStage ? "bg-primary text-white" : "border bg-card"}`}
+								className={`flex size-7 shrink-0 items-center justify-center rounded-full text-xs ${stageComplete ? "bg-success text-white" : failedCurrent ? "bg-destructive text-destructive-foreground" : index === activeStage ? "bg-primary text-white" : "border bg-card"}`}
 							>
-								{index < activeStage ? <Check className="size-3.5" /> : index + 1}
+								{stageComplete ? <Check className="size-3.5" /> : index + 1}
 							</span>
 							<span className="font-medium text-xs sm:text-sm">
 								{t(step.label as MessageId)}
@@ -2339,37 +3149,94 @@ function flowStageIndex(status: TaskStatus): number {
 	return index < 0 ? 0 : index;
 }
 
+function isSettlementStage(status: TaskStatus): boolean {
+	return ["pending_settlement", "settled", "refunded", "disputed"].includes(
+		status,
+	);
+}
+
+function isFeedbackReady(status: TaskStatus): boolean {
+	return ["settled", "refunded", "disputed"].includes(status);
+}
+
 /**
  * 多 Agent 节点会反复经历匹配、执行和验收，任务主状态不能完整表达已经发生的阶段。
  * 导航因此取“任务主状态”和“持久化节点事实”的最高阶段：下游重新匹配时不会把已经
  * 出现过交付物的任务错误退回第二格，结算阶段则仍只由任务终态或工作流终态开启。
  */
-function formalFlowStageIndex(workflow: FormalWorkflow, taskStatus: TaskStatus): number {
+function formalFlowStageIndex(
+	workflow: FormalWorkflow,
+	taskStatus: TaskStatus,
+): number {
 	const taskStage = flowStageIndex(taskStatus);
 	if (
 		taskStage === 4 ||
-		["completed", "failed", "disputed", "cancelled"].includes(workflow.run.status)
-	) return 4;
-	if (
-		workflow.nodes.some((node) =>
-			node.latestResultBatch !== null ||
-			node.acceptedAt !== null ||
-			["awaiting_review", "accepted", "disputed"].includes(node.status),
+		["completed", "failed", "disputed", "cancelled"].includes(
+			workflow.run.status,
 		)
-	) return Math.max(taskStage, 3);
+	)
+		return 4;
+	if (
+		workflow.nodes.some(
+			(node) =>
+				node.latestResultBatch !== null ||
+				node.acceptedAt !== null ||
+				["awaiting_review", "accepted", "disputed"].includes(node.status),
+		)
+	)
+		return Math.max(taskStage, 3);
+	if (
+		workflow.nodes.some(
+			(node) =>
+				node.execution !== null ||
+				["executing", "rework", "execution_failed"].includes(node.status),
+		)
+	)
+		return Math.max(taskStage, 2);
+	if (
+		workflow.nodes.some(
+			(node) =>
+				node.assignment !== null ||
+				node.selection !== null ||
+				[
+					"selecting",
+					"selected",
+					"matching",
+					"awaiting_agent_acceptance",
+				].includes(node.status),
+		)
+	)
+		return Math.max(taskStage, 1);
+	return taskStage;
+}
+
+/**
+ * 首次打开详情时定位“当前需要关注的工作”，而不是机械定位生命周期中到过的最远阶段。
+ * 返工、重试和下游重新匹配会保留旧产物供回看，所以可访问边界仍由
+ * formalFlowStageIndex 计算；这里只决定页面首次聚焦哪个 Tab。
+ */
+function formalFlowInitialStageIndex(
+	workflow: FormalWorkflow,
+	taskStatus: TaskStatus,
+): number {
 	if (
 		workflow.nodes.some((node) =>
-			node.execution !== null ||
 			["executing", "rework", "execution_failed"].includes(node.status),
 		)
-	) return Math.max(taskStage, 2);
+	)
+		return 2;
 	if (
 		workflow.nodes.some((node) =>
-			node.assignment !== null ||
-			["matching", "awaiting_agent_acceptance"].includes(node.status),
+			[
+				"selecting",
+				"selected",
+				"matching",
+				"awaiting_agent_acceptance",
+			].includes(node.status),
 		)
-	) return Math.max(taskStage, 1);
-	return taskStage;
+	)
+		return 1;
+	return formalFlowStageIndex(workflow, taskStatus);
 }
 
 function Panel({
@@ -2488,7 +3355,9 @@ function ReadOnlyNotice({
 				sessionExpired
 					? wallet.error
 					: connectedAsNonOwner
-						? t("请使用发布这个任务的钱包重新登录，公开视图不会展示候选报价、托管、验收和交付内容。")
+						? t(
+								"请使用发布这个任务的钱包重新登录，公开视图不会展示候选报价、托管、验收和交付内容。",
+							)
 						: t("连接发布者钱包后才能查看候选报价、托管、验收和交付内容。")
 			}
 		>
@@ -2522,7 +3391,11 @@ function NotFoundState({ message }: { message: string }) {
 			<AlertCircle className="mx-auto size-9 text-warning" />
 			<h1 className="mt-4 font-bold text-2xl">{t("无法打开这个任务")}</h1>
 			<p className="mt-2 text-muted-foreground">{message}</p>
-			<Button className="mt-6" render={<Link href="/tasks" />}>
+			<Button
+				size="lg"
+				className="mt-7 min-h-12 rounded-xl px-6"
+				render={<Link href="/tasks" />}
+			>
 				{t("返回任务市场")}
 			</Button>
 		</main>
@@ -2647,6 +3520,7 @@ function eventTitle(
 		((
 			{
 				"task.submitted": "任务已发布",
+				"task.workflow_quote_confirmed": "工作流报价已确认",
 				"task.escrow_confirmed": "链上托管已确认",
 				"task.match_criteria_updated": "匹配条件已调整",
 				"task.assignment_locked": "候选已锁定",
@@ -2820,10 +3694,10 @@ function arbitrationExecutionStatusLabel(
 	return t("执行失败，等待重试");
 }
 function needsCandidates(status: TaskStatus): boolean {
-	return !["draft", "awaiting_escrow"].includes(status);
+	return !["draft", "planning", "awaiting_escrow"].includes(status);
 }
 function needsAssignment(status: TaskStatus): boolean {
-	return !["draft", "awaiting_escrow"].includes(status);
+	return !["draft", "planning", "awaiting_escrow"].includes(status);
 }
 function needsResults(status: TaskStatus): boolean {
 	return [

@@ -6,6 +6,7 @@ import {
 	Check,
 	CirclePlus,
 	Copy,
+	Gavel,
 	LayoutGrid,
 	Loader2,
 	LogOut,
@@ -14,13 +15,13 @@ import {
 	Wallet,
 	X,
 } from "lucide-react";
+import type { Route } from "next";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { useConnection } from "wagmi";
+import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import type { MessageId } from "@/lib/i18n/messages";
 import { walletNetworkName } from "@/lib/wallet/network-name";
-import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import BrandMark from "./brand-mark";
 import LanguageSwitcher from "./i18n/language-switcher";
 import { useLocale } from "./i18n/locale-provider";
@@ -30,6 +31,7 @@ const links = [
 	{ to: "/agents", label: "Agent 市场" as MessageId, icon: Store },
 	{ to: "/agents/register", label: "上架 Agent" as MessageId, icon: Bot },
 	{ to: "/tasks/new", label: "发布任务" as MessageId, icon: CirclePlus },
+	{ to: "/dao", label: "DAO 仲裁" as MessageId, icon: Gavel },
 	{ to: "/workspace", label: "工作台" as MessageId, icon: Boxes },
 ] as const;
 
@@ -40,6 +42,7 @@ export default function Header() {
 	const { t } = useLocale();
 
 	// 客户端路由切换后收起菜单，避免遮挡新页面，也让返回键行为保持直观。
+	// biome-ignore lint/correctness/useExhaustiveDependencies: pathname 本身不参与渲染计算，只负责在路由完成后触发菜单复位。
 	useEffect(() => {
 		setMobileMenuOpen(false);
 	}, [pathname]);
@@ -70,7 +73,9 @@ export default function Header() {
 						return (
 							<Link
 								key={to}
-								href={to}
+								// Next typedRoutes 只能直接收窄字面量；数组遍历后的合法路由是联合类型，
+								// 因此在已由上方只读目录约束的边界恢复 Route 类型，禁止传入运行时任意字符串。
+								href={to as Route}
 								aria-current={active ? "page" : undefined}
 								className={`relative flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg px-2.5 font-medium text-[13px] transition-[color,background-color] 2xl:px-3 2xl:text-sm ${active ? "text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
 							>
@@ -116,7 +121,7 @@ export default function Header() {
 						return (
 							<Link
 								key={to}
-								href={to}
+								href={to as Route}
 								aria-current={active ? "page" : undefined}
 								className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 font-medium text-sm ${active ? "border-primary/35 bg-primary-container text-primary" : "bg-background text-muted-foreground"}`}
 							>
@@ -142,11 +147,6 @@ function WalletAccountControl({
 	const [loggingOut, setLoggingOut] = useState(false);
 	const [actionError, setActionError] = useState<string | null>(null);
 	const rootRef = useRef<HTMLDivElement>(null);
-	const connection = useConnection();
-	const connectedNetwork =
-		connection.chainId === undefined
-			? t("钱包网络未连接")
-			: walletNetworkName(connection.chainId);
 
 	useEffect(() => {
 		if (!open) return;
@@ -196,6 +196,7 @@ function WalletAccountControl({
 	};
 
 	const connected = wallet.status === "connected";
+	const transactionNetwork = connected ? walletNetworkName(wallet.chainId) : "";
 	const busy = wallet.status === "checking" || wallet.status === "connecting";
 	const actionLabel = wallet.status === "error" ? t("重新登录") : t("连接钱包");
 	return (
@@ -236,19 +237,18 @@ function WalletAccountControl({
 							<span
 								className="flex min-w-0 max-w-40 items-center gap-1.5 rounded-full border border-secondary/12 bg-secondary/6 px-2 py-1 text-[11px] text-muted-foreground"
 								role="status"
-								aria-label={`${t("当前钱包网络")} ${connectedNetwork}`}
-								title={connectedNetwork}
+								aria-label={t("当前交易网络 {network}", {
+									network: transactionNetwork,
+								})}
 							>
 								<span
-									className={`size-1.5 shrink-0 rounded-full ${connection.chainId === undefined ? "bg-warning" : "bg-success shadow-[0_0_8px_var(--success)]"}`}
+									className="size-1.5 shrink-0 rounded-full bg-success shadow-[0_0_8px_var(--success)]"
 									aria-hidden
 								/>
-								<span className="truncate">{connectedNetwork}</span>
+								<span className="truncate">{transactionNetwork}</span>
 							</span>
 						</div>
-						<p
-							className="mt-1.5 select-all whitespace-nowrap font-mono text-[11px] text-foreground/85 leading-4"
-						>
+						<p className="mt-1.5 select-all whitespace-nowrap font-mono text-[11px] text-foreground/85 leading-4">
 							{wallet.walletAddress}
 						</p>
 					</div>

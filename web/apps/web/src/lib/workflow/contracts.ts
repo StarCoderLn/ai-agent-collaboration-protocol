@@ -43,42 +43,43 @@ export const WORKFLOW_AGENT_CATALOG = [
 		step: "design",
 		strategy: "DeepSeek 直连",
 		name: "快速界面设计 Agent",
-		description: "直接生成设计决策与可运行高保真原型。",
+		description: "直接生成设计规范，并由平台渲染桌面与移动设计稿。",
 	},
 	{
 		id: "design-mastra",
 		step: "design",
 		strategy: "Mastra 编排",
 		name: "Mastra 产品设计 Agent",
-		description: "先规划需求覆盖，再生成可运行设计原型。",
+		description: "先规划需求覆盖，再生成由平台渲染的结构化设计规范。",
 	},
 	{
 		id: "design-state-machine",
 		step: "design",
 		strategy: "自研状态机",
 		name: "设计评审与完善 Agent",
-		description: "评审设计后生成并校验可运行高保真原型。",
+		description: "评审结构化设计后，由平台生成并校验可验收设计稿。",
 	},
 	{
 		id: "code-direct",
 		step: "code",
 		strategy: "DeepSeek 直连",
 		name: "快速代码生成 Agent",
-		description: "直接继承设计原型并补充交互实现。",
+		description: "直接继承已验收 DesignSpec 并实现交互。",
 	},
 	{
 		id: "code-mastra",
 		step: "code",
 		strategy: "Mastra 编排",
 		name: "Mastra 编程 Agent",
-		description: "先规划实现范围，再增量完善设计原型。",
+		description: "先规划实现范围，再按已验收 DesignSpec 完成页面。",
 	},
 	{
 		id: "code-state-machine",
 		step: "code",
 		strategy: "自研状态机",
-		name: "规划测试修复 Coding Agent",
-		description: "规划、增量编码、设计继承校验并最多修复一次。",
+		name: "可靠前端开发 Agent",
+		description:
+			"先验收页面结构，再基于已验收 TSX 生成样式；失败时只重做对应片段。",
 	},
 ] as const satisfies readonly {
 	id: WorkflowAgentId;
@@ -201,44 +202,132 @@ export const DesignPreviewSchema = z
 			})
 			.strict(),
 		metrics: z.array(
-			z.object({
-				label: Text,
-				value: Text,
-				detail: Text,
-				tone: z.enum(["neutral", "primary", "success", "warning", "danger"]),
-			}).strict(),
+			z
+				.object({
+					label: Text,
+					value: Text,
+					detail: Text,
+					tone: z.enum(["neutral", "primary", "success", "warning", "danger"]),
+				})
+				.strict(),
 		),
 		sections: z.array(
-			z.object({
-				id: Text,
-				kind: z.enum(["cards", "list", "progress", "table", "chart", "form", "timeline"]),
-				layout: z.enum(["full", "split", "grid-2", "grid-3", "grid-4"]),
-				title: Text,
-				description: Text.nullable(),
-				items: z.array(
-					z.object({
-						title: Text,
-						description: Text.nullable(),
-						value: Text.nullable(),
-						status: Text.nullable(),
-						progress: z.number().int().min(0).max(100).nullable(),
-						action: Text.nullable(),
-						tone: z.enum(["neutral", "primary", "success", "warning", "danger"]),
-					}).strict(),
-				),
-			}).strict(),
+			z
+				.object({
+					id: Text,
+					kind: z.enum([
+						"cards",
+						"list",
+						"progress",
+						"table",
+						"chart",
+						"form",
+						"timeline",
+					]),
+					layout: z.enum(["full", "split", "grid-2", "grid-3", "grid-4"]),
+					title: Text,
+					description: Text.nullable(),
+					items: z.array(
+						z
+							.object({
+								title: Text,
+								description: Text.nullable(),
+								value: Text.nullable(),
+								status: Text.nullable(),
+								progress: z.number().int().min(0).max(100).nullable(),
+								action: Text.nullable(),
+								tone: z.enum([
+									"neutral",
+									"primary",
+									"success",
+									"warning",
+									"danger",
+								]),
+							})
+							.strict(),
+					),
+				})
+				.strict(),
 		),
 	})
 	.strict();
 export type DesignPreview = z.infer<typeof DesignPreviewSchema>;
 
+const RenderedDesignScreenSchema = z
+	.object({
+		id: z.enum(["desktop", "mobile"]),
+		label: Text,
+		viewport: z
+			.object({
+				width: z.number().int().min(320).max(2_560),
+				height: z.number().int().min(568).max(1_600),
+			})
+			.strict(),
+		canvas: z
+			.object({
+				width: z.number().int().min(320).max(2_560),
+				height: z.number().int().min(568).max(4_000),
+			})
+			.strict(),
+		mimeType: z.literal("image/svg+xml"),
+		content: z.string().trim().min(500).max(120_000).startsWith("<svg"),
+	})
+	.strict()
+	.superRefine((screen, context) => {
+		// SVG 会进入浏览器展示和下载边界；即使它由平台渲染器生成，也必须在读取持久化
+		// 制品时再次拒绝脚本、事件处理器、外链和 foreignObject。
+		if (
+			/<(?:script|foreignObject)\b|\bon[a-z]+\s*=|\b(?:href|xlink:href)\s*=|\burl\s*\(/i.test(
+				screen.content,
+			)
+		) {
+			context.addIssue({
+				code: "custom",
+				path: ["content"],
+				message: "UNSAFE_RENDERED_DESIGN",
+			});
+		}
+		if (
+			screen.canvas.width !== screen.viewport.width ||
+			screen.canvas.height < screen.viewport.height
+		) {
+			context.addIssue({
+				code: "custom",
+				path: ["canvas"],
+				message: "RENDERED_DESIGN_DIMENSIONS_INVALID",
+			});
+		}
+		const expectedViewport =
+			screen.id === "desktop"
+				? { width: 1_440, height: 900 }
+				: { width: 390, height: 844 };
+		if (
+			screen.viewport.width !== expectedViewport.width ||
+			screen.viewport.height !== expectedViewport.height
+		) {
+			context.addIssue({
+				code: "custom",
+				path: ["viewport"],
+				message: "RENDERED_DESIGN_BREAKPOINT_INVALID",
+			});
+		}
+	});
+
 export const DesignArtifactSchema = DesignBaseSchema.extend({
-	schemaVersion: z.literal("design.artifact.v0.3"),
+	schemaVersion: z.literal("design.artifact.v0.4"),
 	preview: DesignPreviewSchema,
-	prototype: z.object({
-		pageTsx: z.string().trim().min(300).max(30_000),
-		globalsCss: z.string().trim().min(300).max(30_000),
-	}).strict(),
+	rendererVersion: z.literal("aicp-design-renderer.v1"),
+	renderedScreens: z
+		.array(RenderedDesignScreenSchema)
+		.length(2)
+		.superRefine((screens, context) => {
+			if (new Set(screens.map((screen) => screen.id)).size !== 2) {
+				context.addIssue({
+					code: "custom",
+					message: "RENDERED_DESIGN_BREAKPOINTS_MISSING",
+				});
+			}
+		}),
 }).strict();
 export type DesignArtifact = z.infer<typeof DesignArtifactSchema>;
 
@@ -250,9 +339,7 @@ export const CodeArtifactSchema = z
 		implementationSummary: Text,
 		fileTree: z.array(Text),
 		files: z.array(
-			z
-				.object({ path: Text, language: Text, content: Text })
-				.strict(),
+			z.object({ path: Text, language: Text, content: Text }).strict(),
 		),
 		runInstructions: z.array(Text),
 		testPlan: z.array(Text),
@@ -270,11 +357,11 @@ export const WorkflowArtifactSchema = z.discriminatedUnion("schemaVersion", [
 ]);
 export type WorkflowArtifact = z.infer<typeof WorkflowArtifactSchema>;
 
-/** 统一识别当前唯一的可运行设计制品，调用方无需理解协议版本细节。 */
+/** 统一识别当前唯一的设计制品，调用方无需理解协议版本细节。 */
 export function isDesignArtifact(
 	artifact: WorkflowArtifact,
 ): artifact is DesignArtifact {
-	return artifact.schemaVersion === "design.artifact.v0.3";
+	return artifact.schemaVersion === "design.artifact.v0.4";
 }
 
 const BaseExecutionRequestSchema = z.object({
@@ -285,7 +372,9 @@ const BaseExecutionRequestSchema = z.object({
 });
 
 export const WorkflowExecutionRequestSchema = z.discriminatedUnion("step", [
-	BaseExecutionRequestSchema.extend({ step: z.literal("requirements") }).strict(),
+	BaseExecutionRequestSchema.extend({
+		step: z.literal("requirements"),
+	}).strict(),
 	BaseExecutionRequestSchema.extend({
 		step: z.literal("design"),
 		requirements: RequirementsArtifactSchema,
@@ -319,6 +408,4 @@ export const WorkflowRouteResponseSchema = z.discriminatedUnion("success", [
 		})
 		.strict(),
 ]);
-export type WorkflowRouteResponse = z.infer<
-	typeof WorkflowRouteResponseSchema
->;
+export type WorkflowRouteResponse = z.infer<typeof WorkflowRouteResponseSchema>;

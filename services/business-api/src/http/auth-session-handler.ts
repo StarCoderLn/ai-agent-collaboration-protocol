@@ -5,6 +5,8 @@ import { withCredentialedCors } from "./cors";
 export interface AuthSessionHttpDeps {
   resolveActorId(request: Request): Promise<string>;
   allowedOrigin: string;
+  /** 当前服务端接受 SIWE 登录及资金交易的唯一链，不能由客户端自行推断。 */
+  chainId: number;
 }
 
 export interface AuthLogoutHttpDeps {
@@ -17,7 +19,11 @@ export function createAuthSessionHandler(deps: AuthSessionHttpDeps) {
   return async (request: Request): Promise<Response> => {
     try {
       const walletAddress = await deps.resolveActorId(request);
-      return withCredentialedCors(Response.json({ authenticated: true, walletAddress }), deps.allowedOrigin);
+      return withCredentialedCors(Response.json({
+        authenticated: true,
+        walletAddress,
+        chainId: deps.chainId,
+      }), deps.allowedOrigin);
     } catch (error) {
       const invalid = error instanceof SessionInvalidError;
       return withCredentialedCors(Response.json({

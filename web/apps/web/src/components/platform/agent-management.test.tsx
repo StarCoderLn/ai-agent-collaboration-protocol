@@ -1,7 +1,16 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { listOwnedAgents } from "@/lib/api/agent-directory";
+import {
+	listOwnedAgents,
+	transitionOwnedAgent,
+} from "@/lib/api/agent-directory";
 import AgentManagement from "./agent-management";
 
 vi.mock("@/components/auth/wallet-session-provider", () => ({
@@ -24,6 +33,7 @@ function managedAgent(id: string, overrides: Record<string, unknown> = {}) {
 		name: "提供者 Coding Agent",
 		categoryId: "40000000-0000-4000-8000-000000000001",
 		categoryName: "代码开发",
+		provider: { label: "0x1111…1111" },
 		description: "根据需求生成代码",
 		tags: ["coding"],
 		pricing: { type: "per_task", amountMinor: "1000", currency: "USDC" },
@@ -103,6 +113,27 @@ describe("Agent provider management", () => {
 		).toHaveAttribute("href", "/agents/register");
 		await waitFor(() =>
 			expect(onInventoryChange).toHaveBeenLastCalledWith(false),
+		);
+	});
+
+	it("requires explicit confirmation before permanently delisting an owned Agent", async () => {
+		render(<AgentManagement />);
+
+		const delistButton = (
+			await screen.findAllByRole("button", { name: "下架" })
+		)[0];
+		if (delistButton === undefined)
+			throw new Error("测试夹具必须包含可下架 Agent");
+		fireEvent.click(delistButton);
+		expect(screen.getByText("确认永久下架这个 Agent？")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "确认下架" }));
+
+		await waitFor(() =>
+			expect(transitionOwnedAgent).toHaveBeenCalledWith(
+				"83100000-0000-4000-8000-000000000001",
+				"delist",
+				expect.any(String),
+			),
 		);
 	});
 });

@@ -4,8 +4,6 @@ import { z } from "zod";
 import {
 	type CodeArtifact,
 	CodeArtifactSchema,
-	type DesignArtifact,
-	DesignArtifactSchema,
 } from "@/lib/workflow/contracts";
 
 const MAX_PREVIEW_REQUEST_BYTES = 120_000;
@@ -19,18 +17,14 @@ const REACT_RUNTIME_IMPORTS = new Set([
 	"react/jsx-dev-runtime",
 ]);
 
-const PreviewableArtifactSchema = z.discriminatedUnion("schemaVersion", [
-	DesignArtifactSchema,
-	CodeArtifactSchema,
-]);
-
 const PreviewRequestSchema = z
-	.object({ artifact: PreviewableArtifactSchema })
+	.object({ artifact: CodeArtifactSchema })
 	.strict()
 	.superRefine(({ artifact }, context) => {
-		const totalCharacters = artifact.schemaVersion === "design.artifact.v0.3"
-			? artifact.prototype.pageTsx.length + artifact.prototype.globalsCss.length
-			: artifact.files.reduce((total, file) => total + file.content.length, 0);
+		const totalCharacters = artifact.files.reduce(
+			(total, file) => total + file.content.length,
+			0,
+		);
 		if (totalCharacters > MAX_PREVIEW_SOURCE_CHARACTERS) {
 			context.addIssue({
 				code: "custom",
@@ -136,21 +130,19 @@ export async function compileCodePreview(
 }
 
 /**
- * 设计与代码预览共享同一个隔离编译器，但各自的存储结构不同。差异在这一处被吸收，
- * 页面和 Route Handler 只面对统一的 pageTsx/globalsCss 契约。
+ * 代码预览只处理 Coding Agent 的可执行制品。设计阶段已经改为静态 SVG 设计稿，不能
+ * 再进入编译器；这条边界避免把“可查看的设计图片”误解为“可执行的应用代码”。
  */
 function previewSource(
-	artifact: DesignArtifact | CodeArtifact,
+	artifact: CodeArtifact,
 ): Readonly<{ pageTsx: string; globalsCss: string; fileCount: number }> | null {
-	if (artifact.schemaVersion === "design.artifact.v0.3") {
-		return { ...artifact.prototype, fileCount: 2 };
-	}
 	const page = artifact.files.find((file) => file.path === "app/page.tsx");
 	if (page === undefined) return null;
 	return {
 		pageTsx: page.content,
-		globalsCss: artifact.files.find((file) => file.path === "app/globals.css")?.content
-			?? "html,body,#root{min-height:100%;margin:0}",
+		globalsCss:
+			artifact.files.find((file) => file.path === "app/globals.css")?.content ??
+			"html,body,#root{min-height:100%;margin:0}",
 		fileCount: artifact.files.length,
 	};
 }
@@ -241,10 +233,15 @@ createRoot(root).render(React.createElement(Page));`,
 					contents: pageSource,
 				}),
 			);
+			// 两个 Next.js 桩模块本身用 JSX 书写，jsx:"automatic" 会为它们注入
+			// react/jsx-runtime。缺少 resolveDir 时该注入无处解析，任何使用平台明确允许的
+			// next/link 或 next/image 的页面都会编译失败——错误还会被归类成“页面代码有问题”，
+			// 把平台自身的装配缺陷说成 Agent 的产物缺陷。
 			context.onLoad(
 				{ filter: /^next\/link$/, namespace: "aicp-next-stub" },
 				() => ({
 					loader: "tsx",
+					resolveDir: process.cwd(),
 					contents: `import React from "react";
 export default function Link({ href, children, ...props }) {
   return <a {...props} href={typeof href === "string" ? href : "#"} onClick={(event) => event.preventDefault()}>{children}</a>;
@@ -255,6 +252,7 @@ export default function Link({ href, children, ...props }) {
 				{ filter: /^next\/image$/, namespace: "aicp-next-stub" },
 				() => ({
 					loader: "tsx",
+					resolveDir: process.cwd(),
 					contents: `import React from "react";
 export default function Image({ src, alt = "", ...props }) { return <img {...props} src={typeof src === "string" ? src : ""} alt={alt} />; }`,
 				}),
@@ -264,7 +262,7 @@ export default function Image({ src, alt = "", ...props }) { return <img {...pro
 }
 
 function renderSandboxDocument(
-	artifact: DesignArtifact | CodeArtifact,
+	artifact: CodeArtifact,
 	css: string,
 	script: string,
 ): string {

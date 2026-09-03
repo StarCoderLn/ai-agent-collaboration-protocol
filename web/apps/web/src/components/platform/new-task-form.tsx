@@ -5,9 +5,6 @@ import { Input } from "@web/ui/components/input";
 import { Label } from "@web/ui/components/label";
 import { Textarea } from "@web/ui/components/textarea";
 import {
-	CalendarClock,
-	Check,
-	CheckCircle2,
 	ChevronDown,
 	Loader2,
 	LockKeyhole,
@@ -18,7 +15,7 @@ import {
 	Wallet,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useMemo, useRef, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import { useLocale } from "@/components/i18n/locale-provider";
 import {
@@ -38,13 +35,6 @@ import {
 import { revealFormError } from "@/lib/forms/reveal-form-error";
 import type { MessageId } from "@/lib/i18n/messages";
 import { localDateToDeadlineIso } from "@/lib/platform/deadline";
-import {
-	formatMinorAmount,
-	MAX_TASK_BUDGET_MINOR,
-	MIN_USDC_BUSINESS_AMOUNT_MINOR,
-	MVP_CURRENCY,
-	parseUsdcToMinor,
-} from "@/lib/platform/money";
 
 type SubmitState =
 	| Readonly<{ kind: "idle" }>
@@ -56,20 +46,12 @@ type SubmitState =
 			draftId: string | null;
 	  }>;
 
-type TaskValidationField =
-	| "title"
-	| "description"
-	| "categoryId"
-	| "tags"
-	| "budget"
-	| "deadline";
+type TaskValidationField = "title" | "description" | "categoryId" | "deadline";
 
 const TASK_FIELD_IDS: Readonly<Record<TaskValidationField, string>> = {
 	title: "task-title",
 	description: "task-description",
 	categoryId: "task-capability-category",
-	tags: "task-custom-tag",
-	budget: "task-budget",
 	deadline: "task-deadline",
 };
 
@@ -81,10 +63,8 @@ export default function NewTaskForm() {
 	const [categoryId, setCategoryId] = useState(
 		UNSELECTED_CAPABILITY_CATEGORY_ID,
 	);
-	const [selectedTags, setSelectedTags] = useState<readonly string[]>([]);
 	const [title, setTitle] = useState("");
 	const [description, setDescription] = useState("");
-	const [budget, setBudget] = useState("");
 	const [deadline, setDeadline] = useState("");
 	const [visibility, setVisibility] = useState<"public" | "private">("public");
 	const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -98,14 +78,13 @@ export default function NewTaskForm() {
 	const updateKey = useRef(crypto.randomUUID());
 	const submitKey = useRef(crypto.randomUUID());
 
-	const budgetMinor = useMemo(() => parseUsdcToMinor(budget), [budget]);
 	const selectedCategory =
 		taxonomy.kind === "loaded"
 			? findCapabilityCategory(taxonomy.categories, categoryId)
 			: null;
 	const structuredFields = buildStructuredTaskFields(
 		selectedCategory?.name ?? "",
-		selectedTags,
+		[],
 		locale,
 	);
 
@@ -160,22 +139,6 @@ export default function NewTaskForm() {
 			rejectSubmit(submittedForm, "categoryId", t("请选择服务分类"));
 			return;
 		}
-		if (selectedTags.length === 0) {
-			rejectSubmit(submittedForm, "tags", t("请至少选择一个技能标签"));
-			return;
-		}
-		if (
-			budgetMinor === null ||
-			BigInt(budgetMinor) < MIN_USDC_BUSINESS_AMOUNT_MINOR ||
-			BigInt(budgetMinor) > MAX_TASK_BUDGET_MINOR
-		) {
-			rejectSubmit(
-				submittedForm,
-				"budget",
-				t("任务预算须在 1–100,000 USDC 之间，最多保留 6 位小数"),
-			);
-			return;
-		}
 		let deadlineIso: string;
 		try {
 			deadlineIso = localDateToDeadlineIso(deadline);
@@ -190,21 +153,20 @@ export default function NewTaskForm() {
 			acceptanceCriteria: structuredFields.acceptanceCriteria,
 			deliverableFormat: structuredFields.deliverableFormat,
 			categoryId,
-			tags: selectedTags,
-			pricing: { type: "fixed", amountMinor: budgetMinor },
-			currency: MVP_CURRENCY,
+			// 用户不需要猜平台标签。服务端会从原始需求识别标准能力，工作流节点再补充
+			// 阶段专属能力；空数组是明确协议语义，不是遗漏字段。
+			tags: [],
+			currency: "USDC",
 			deadline: deadlineIso,
 			requiredCapability: structuredFields.requiredCapability,
 			attachments: [],
 			visibility,
 			// 正式工作流统一由平台自动选择每个阶段的 Agent；没有合格候选时服务端暂停，
 			// 而不是把匹配算法和恢复策略暴露成发布表单里的额外决策。
-			assignmentMode: {
-				mode: "automatic",
-				priceCapMinor: budgetMinor,
-				rankingBasis: "active-ranking-rule",
-				fallbackOnFail: "manual",
-			},
+			// 当前产品阶段由平台生成并解释候选，再由发布者逐节点确认。这里必须持久化为
+			// manual，避免任务配置声称“平台自动分配”，实际却仍等待用户选人；未来启用
+			// AI 自动选择时应通过独立产品开关显式写入 automatic，而不是复用预算字段猜测。
+			assignmentMode: { mode: "manual" },
 			// 中间节点由工作流契约自动验收，最终节点仍由发布者人工验收；任务级模式因此
 			// 保留 manual，避免终端 Coding 产物被旧的通用自动验收语义直接结算。
 			acceptanceMode: { mode: "manual" },
@@ -259,13 +221,16 @@ export default function NewTaskForm() {
 							POST A REQUEST · FIND YOUR AGENT
 						</p>
 						<h1 className="mt-2 font-bold text-3xl tracking-tight sm:text-5xl">
-							{t("发布你的需求")}
+							{t("发布你的")}
+							{/* 中文标题不需要词间空格；英文拆分高亮后必须补空格，避免显示为 Post yourrequest。 */}
+							{locale === "en" ? " " : null}
+							<span className="brand-text">{t("需求")}</span>
 						</h1>
 						<p className="mt-2 text-muted-foreground">
 							{t("告诉我们你想完成什么，平台会为你推荐合适的 Agent。")}
 						</p>
 						<ol className="mt-5 flex flex-wrap items-center gap-2 text-xs">
-							{[t("填写需求"), t("托管预算"), t("选择 Agent")].map(
+							{[t("填写需求"), t("选择 Agent"), t("托管 USDC")].map(
 								(step, index) => (
 									<li
 										key={step}
@@ -291,7 +256,7 @@ export default function NewTaskForm() {
 						number="01"
 						title={t("描述你的需求")}
 						description={t(
-							"填写标题、服务分类、技能标签、预算和截止时间即可开始，补充说明可选",
+							"填写标题、服务分类和截止时间即可开始，补充说明可选",
 						)}
 						icon={Sparkles}
 					>
@@ -355,62 +320,20 @@ export default function NewTaskForm() {
 							idPrefix="task"
 							state={taxonomy}
 							categoryId={categoryId}
-							selectedTags={selectedTags}
+							selectedTags={[]}
 							onCategoryChange={(value) => {
 								setCategoryId(value);
 								markDirty();
 							}}
-							onTagsChange={(value) => {
-								setSelectedTags(value);
-								markDirty();
-							}}
+							onTagsChange={() => undefined}
+							showTags={false}
 							categoryError={
 								validationError?.field === "categoryId"
 									? validationError.message
 									: undefined
 							}
-							tagsError={
-								validationError?.field === "tags"
-									? validationError.message
-									: undefined
-							}
 						/>
-						<div className="grid gap-4 sm:grid-cols-2">
-							<Field
-								label={t("固定预算")}
-								htmlFor="task-budget"
-								hint={t(
-									"这是你愿意托管的最高金额，已包含平台服务费，不会额外加收。",
-								)}
-								error={
-									validationError?.field === "budget"
-										? validationError.message
-										: undefined
-								}
-							>
-								<div className="relative">
-									<Input
-										id="task-budget"
-										inputMode="decimal"
-										placeholder={t("例如：50")}
-										value={budget}
-										aria-invalid={validationError?.field === "budget"}
-										aria-describedby={
-											validationError?.field === "budget"
-												? "task-budget-error"
-												: undefined
-										}
-										onChange={(event) => {
-											setBudget(event.target.value);
-											markDirty();
-										}}
-										className="pr-16"
-									/>
-									<span className="absolute top-3 right-3 text-muted-foreground text-sm">
-										USDC
-									</span>
-								</div>
-							</Field>
+						<div>
 							<Field
 								label={t("截止时间")}
 								htmlFor="task-deadline"
@@ -419,6 +342,7 @@ export default function NewTaskForm() {
 										? validationError.message
 										: undefined
 								}
+								hint={t("所选日期当天结束前均可交付")}
 							>
 								<DatePicker
 									id="task-deadline"
@@ -436,10 +360,6 @@ export default function NewTaskForm() {
 									}
 								/>
 							</Field>
-						</div>
-						<div className="flex items-start gap-2 rounded-xl bg-warning/10 p-3 text-sm text-warning">
-							<CalendarClock className="mt-0.5 size-4 shrink-0" />
-							<p>{t("选择预计完成日期，当天结束前均可交付。")}</p>
 						</div>
 					</FormSection>
 
@@ -463,7 +383,7 @@ export default function NewTaskForm() {
 								[
 									"public",
 									t("公开任务"),
-									t("托管后进入市场，不展示附件、身份和私密验收信息"),
+									t("发布后可在任务市场展示，不公开附件、身份和私密验收信息"),
 								],
 								[
 									"private",
@@ -491,54 +411,21 @@ export default function NewTaskForm() {
 								{description.trim() ||
 									t("未填写补充说明，平台将根据任务标题继续整理需求")}
 							</p>
-							<div className="mt-3 flex flex-wrap gap-1.5">
-								{selectedTags.slice(0, 4).map((tag) => (
-									<span
-										key={tag}
-										className="rounded-full bg-card px-2 py-1 text-xs"
-									>
-										{tag}
-									</span>
-								))}
-								{selectedTags.length > 4 && (
-									<span
-										role="note"
-										aria-label={t("另有 {count} 个技能标签", {
-											count: selectedTags.length - 4,
-										})}
-										className="rounded-full border border-primary/20 bg-primary-container px-2 py-1 font-medium text-primary text-xs"
-									>
-										+{selectedTags.length - 4}
-									</span>
-								)}
-							</div>
 						</div>
+						{/* 预览侧栏只保留发布前真正影响用户决策的流程信息。服务费、幂等和
+						    自动校验属于后续报价或平台内部保障，不应在此重复增加阅读负担。 */}
 						<dl className="mt-5 space-y-3 text-sm">
 							<PreviewRow
-								label={t("任务预算")}
-								value={
-									budgetMinor === null
-										? t("格式无效")
-										: formatMinorAmount(budgetMinor, MVP_CURRENCY)
-								}
+								label={t("执行流程")}
+								value={t("发布后自动拆分")}
 								strong
 							/>
-							<PreviewRow
-								label={t("平台服务费")}
-								value={t("成功结算时从 Agent 收入中扣除")}
-							/>
-							<PreviewRow label={t("分配方式")} value={t("平台自动分配")} />
-							<PreviewRow
-								label={t("验收方式")}
-								value={t("中间阶段自动推进，最终交付由你验收")}
-							/>
+							<PreviewRow label={t("最终验收")} value={t("最终交付由你确认")} />
 						</dl>
-						<div className="mt-5 flex gap-2 rounded-lg border border-tertiary/20 bg-tertiary-container p-3">
-							<LockKeyhole className="mt-0.5 size-4 shrink-0 text-tertiary" />
-							<p className="text-tertiary-container-foreground text-xs leading-5">
-								{t(
-									"发布需求后，在任务详情页确认 USDC 托管。资金进入托管合约并完成链上确认后才开始匹配，验收前不会支付给 Agent。",
-								)}
+						<div className="mt-4 flex items-center gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2.5">
+							<LockKeyhole className="size-4 shrink-0 text-primary" />
+							<p className="text-muted-foreground text-xs leading-5">
+								{t("选择 Agent 后确认报价并托管 USDC")}
 							</p>
 						</div>
 						{wallet.status === "connected" ? (
@@ -561,7 +448,7 @@ export default function NewTaskForm() {
 									? t("正在准备任务")
 									: state.kind === "submitting"
 										? t("正在发布需求")
-										: t("发布并继续托管")}
+										: t("发布并选择 Agent")}
 							</Button>
 						) : (
 							<Button
@@ -582,29 +469,6 @@ export default function NewTaskForm() {
 								{t("连接钱包后发布")}
 							</Button>
 						)}
-						<p className="mt-3 text-center text-muted-foreground text-xs">
-							{t("所有操作都会与你当前连接的钱包绑定")}
-						</p>
-					</section>
-					<section className="cyber-panel rounded-xl border p-4">
-						<p className="flex items-center gap-2 font-semibold text-sm">
-							<CheckCircle2 className="size-4 text-success" />
-							{t("发布保障")}
-						</p>
-						<ul className="mt-3 space-y-2 text-muted-foreground text-xs">
-							<li className="flex gap-2">
-								<Check className="size-3.5 text-success" />
-								{t("预算金额会被精确记录")}
-							</li>
-							<li className="flex gap-2">
-								<Check className="size-3.5 text-success" />
-								{t("重复点击不会创建多个任务")}
-							</li>
-							<li className="flex gap-2">
-								<Check className="size-3.5 text-success" />
-								{t("发布前会自动整理并检查需求")}
-							</li>
-						</ul>
 					</section>
 				</aside>
 			</form>
@@ -831,8 +695,8 @@ function fieldLabel(
 		acceptanceCriteria: "验收标准",
 		deliverableFormat: "交付格式",
 		categoryId: "服务分类",
-		tags: "技能标签",
-		pricing: "预算",
+		tags: "能力需求",
+		pricing: "最终报价",
 		deadline: "截止时间",
 		requiredCapability: "所需能力",
 	};
@@ -847,10 +711,9 @@ function taskIssueField(field: string): TaskValidationField | null {
 		acceptanceCriteria: "description",
 		deliverableFormat: "description",
 		categoryId: "categoryId",
-		tags: "tags",
-		pricing: "budget",
+		tags: "description",
 		deadline: "deadline",
-		requiredCapability: "tags",
+		requiredCapability: "description",
 	};
 	return mapping[field] ?? null;
 }

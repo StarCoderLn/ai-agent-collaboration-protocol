@@ -34,9 +34,12 @@ import {
 import type { MessageId } from "@/lib/i18n/messages";
 import { listSelectableCapabilityCategories } from "@/lib/platform/capability-categories";
 import { TASK_STATUS_PRESENTATION } from "@/lib/platform/contracts";
-import { formatDate } from "@/lib/platform/format";
+import { formatCompactDate } from "@/lib/platform/format";
 import { formatMinorAmount } from "@/lib/platform/money";
+import { MarketPagination } from "./market-pagination";
 import { StatusBadge } from "./status-badge";
+
+const PAGE_SIZE = 9;
 
 type MetadataState =
 	| Readonly<{ kind: "loading" }>
@@ -48,7 +51,7 @@ type MetadataState =
 	| Readonly<{ kind: "error"; message: string }>;
 type TaskLoadState =
 	| Readonly<{ kind: "loading" }>
-	| Readonly<{ kind: "loaded"; tasks: readonly PublicTask[] }>
+	| Readonly<{ kind: "loaded"; tasks: readonly PublicTask[]; total: number }>
 	| Readonly<{ kind: "error"; message: string }>;
 
 export default function TaskMarketplace() {
@@ -56,9 +59,8 @@ export default function TaskMarketplace() {
 	const [query, setQuery] = useState("");
 	const [status, setStatus] = useState<TaskStatus | "all">("all");
 	const [categoryId, setCategoryId] = useState("all");
-	const [tag, setTag] = useState("");
+	const [page, setPage] = useState(1);
 	const deferredQuery = useDeferredValue(query);
-	const deferredTag = useDeferredValue(tag);
 	const [metadata, setMetadata] = useState<MetadataState>({ kind: "loading" });
 	const [taskState, setTaskState] = useState<TaskLoadState>({
 		kind: "loading",
@@ -92,12 +94,18 @@ export default function TaskMarketplace() {
 				{
 					...(deferredQuery.trim() === "" ? {} : { keyword: deferredQuery }),
 					...(categoryId === "all" ? {} : { category: categoryId }),
-					...(deferredTag.trim() === "" ? {} : { tag: deferredTag }),
 					...(status === "all" ? {} : { status }),
 				},
+				{ limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE },
 				signal,
 			)
-				.then((tasks) => setTaskState({ kind: "loaded", tasks }))
+				.then((result) =>
+					setTaskState({
+						kind: "loaded",
+						tasks: result.tasks,
+						total: result.total,
+					}),
+				)
 				.catch((error: unknown) => {
 					if (error instanceof DOMException && error.name === "AbortError")
 						return;
@@ -110,7 +118,7 @@ export default function TaskMarketplace() {
 					});
 				});
 		},
-		[categoryId, deferredQuery, deferredTag, status, t],
+		[categoryId, deferredQuery, page, status, t],
 	);
 
 	useEffect(() => {
@@ -126,6 +134,21 @@ export default function TaskMarketplace() {
 	}, [loadTasks]);
 
 	const tasks = taskState.kind === "loaded" ? taskState.tasks : [];
+	const total = taskState.kind === "loaded" ? taskState.total : 0;
+
+	useEffect(() => {
+		if (taskState.kind !== "loaded" || taskState.total === 0) return;
+		const lastPage = Math.ceil(taskState.total / PAGE_SIZE);
+		if (page > lastPage) setPage(lastPage);
+	}, [page, taskState]);
+
+	function changePage(nextPage: number): void {
+		setPage(nextPage);
+		const results = document.getElementById("task-market-results");
+		if (typeof results?.scrollIntoView === "function") {
+			results.scrollIntoView({ behavior: "smooth", block: "start" });
+		}
+	}
 	// 卡片需要完整分类路径帮助用户理解上下文；筛选器则必须和发布/上架入口一样，
 	// 只展示可参与匹配的叶子分类及其短名称。两种展示目的不同，因此保留两份投影，
 	// 但分类 ID 始终来自同一棵服务端分类树。
@@ -157,7 +180,7 @@ export default function TaskMarketplace() {
 							{/* 桌面端保持完整价值说明为一行，窄屏继续自然换行，避免为了排版牺牲移动端可读性。 */}
 							<p className="mt-3 text-muted-foreground lg:whitespace-nowrap">
 								{t(
-									"发现正在寻找 Agent 的公开任务。草稿、待托管任务、附件、发布者身份与私密验收内容不会出现在这里。",
+									"发现正在寻找 Agent 的公开任务。平台不会公开附件、发布者身份与私密验收内容。",
 								)}
 							</p>
 						</div>
@@ -199,21 +222,27 @@ export default function TaskMarketplace() {
 			</section>
 
 			<div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-12">
-				<div className="cyber-panel cyber-corner grid gap-3 rounded-xl border p-3 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_220px_220px_220px]">
+				<div className="cyber-panel cyber-corner grid gap-3 rounded-xl border p-3 md:grid-cols-2 xl:grid-cols-[minmax(320px,1fr)_220px_220px]">
 					<label className="relative" htmlFor="task-market-search">
 						<Search className="absolute top-3.5 left-3 size-4 text-muted-foreground" />
 						<Input
 							id="task-market-search"
 							className="pl-9"
 							value={query}
-							onChange={(event) => setQuery(event.target.value)}
+							onChange={(event) => {
+								setQuery(event.target.value);
+								setPage(1);
+							}}
 							placeholder={t("搜索任务标题或描述")}
 							aria-label={t("搜索任务")}
 						/>
 					</label>
 					<SelectField
 						value={categoryId}
-						onValueChange={setCategoryId}
+						onValueChange={(value) => {
+							setCategoryId(value);
+							setPage(1);
+						}}
 						aria-label={t("按任务分类筛选")}
 						options={[
 							{ value: "all", label: t("全部分类") },
@@ -223,26 +252,21 @@ export default function TaskMarketplace() {
 							})),
 						]}
 					/>
-					<label className="relative" htmlFor="task-market-tag-filter">
-						<Tag className="absolute top-3.5 left-3 size-4 text-muted-foreground" />
-						<Input
-							id="task-market-tag-filter"
-							className="pl-9"
-							value={tag}
-							onChange={(event) => setTag(event.target.value)}
-							placeholder={t("输入精确标签")}
-							aria-label={t("按任务标签筛选")}
-						/>
-					</label>
 					<SelectField
 						value={status}
-						onValueChange={(value) => setStatusFromSelect(value, setStatus)}
+						onValueChange={(value) => {
+							setStatusFromSelect(value, setStatus);
+							setPage(1);
+						}}
 						aria-label={t("按任务状态筛选")}
 						options={[
 							{ value: "all", label: t("全部交易状态") },
 							...Object.entries(TASK_STATUS_PRESENTATION)
 								.filter(
-									([value]) => value !== "draft" && value !== "awaiting_escrow",
+									([value]) =>
+										value !== "draft" &&
+										value !== "planning" &&
+										value !== "awaiting_escrow",
 								)
 								.map(([value, presentation]) => ({
 									value,
@@ -281,13 +305,16 @@ export default function TaskMarketplace() {
 				)}
 				{taskState.kind === "loaded" && (
 					<>
-						<div className="mt-5 flex items-center justify-between">
+						<div
+							id="task-market-results"
+							className="mt-5 flex scroll-mt-24 items-center justify-between"
+						>
 							<h2 className="font-semibold text-lg">{t("公开任务")}</h2>
 							<span className="text-muted-foreground text-sm">
-								{t("{count} 个结果", { count: tasks.length })}
+								{t("{count} 个结果", { count: total })}
 							</span>
 						</div>
-						<div className="mt-4 grid gap-4 lg:grid-cols-2">
+						<div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
 							{tasks.map((task) => (
 								<TaskCard
 									key={task.id}
@@ -302,9 +329,15 @@ export default function TaskMarketplace() {
 							<MarketState
 								icon={Search}
 								title={t("没有匹配的任务")}
-								description={t("调整关键词、分类、标签或交易状态后重试。")}
+								description={t("调整关键词、分类或交易状态后重试。")}
 							/>
 						)}
+						<MarketPagination
+							page={page}
+							pageSize={PAGE_SIZE}
+							total={total}
+							onPageChange={changePage}
+						/>
 					</>
 				)}
 			</div>
@@ -319,32 +352,32 @@ function TaskCard({
 	task: PublicTask;
 	categoryName: string;
 }) {
-	const { locale, t } = useLocale();
+	const { t } = useLocale();
 	const deliveryWindowDays = calculateDeliveryWindowDays(
 		task.createdAt,
 		task.deadline,
 	);
 	return (
 		<Link
-			href={`/tasks/${task.id}`}
+			href={`/tasks/${task.id}?from=market`}
 			aria-label={`${t("查看任务")}：${task.title}`}
 			className="group/card block cursor-pointer rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
 		>
-			<article className="cyber-panel cyber-corner interactive-card h-full rounded-2xl border p-5 transition-[transform,border-color,box-shadow] group-hover/card:-translate-y-1 group-hover/card:border-primary/40 group-hover/card:shadow-[0_0_32px_var(--brand-glow)]">
+			<article className="cyber-panel cyber-corner interactive-card h-full rounded-2xl border p-4 transition-[transform,border-color,box-shadow] group-hover/card:-translate-y-1 group-hover/card:border-primary/40 group-hover/card:shadow-[0_0_32px_var(--brand-glow)]">
 				<div className="flex flex-wrap items-center gap-2">
 					<StatusBadge status={task.status} />
 					<span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground text-xs">
 						{categoryName}
 					</span>
 				</div>
-				<h3 className="mt-4 font-semibold text-lg leading-6 transition-colors group-hover/card:text-primary">
+				<h3 className="mt-3 font-semibold leading-6 transition-colors group-hover/card:text-primary">
 					{task.title}
 				</h3>
-				<p className="mt-2 line-clamp-2 min-h-11 text-muted-foreground text-sm leading-5.5">
+				<p className="mt-1.5 line-clamp-2 text-muted-foreground text-sm leading-5.5">
 					{task.description}
 				</p>
-				<div className="mt-4 flex flex-wrap gap-2">
-					{task.tags.slice(0, 4).map((item) => (
+				<div className="mt-3 flex flex-wrap gap-1.5">
+					{task.tags.slice(0, 3).map((item) => (
 						<span
 							key={item}
 							className="inline-flex items-center gap-1 rounded-full border border-primary/10 bg-accent px-2.5 py-1 text-muted-foreground text-xs"
@@ -353,35 +386,42 @@ function TaskCard({
 							{item}
 						</span>
 					))}
+					{task.tags.length > 3 && (
+						<span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground text-xs">
+							+{task.tags.length - 3}
+						</span>
+					)}
 				</div>
-				<div className="mt-5 grid grid-cols-2 gap-3 border-primary/15 border-y bg-background/20 py-4 sm:grid-cols-3">
+				<div className="mt-4 grid grid-cols-3 gap-2 border-primary/15 border-y bg-background/20 py-3">
 					<TaskFact
 						icon={WalletCards}
-						label={t("预算上限")}
-						value={formatMinorAmount(task.budgetMaxMinor, task.currency)}
+						label={t("最终报价")}
+						value={
+							task.budgetMaxMinor === null
+								? t("待确认")
+								: formatMinorAmount(task.budgetMaxMinor, task.currency)
+						}
 					/>
 					<TaskFact
 						icon={CalendarClock}
 						label={t("截止时间")}
-						value={formatDate(task.deadline, locale)}
+						value={formatCompactDate(task.deadline)}
 					/>
 					<TaskFact
 						icon={ShieldCheck}
 						label={t("所需能力")}
 						value={task.requiredCapability}
-						className="col-span-2 sm:col-span-1"
 					/>
 				</div>
-				<div className="mt-4 flex items-center justify-between gap-3">
+				<div className="mt-3 flex items-center justify-between gap-3 text-xs">
 					<span className="text-muted-foreground text-xs">
-						{t("发布于 {date}", { date: formatDate(task.createdAt, locale) })}
+						{t("发布于 {date}", {
+							date: formatCompactDate(task.createdAt),
+						})}
 					</span>
-					<div className="text-right">
-						<p className="text-muted-foreground text-xs">{t("任务周期")}</p>
-						<p className="mt-1 font-semibold text-primary text-sm">
-							{t("约 {count} 天", { count: deliveryWindowDays })}
-						</p>
-					</div>
+					<span className="shrink-0 font-semibold text-primary">
+						{t("任务周期约 {count} 天", { count: deliveryWindowDays })}
+					</span>
 				</div>
 			</article>
 		</Link>
@@ -389,7 +429,8 @@ function TaskCard({
 }
 
 /**
- * 市场卡片只展示从发布到截止的近似自然周期，帮助用户快速比较任务规模。
+ * 市场卡片明确写出“任务周期”，避免用户把该数字误解为剩余时间或 Agent 执行耗时。
+ * 它表示从发布到截止的近似自然周期，用于帮助用户快速比较任务规模。
  * 这里使用向上取整，避免不足一天的合法任务被显示成“0 天”；精确截止日期仍由卡片
  * 上方的截止时间字段提供，因此该摘要不承担倒计时或超时判断职责。
  */
@@ -431,15 +472,13 @@ function TaskFact({
 	icon: Icon,
 	label,
 	value,
-	className = "",
 }: {
 	icon: typeof Tag;
 	label: string;
 	value: string;
-	className?: string;
 }) {
 	return (
-		<div className={`min-w-0 ${className}`}>
+		<div className="min-w-0">
 			<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
 				<Icon className="size-3.5" />
 				{label}
@@ -476,12 +515,12 @@ function TaskMarketSkeleton() {
 	const { t } = useLocale();
 	return (
 		<div
-			className="mt-12 grid gap-4 lg:grid-cols-2"
+			className="mt-12 grid gap-4 md:grid-cols-2 xl:grid-cols-3"
 			role="status"
 			aria-label={t("正在加载任务市场")}
 		>
-			{[0, 1, 2, 3].map((item) => (
-				<div key={item} className="rounded-xl border bg-card p-5">
+			{[0, 1, 2, 3, 4, 5, 6, 7, 8].map((item) => (
+				<div key={item} className="rounded-xl border bg-card p-4">
 					<Skeleton className="h-5 w-1/4" />
 					<Skeleton className="mt-5 h-6 w-3/4" />
 					<Skeleton className="mt-3 h-12 w-full" />

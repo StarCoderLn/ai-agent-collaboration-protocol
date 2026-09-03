@@ -17,7 +17,7 @@ import {
 	Star,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useState } from "react";
 import { useLocale } from "@/components/i18n/locale-provider";
 import {
 	AgentDirectoryRequestError,
@@ -32,8 +32,10 @@ import {
 } from "@/lib/api/tasks";
 import { listSelectableCapabilityCategories } from "@/lib/platform/capability-categories";
 import { formatMinorAmount } from "@/lib/platform/money";
+import { MarketPagination } from "./market-pagination";
 
 const ALL_CATEGORIES = "__all__";
+const PAGE_SIZE = 9;
 
 type LoadState =
 	| Readonly<{ kind: "loading" }>
@@ -41,13 +43,16 @@ type LoadState =
 			kind: "loaded";
 			agents: readonly PublicDirectoryAgent[];
 			categories: readonly TaskCategory[];
+			total: number;
 	  }>
 	| Readonly<{ kind: "error"; message: string }>;
 
 export default function AgentMarketplace() {
-	const { locale, t } = useLocale();
+	const { t } = useLocale();
 	const [query, setQuery] = useState("");
 	const [categoryId, setCategoryId] = useState(ALL_CATEGORIES);
+	const [page, setPage] = useState(1);
+	const deferredQuery = useDeferredValue(query);
 	const [state, setState] = useState<LoadState>({ kind: "loading" });
 
 	const load = useCallback(
@@ -55,9 +60,24 @@ export default function AgentMarketplace() {
 			setState({ kind: "loading" });
 			// 市场与发布/上架入口必须读取同一套分类树。不能再从当前 Agent 列表反推分类，
 			// 否则没有在架 Agent 的合法分类会消失，名称也可能因服务端路径文案而不一致。
-			Promise.all([listPublicAgents(signal), listTaskCategories(signal)])
-				.then(([agents, categories]) =>
-					setState({ kind: "loaded", agents, categories }),
+			Promise.all([
+				listPublicAgents(
+					{
+						...(deferredQuery.trim() === "" ? {} : { keyword: deferredQuery }),
+						...(categoryId === ALL_CATEGORIES ? {} : { category: categoryId }),
+					},
+					{ limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE },
+					signal,
+				),
+				listTaskCategories(signal),
+			])
+				.then(([agentPage, categories]) =>
+					setState({
+						kind: "loaded",
+						agents: agentPage.agents,
+						total: agentPage.total,
+						categories,
+					}),
 				)
 				.catch((error: unknown) => {
 					if (error instanceof DOMException && error.name === "AbortError")
@@ -72,7 +92,7 @@ export default function AgentMarketplace() {
 					});
 				});
 		},
-		[t],
+		[categoryId, deferredQuery, page, t],
 	);
 
 	useEffect(() => {
@@ -81,22 +101,30 @@ export default function AgentMarketplace() {
 		return () => controller.abort();
 	}, [load]);
 
-	const allAgents = state.kind === "loaded" ? state.agents : [];
+	const agents = state.kind === "loaded" ? state.agents : [];
+	const total = state.kind === "loaded" ? state.total : 0;
 	const categories =
 		state.kind === "loaded"
 			? listSelectableCapabilityCategories(state.categories, t)
 			: [];
-	const agents = useMemo(() => {
-		const needle = query.trim().toLocaleLowerCase(locale);
-		return allAgents.filter((agent) => {
-			return (
-				(categoryId === ALL_CATEGORIES || agent.categoryId === categoryId) &&
-				`${agent.name} ${agent.description} ${agent.tags.join(" ")}`
-					.toLocaleLowerCase(locale)
-					.includes(needle)
-			);
-		});
-	}, [allAgents, categoryId, locale, query]);
+	const hasActiveFilters =
+		deferredQuery.trim() !== "" || categoryId !== ALL_CATEGORIES;
+
+	useEffect(() => {
+		if (state.kind !== "loaded" || state.total === 0) return;
+		const lastPage = Math.ceil(state.total / PAGE_SIZE);
+		if (page > lastPage) setPage(lastPage);
+	}, [page, state]);
+
+	function changePage(nextPage: number): void {
+		setPage(nextPage);
+		// 切页后把结果标题带回视口，避免用户停留在空白页底部；测试环境没有
+		// scrollIntoView 时保持无副作用。
+		const results = document.getElementById("agent-market-results");
+		if (typeof results?.scrollIntoView === "function") {
+			results.scrollIntoView({ behavior: "smooth", block: "start" });
+		}
+	}
 
 	return (
 		<main className="min-h-[70vh]">
@@ -140,14 +168,20 @@ export default function AgentMarketplace() {
 							id="agent-market-search"
 							className="pl-9"
 							value={query}
-							onChange={(event) => setQuery(event.target.value)}
+							onChange={(event) => {
+								setQuery(event.target.value);
+								setPage(1);
+							}}
 							placeholder={t("搜索 Agent 名称、能力或标签")}
 							aria-label={t("搜索 Agent")}
 						/>
 					</label>
 					<SelectField
 						value={categoryId}
-						onValueChange={setCategoryId}
+						onValueChange={(value) => {
+							setCategoryId(value);
+							setPage(1);
+						}}
 						aria-label={t("按能力分类筛选")}
 						options={[
 							{ value: ALL_CATEGORIES, label: t("全部分类") },
@@ -175,10 +209,13 @@ export default function AgentMarketplace() {
 				)}
 				{state.kind === "loaded" && (
 					<>
-						<div className="mt-5 flex items-center justify-between">
+						<div
+							id="agent-market-results"
+							className="mt-5 flex scroll-mt-24 items-center justify-between"
+						>
 							<h2 className="font-semibold text-lg">{t("可接单 Agent")}</h2>
 							<span className="text-muted-foreground text-sm">
-								{t("{count} 个结果", { count: agents.length })}
+								{t("{count} 个结果", { count: total })}
 							</span>
 						</div>
 						<div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -190,17 +227,23 @@ export default function AgentMarketplace() {
 							<DirectoryState
 								icon={Bot}
 								title={
-									allAgents.length === 0
-										? t("暂无可接单 Agent")
-										: t("没有匹配的 Agent")
+									hasActiveFilters
+										? t("没有匹配的 Agent")
+										: t("暂无可接单 Agent")
 								}
 								description={
-									allAgents.length === 0
-										? t("通过审核并处于健康状态的 Agent 会显示在这里。")
-										: t("调整能力分类或搜索关键词后重试。")
+									hasActiveFilters
+										? t("调整能力分类或搜索关键词后重试。")
+										: t("通过审核并处于健康状态的 Agent 会显示在这里。")
 								}
 							/>
 						)}
+						<MarketPagination
+							page={page}
+							pageSize={PAGE_SIZE}
+							total={total}
+							onPageChange={changePage}
+						/>
 					</>
 				)}
 			</div>
@@ -231,22 +274,26 @@ function AgentCard({ agent }: { agent: PublicDirectoryAgent }) {
 								aria-label={t("已通过平台审核")}
 							/>
 						</div>
-						<p className="mt-1 flex items-center gap-2 text-muted-foreground text-xs">
-							<span className="signal-dot size-1.5 rounded-full bg-secondary" />
-							{agent.categoryName ?? t("未分类")} ·{" "}
-							{healthLabel(agent.health.status, t)}
-						</p>
+						{/* 分类决定用户是否继续查看，必须完整展示；状态圆点禁止收缩，
+						    保证窄卡片中仍保持正圆。提供者移至报价区，避免头部信息拥挤。 */}
+						<div className="mt-1 text-muted-foreground text-xs leading-5">
+							<p className="flex items-start gap-2">
+								<span className="signal-dot mt-1.5 size-1.5 shrink-0 rounded-full bg-secondary" />
+								<span>{agent.categoryName ?? t("未分类")}</span>
+							</p>
+						</div>
 					</div>
 					{agent.isNew && (
 						<span className="shrink-0 rounded-full bg-warning/10 px-2 py-1 font-medium text-[11px] text-warning">
-							{t("受控上线")}
+							{t("新入驻")}
 						</span>
 					)}
 				</div>
-				<p className="mt-4 line-clamp-2 min-h-11 text-muted-foreground text-sm leading-5.5">
+				{/* 描述按实际内容占高，不再为不存在的第二行预留整行空白。 */}
+				<p className="mt-3 line-clamp-2 text-muted-foreground text-sm leading-5.5">
 					{agent.description}
 				</p>
-				<div className="mt-4 flex min-h-6 flex-wrap gap-2">
+				<div className="mt-3 flex flex-wrap gap-2">
 					{agent.tags.slice(0, 4).map((tag) => (
 						<span
 							key={tag}
@@ -256,10 +303,16 @@ function AgentCard({ agent }: { agent: PublicDirectoryAgent }) {
 						</span>
 					))}
 				</div>
-				<div className="mt-5 grid grid-cols-3 border-primary/15 border-y bg-background/25 py-4 text-center">
+				<div className="mt-4 grid grid-cols-3 border-primary/15 border-y bg-background/25 py-3 text-center">
+					{/* 服务端以 sampleSize 为真实评价证据。这里同时做防御性判断，防止旧版
+					    API 或浏览器缓存把零样本冷启动先验再次显示成用户评分。 */}
 					<AgentMetric
 						icon={Star}
-						value={agent.score === null ? t("暂无") : agent.score.toFixed(1)}
+						value={
+							agent.sampleSize === 0 || agent.score === null
+								? t("暂无评分")
+								: agent.score.toFixed(1)
+						}
 						label={t("{count} 份评分", { count: agent.sampleSize })}
 					/>
 					<AgentMetric
@@ -271,18 +324,20 @@ function AgentCard({ agent }: { agent: PublicDirectoryAgent }) {
 						icon={HeartPulse}
 						value={
 							agent.health.status === "healthy"
-								? t("正常")
+								? t("可用")
 								: agent.health.status === "degraded"
 									? t("异常")
-									: t("待探测")
+									: t("待检测")
 						}
-						label={t("最近健康状态")}
+						label={t("服务状态")}
 					/>
 				</div>
-				<div className="mt-4 flex items-end justify-between gap-3">
+				<div className="mt-3 flex items-end justify-between gap-3">
 					<div className="min-w-0">
-						<p className="text-muted-foreground text-xs">{t("参考报价")}</p>
-						<p className="mt-1 truncate font-semibold">
+						{/* 当前目录展示的是提供者设置的固定单次价格，不是可能浮动的估算值；
+						    金额使用品牌强调色，让用户能快速完成价格比较。 */}
+						<p className="text-muted-foreground text-xs">{t("单次服务价")}</p>
+						<p className="mt-1 truncate font-bold text-primary">
 							{formatMinorAmount(
 								agent.pricing.amountMinor,
 								agent.pricing.currency,
@@ -290,11 +345,9 @@ function AgentCard({ agent }: { agent: PublicDirectoryAgent }) {
 						</p>
 					</div>
 					<div className="shrink-0 text-right">
-						<p className="text-muted-foreground text-xs">{t("计费方式")}</p>
-						<p className="mt-1 font-semibold text-primary text-sm">
-							{agent.pricing.type === "fixed"
-								? t("按任务计费")
-								: t("自定义计费")}
+						<p className="text-muted-foreground text-xs">{t("Agent 提供者")}</p>
+						<p className="mt-1 font-medium font-mono text-sm">
+							{agent.provider.label}
 						</p>
 					</div>
 				</div>
@@ -354,7 +407,7 @@ function MarketplaceSkeleton() {
 			role="status"
 			aria-label={t("正在加载 Agent 市场")}
 		>
-			{[0, 1, 2, 3, 4, 5].map((item) => (
+			{[0, 1, 2, 3, 4, 5, 6, 7, 8].map((item) => (
 				<div key={item} className="rounded-xl border bg-card p-5">
 					<div className="flex gap-3">
 						<Skeleton className="size-12 rounded-lg" />
@@ -378,13 +431,4 @@ function initials(name: string): string {
 		.slice(0, 3)
 		.toUpperCase();
 	return ascii && ascii.length > 0 ? ascii : [...name].slice(0, 2).join("");
-}
-
-function healthLabel(
-	status: PublicDirectoryAgent["health"]["status"],
-	t: ReturnType<typeof useLocale>["t"],
-): string {
-	if (status === "healthy") return t("健康探测正常");
-	if (status === "degraded") return t("健康状态异常");
-	return t("等待首次健康探测");
 }

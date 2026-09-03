@@ -104,10 +104,30 @@ describe("escrow deposit flow", () => {
 		});
 		expect(submitTaskEscrowTransaction).toHaveBeenCalledWith(
 			TASK_ID,
-			{ status: "submitted", txHash: TX_HASH },
+			{
+				status: "submitted",
+				txHash: TX_HASH,
+				amountMinor: PREPARED.amountMinor,
+			},
 			"submission-key",
 		);
 		expect(readPendingEscrowSubmission(TASK_ID)).toBeNull();
+	});
+
+	it("reports each wallet stage so approval confirmation is not shown as an endless MetaMask prompt", async () => {
+		const progress: string[] = [];
+
+		await startEscrowDeposit({
+			...input(),
+			onProgress: (stage) => progress.push(stage),
+		});
+
+		expect(progress).toEqual([
+			"preparing",
+			"authorizing",
+			"depositing",
+			"recording",
+		]);
 	});
 
 	it("marks an approval rejection as failed before any deposit is sent", async () => {
@@ -214,7 +234,11 @@ describe("escrow deposit flow", () => {
 		expect(flowError).toMatchObject({ stage: "record" });
 		expect(flowError?.message).toContain("请勿重新发送交易");
 		const pending = readPendingEscrowSubmission(TASK_ID);
-		expect(pending).toMatchObject({ taskId: TASK_ID, txHash: TX_HASH });
+		expect(pending).toMatchObject({
+			taskId: TASK_ID,
+			txHash: TX_HASH,
+			amountMinor: PREPARED.amountMinor,
+		});
 		if (pending === null)
 			throw new Error("expected a recoverable pending submission");
 
@@ -230,7 +254,11 @@ describe("escrow deposit flow", () => {
 		expect(sendEscrowTransaction).toHaveBeenCalledTimes(1);
 		expect(submitTaskEscrowTransaction).toHaveBeenLastCalledWith(
 			TASK_ID,
-			{ status: "submitted", txHash: TX_HASH },
+			{
+				status: "submitted",
+				txHash: TX_HASH,
+				amountMinor: PREPARED.amountMinor,
+			},
 			"resume-key",
 		);
 		expect(readPendingEscrowSubmission(TASK_ID)).toBeNull();

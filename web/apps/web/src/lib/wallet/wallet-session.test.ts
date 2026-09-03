@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	connect,
 	getConnection,
+	getTransactionCount,
 	readContract,
 	sendTransaction,
 	signMessage,
@@ -9,7 +10,7 @@ import {
 	waitForTransactionReceipt,
 } from "wagmi/actions";
 
-import { wagmiConfig } from "./wagmi-config";
+import { metaMaskConnector, wagmiConfig } from "./wagmi-config";
 import {
 	connectWalletSession,
 	ensureEscrowAllowance,
@@ -21,6 +22,7 @@ import {
 vi.mock("wagmi/actions", () => ({
 	connect: vi.fn(),
 	getConnection: vi.fn(),
+	getTransactionCount: vi.fn(),
 	readContract: vi.fn(),
 	sendTransaction: vi.fn(),
 	signMessage: vi.fn(),
@@ -37,9 +39,13 @@ const SIGNATURE = repeatedHex("11", 65);
 describe("wagmi wallet session", () => {
 	beforeEach(() => {
 		vi.mocked(getConnection).mockReturnValue(disconnected());
-		vi.mocked(connect).mockResolvedValue({ accounts: [CHECKSUM_ADDRESS], chainId: 31_337 });
+		vi.mocked(connect).mockResolvedValue({
+			accounts: [CHECKSUM_ADDRESS],
+			chainId: 31_337,
+		});
 		vi.mocked(signMessage).mockResolvedValue(SIGNATURE);
 		vi.mocked(sendTransaction).mockResolvedValue(TX_HASH);
+		vi.mocked(getTransactionCount).mockResolvedValue(0);
 		vi.mocked(switchChain).mockResolvedValue(wagmiConfig.chains[2]);
 		vi.mocked(waitForTransactionReceipt).mockResolvedValue(
 			transactionReceipt("success"),
@@ -52,46 +58,96 @@ describe("wagmi wallet session", () => {
 	});
 
 	it("connects MetaMask on the SIWE-requested chain and compares checksum addresses case-insensitively", async () => {
-		const fetcher = vi.fn()
-			.mockResolvedValueOnce(jsonResponse({
-				nonce: "aicpNonce123",
-				expiresAt: "2026-08-23T15:00:00.000Z",
-				domain: "127.0.0.1:3001",
-				uri: "http://127.0.0.1:3001",
-				chainId: 31_337,
-				statement: "登录 AICP",
-			}))
-			.mockResolvedValueOnce(jsonResponse({ walletAddress: CHECKSUM_ADDRESS.toLowerCase() }));
+		const fetcher = vi
+			.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					nonce: "aicpNonce123",
+					expiresAt: "2026-08-23T15:00:00.000Z",
+					domain: "127.0.0.1:3001",
+					uri: "http://127.0.0.1:3001",
+					chainId: 31_337,
+					statement: "登录 AICP",
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({ walletAddress: CHECKSUM_ADDRESS.toLowerCase() }),
+			);
 		vi.stubGlobal("fetch", fetcher);
 
-		await expect(connectWalletSession()).resolves.toEqual({ walletAddress: CHECKSUM_ADDRESS });
-		expect(connect).toHaveBeenCalledWith(wagmiConfig, expect.objectContaining({ chainId: 31_337 }));
-		expect(signMessage).toHaveBeenCalledWith(wagmiConfig, expect.objectContaining({
-			account: CHECKSUM_ADDRESS,
-			message: expect.stringContaining(CHECKSUM_ADDRESS),
-		}));
+		await expect(connectWalletSession()).resolves.toEqual({
+			walletAddress: CHECKSUM_ADDRESS,
+			chainId: 31_337,
+		});
+		expect(connect).toHaveBeenCalledWith(
+			wagmiConfig,
+			expect.objectContaining({
+				chainId: 31_337,
+				connector: metaMaskConnector,
+			}),
+		);
+		expect(signMessage).toHaveBeenCalledWith(
+			wagmiConfig,
+			expect.objectContaining({
+				account: CHECKSUM_ADDRESS,
+				message: expect.stringContaining(CHECKSUM_ADDRESS),
+			}),
+		);
 		expect(JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body))).toMatchObject({
 			signature: SIGNATURE,
 		});
 	});
 
-	it("logs out through the server without disconnecting the MetaMask connector", async () => {
-		const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
-		vi.stubGlobal("fetch", fetcher);
+	it("restores the server-authoritative transaction chain without connecting MetaMask", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					authenticated: true,
+					walletAddress: CHECKSUM_ADDRESS,
+					chainId: 31_337,
+				}),
+			),
+		);
 
-		await expect(logoutWalletSession()).resolves.toBeUndefined();
-
-		expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/auth/session"), {
-			method: "DELETE",
-			credentials: "include",
+		const { restoreWalletSession } = await import("./wallet-session");
+		await expect(restoreWalletSession()).resolves.toEqual({
+			walletAddress: CHECKSUM_ADDRESS.toLowerCase(),
+			chainId: 31_337,
 		});
 		expect(connect).not.toHaveBeenCalled();
 	});
 
+	it("logs out through the server without disconnecting the MetaMask connector", async () => {
+		const fetcher = vi
+			.fn()
+			.mockResolvedValue(new Response(null, { status: 204 }));
+		vi.stubGlobal("fetch", fetcher);
+
+		await expect(logoutWalletSession()).resolves.toBeUndefined();
+
+		expect(fetcher).toHaveBeenCalledWith(
+			expect.stringContaining("/auth/session"),
+			{
+				method: "DELETE",
+				credentials: "include",
+			},
+		);
+		expect(connect).not.toHaveBeenCalled();
+	});
+
 	it("keeps logout failure explicit when the server cannot revoke the session", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({
-			message: "退出登录暂时失败，请稍后重试",
-		}, { status: 503 })));
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				Response.json(
+					{
+						message: "退出登录暂时失败，请稍后重试",
+					},
+					{ status: 503 },
+				),
+			),
+		);
 
 		await expect(logoutWalletSession()).rejects.toThrow("退出登录暂时失败");
 	});
@@ -102,28 +158,57 @@ describe("wagmi wallet session", () => {
 			chainId: 31_337,
 		});
 
-		await expect(sendEscrowTransaction({
-			walletAddress: CHECKSUM_ADDRESS,
-			chainId: 31_337,
-			transaction: { to: CONTRACT, data: "0x1234", value: "0x0" },
-		})).rejects.toThrow("当前 MetaMask 账户与登录钱包不一致");
+		await expect(
+			sendEscrowTransaction({
+				walletAddress: CHECKSUM_ADDRESS,
+				chainId: 31_337,
+				transaction: { to: CONTRACT, data: "0x1234", value: "0x0" },
+			}),
+		).rejects.toThrow("当前 MetaMask 账户与登录钱包不一致");
 		expect(sendTransaction).not.toHaveBeenCalled();
 	});
 
 	it("uses viem-validated transaction fields and returns only the submitted transaction hash", async () => {
-		await expect(sendEscrowTransaction({
-			walletAddress: CHECKSUM_ADDRESS,
-			chainId: 31_337,
-			transaction: { to: CONTRACT, data: "0x1234", value: "0x0" },
-		})).resolves.toBe(TX_HASH);
+		await expect(
+			sendEscrowTransaction({
+				walletAddress: CHECKSUM_ADDRESS,
+				chainId: 31_337,
+				transaction: { to: CONTRACT, data: "0x1234", value: "0x0" },
+			}),
+		).resolves.toBe(TX_HASH);
 
-		expect(sendTransaction).toHaveBeenCalledWith(wagmiConfig, expect.objectContaining({
-			account: CHECKSUM_ADDRESS,
+		expect(sendTransaction).toHaveBeenCalledWith(
+			wagmiConfig,
+			expect.objectContaining({
+				account: CHECKSUM_ADDRESS,
+				chainId: 31_337,
+				nonce: 0,
+				to: CONTRACT,
+				data: "0x1234",
+				value: BigInt(0),
+			}),
+		);
+		expect(getTransactionCount).toHaveBeenCalledWith(wagmiConfig, {
+			address: CHECKSUM_ADDRESS,
+			blockTag: "pending",
 			chainId: 31_337,
-			to: CONTRACT,
-			data: "0x1234",
-			value: BigInt(0),
-		}));
+		});
+	});
+
+	it("leaves nonce management to the wallet outside local Anvil", async () => {
+		await expect(
+			sendEscrowTransaction({
+				walletAddress: CHECKSUM_ADDRESS,
+				chainId: 11_155_111,
+				transaction: { to: CONTRACT, data: "0x1234", value: "0x0" },
+			}),
+		).resolves.toBe(TX_HASH);
+
+		expect(getTransactionCount).not.toHaveBeenCalled();
+		expect(sendTransaction).toHaveBeenCalledWith(
+			wagmiConfig,
+			expect.not.objectContaining({ nonce: expect.any(Number) }),
+		);
 	});
 
 	it("ends a wallet request that never returns instead of leaving the page busy forever", async () => {
@@ -149,27 +234,33 @@ describe("wagmi wallet session", () => {
 	});
 
 	it("rejects any native-token value before opening an escrow wallet request", async () => {
-		await expect(sendEscrowTransaction({
-			walletAddress: CHECKSUM_ADDRESS,
-			chainId: 31_337,
-			transaction: { to: CONTRACT, data: "0x1234", value: "0x1" },
-		})).rejects.toThrow("USDC 托管交易不能携带原生代币");
+		await expect(
+			sendEscrowTransaction({
+				walletAddress: CHECKSUM_ADDRESS,
+				chainId: 31_337,
+				transaction: { to: CONTRACT, data: "0x1234", value: "0x1" },
+			}),
+		).rejects.toThrow("USDC 托管交易不能携带原生代币");
 		expect(connect).not.toHaveBeenCalled();
 	});
 
 	it("rejects an unconfigured chain before opening a wallet request", async () => {
-		await expect(sendEscrowTransaction({
-			walletAddress: CHECKSUM_ADDRESS,
-			chainId: 99_999,
-			transaction: { to: CONTRACT, data: "0x1234", value: "0x0" },
-		})).rejects.toThrow("尚未配置 Chain ID 99999");
+		await expect(
+			sendEscrowTransaction({
+				walletAddress: CHECKSUM_ADDRESS,
+				chainId: 99_999,
+				transaction: { to: CONTRACT, data: "0x1234", value: "0x0" },
+			}),
+		).rejects.toThrow("尚未配置 Chain ID 99999");
 		expect(connect).not.toHaveBeenCalled();
 	});
 
 	it("reuses an already confirmed exact USDC allowance without another wallet request", async () => {
 		vi.mocked(readContract).mockResolvedValue(BigInt(32_000_000));
 
-		await expect(ensureEscrowAllowance(allowanceInput())).resolves.toBeUndefined();
+		await expect(
+			ensureEscrowAllowance(allowanceInput()),
+		).resolves.toBeUndefined();
 
 		expect(readContract).toHaveBeenCalledTimes(1);
 		expect(sendTransaction).not.toHaveBeenCalled();
@@ -181,7 +272,9 @@ describe("wagmi wallet session", () => {
 			.mockResolvedValueOnce(BigInt(0))
 			.mockResolvedValueOnce(BigInt(32_000_000));
 
-		await expect(ensureEscrowAllowance(allowanceInput())).resolves.toBeUndefined();
+		await expect(
+			ensureEscrowAllowance(allowanceInput()),
+		).resolves.toBeUndefined();
 
 		expect(sendTransaction).toHaveBeenCalledTimes(1);
 		expect(waitForTransactionReceipt).toHaveBeenCalledWith(
@@ -198,6 +291,25 @@ describe("wagmi wallet session", () => {
 
 		await expect(ensureEscrowAllowance(allowanceInput())).rejects.toThrow(
 			"授权额度未正确生效",
+		);
+	});
+
+	it("ends a stuck local approval receipt wait with an actionable recovery message", async () => {
+		vi.useFakeTimers();
+		vi.mocked(readContract).mockResolvedValue(BigInt(0));
+		vi.mocked(waitForTransactionReceipt).mockImplementation(
+			() => new Promise<never>(() => undefined),
+		);
+
+		const approval = ensureEscrowAllowance(allowanceInput());
+		const result = approval.catch((error: unknown) => error);
+		await vi.advanceTimersByTimeAsync(30_000);
+
+		const error = await result;
+		expect(error).toBeInstanceOf(WalletRequestTimeoutError);
+		expect(error).toHaveProperty(
+			"message",
+			expect.stringContaining("USDC 授权交易长时间未确认"),
 		);
 	});
 });

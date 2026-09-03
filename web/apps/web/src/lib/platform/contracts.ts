@@ -7,6 +7,7 @@ export type AgentId = string & { readonly __brand: "AgentId" };
 
 export type TaskStatus =
 	| "draft"
+	| "planning"
 	| "awaiting_escrow"
 	| "matching"
 	| "awaiting_agent_acceptance"
@@ -76,7 +77,13 @@ export type PlatformTask = {
 	updatedAt: string;
 	escrow: {
 		mode: "sandbox" | "onchain";
-		status: "not_started" | "pending" | "confirmed" | "failed" | "released" | "refunded";
+		status:
+			| "not_started"
+			| "pending"
+			| "confirmed"
+			| "failed"
+			| "released"
+			| "refunded";
 		txHash?: string;
 		confirmations: number;
 		requiredConfirmations: number;
@@ -142,9 +149,20 @@ export type FlowAction =
 
 export const TASK_STATUS_PRESENTATION: Record<
 	TaskStatus,
-	{ label: string; tone: "neutral" | "primary" | "ai" | "escrow" | "success" | "warning" | "danger" }
+	{
+		label: string;
+		tone:
+			| "neutral"
+			| "primary"
+			| "ai"
+			| "escrow"
+			| "success"
+			| "warning"
+			| "danger";
+	}
 > = {
 	draft: { label: "草稿", tone: "neutral" },
+	planning: { label: "规划与选人", tone: "ai" },
 	awaiting_escrow: { label: "待托管", tone: "escrow" },
 	matching: { label: "匹配中", tone: "ai" },
 	awaiting_agent_acceptance: { label: "待 Agent 接单", tone: "warning" },

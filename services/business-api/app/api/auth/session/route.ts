@@ -10,6 +10,9 @@ function getHandler() {
   return handler ??= createAuthSessionHandler({
     resolveActorId: createProductionResolveActorId(),
     allowedOrigin: corsOriginFromSiweConfig(config),
+    // 会话恢复与 nonce 签名必须引用同一份服务端链配置，避免 Header 展示的
+    // 交易网络与用户真正签名、托管时使用的网络发生漂移。
+    chainId: config.expectedChainId,
   });
 }
 export function GET(request: Request): Promise<Response> { return getHandler()(request); }

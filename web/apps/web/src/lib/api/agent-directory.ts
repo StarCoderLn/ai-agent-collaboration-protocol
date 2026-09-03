@@ -1,7 +1,6 @@
 import { z } from "zod";
-
-import { BUSINESS_API_BASE_URL } from "./base-url";
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
+import { BUSINESS_API_BASE_URL } from "./base-url";
 
 /**
  * Agent 市场与生命周期操作的浏览器客户端。
@@ -39,6 +38,8 @@ const publicAgentSchema = z.object({
 	name: z.string().min(1),
 	categoryId: uuidSchema,
 	categoryName: z.string().nullable(),
+	// 公共目录只接收服务端生成的缩略身份标签；完整身份钱包、收款钱包和联系方式不会进入浏览器状态。
+	provider: z.object({ label: z.string().min(1).max(32) }),
 	description: z.string(),
 	tags: z.array(z.string()),
 	pricing: pricingSchema,
@@ -61,13 +62,13 @@ const managedAgentSchema = publicAgentSchema
 		status: statusSchema,
 		providerWalletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
 		serviceEndpoint: z.url(),
-		email: z.email(),
 		pauseReason: pauseReasonSchema,
 		health: ownerHealthSchema,
 	});
 
 const publicListSchema = z.object({
 	agents: z.array(publicAgentSchema),
+	total: z.number().int().nonnegative(),
 	limit: z.number().int().positive(),
 	offset: z.number().int().nonnegative(),
 });
@@ -143,6 +144,7 @@ export type ManagedDirectoryAgent = z.infer<typeof managedAgentSchema>;
 export type AgentLifecycleSnapshot = z.infer<typeof lifecycleSnapshotSchema>;
 export type AgentScoreDetails = z.infer<typeof agentScoreSchema>;
 export type AgentDirectoryErrorBody = z.infer<typeof errorSchema>;
+export type PublicAgentDirectoryPage = z.infer<typeof publicListSchema>;
 
 export class AgentDirectoryRequestError extends Error {
 	constructor(
@@ -154,25 +156,53 @@ export class AgentDirectoryRequestError extends Error {
 	}
 }
 
-export async function listPublicAgents(signal?: AbortSignal): Promise<readonly PublicDirectoryAgent[]> {
-	const response = await request("/market/agents?limit=50&offset=0", { signal });
-	return parseSuccess(response, publicListSchema).then((body) => body.agents);
+export async function listPublicAgents(
+	filters: Readonly<{ keyword?: string; category?: string }>,
+	pagination: Readonly<{ limit: number; offset: number }>,
+	signal?: AbortSignal,
+): Promise<PublicAgentDirectoryPage> {
+	const params = new URLSearchParams({
+		limit: String(pagination.limit),
+		offset: String(pagination.offset),
+	});
+	if (filters.keyword?.trim()) params.set("keyword", filters.keyword.trim());
+	if (filters.category)
+		params.set("category", uuidSchema.parse(filters.category));
+	const response = await request(`/market/agents?${params.toString()}`, {
+		signal,
+	});
+	return parseSuccess(response, publicListSchema);
 }
 
-export async function getPublicAgent(agentId: string, signal?: AbortSignal): Promise<PublicDirectoryAgent> {
+export async function getPublicAgent(
+	agentId: string,
+	signal?: AbortSignal,
+): Promise<PublicDirectoryAgent> {
 	const id = parseAgentId(agentId);
-	const response = await request(`/market/agents/${encodeURIComponent(id)}`, { signal });
+	const response = await request(`/market/agents/${encodeURIComponent(id)}`, {
+		signal,
+	});
 	return parseSuccess(response, publicDetailSchema).then((body) => body.agent);
 }
 
-export async function getAgentScore(agentId: string, signal?: AbortSignal): Promise<AgentScoreDetails> {
+export async function getAgentScore(
+	agentId: string,
+	signal?: AbortSignal,
+): Promise<AgentScoreDetails> {
 	const id = parseAgentId(agentId);
-	const response = await request(`/agents/${encodeURIComponent(id)}/score`, { signal });
+	const response = await request(`/agents/${encodeURIComponent(id)}/score`, {
+		signal,
+	});
 	return parseSuccess(response, agentScoreSchema);
 }
 
-export async function listOwnedAgents(signal?: AbortSignal): Promise<readonly ManagedDirectoryAgent[]> {
-	const response = await request("/my-agents", { credentials: "include", signal });
+export async function listOwnedAgents(
+	signal?: AbortSignal,
+): Promise<readonly ManagedDirectoryAgent[]> {
+	const response = await request("/my-agents", {
+		credentials: "include",
+		signal,
+	});
 	return parseSuccess(response, managedListSchema).then((body) => body.agents);
 }
 
@@ -180,10 +210,13 @@ export async function listReviewAgents(
 	status: ManagedDirectoryAgent["status"] = "pending_review",
 	signal?: AbortSignal,
 ): Promise<readonly ManagedDirectoryAgent[]> {
-	const response = await request(`/admin/agents?status=${encodeURIComponent(status)}`, {
-		credentials: "include",
-		signal,
-	});
+	const response = await request(
+		`/admin/agents?status=${encodeURIComponent(status)}`,
+		{
+			credentials: "include",
+			signal,
+		},
+	);
 	return parseSuccess(response, managedListSchema).then((body) => body.agents);
 }
 
@@ -192,7 +225,10 @@ export async function transitionOwnedAgent(
 	action: "pause" | "resume" | "delist",
 	idempotencyKey: string,
 ): Promise<AgentLifecycleSnapshot> {
-	return transition(`/agents/${encodeURIComponent(parseAgentId(agentId))}/${action}`, idempotencyKey);
+	return transition(
+		`/agents/${encodeURIComponent(parseAgentId(agentId))}/${action}`,
+		idempotencyKey,
+	);
 }
 
 export async function reviewAgent(
@@ -233,7 +269,10 @@ async function transition(
 	return parseSuccess(response, lifecycleSnapshotSchema);
 }
 
-async function request(path: string, init: RequestInit = {}): Promise<Response> {
+async function request(
+	path: string,
+	init: RequestInit = {},
+): Promise<Response> {
 	let response: Response;
 	try {
 		response = await fetch(`${API_BASE_URL}${path}`, {
@@ -241,7 +280,8 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
 			headers: { accept: "application/json", ...init.headers },
 		});
 	} catch (error) {
-		if (error instanceof DOMException && error.name === "AbortError") throw error;
+		if (error instanceof DOMException && error.name === "AbortError")
+			throw error;
 		throw new AgentDirectoryRequestError(0, {
 			error_code: "NETWORK_ERROR",
 			message: "暂时无法连接业务服务，请稍后重试",
@@ -270,10 +310,13 @@ async function parseSuccess<Schema extends z.ZodType>(
 	return parsed.data;
 }
 
-async function parseError(response: Response): Promise<AgentDirectoryRequestError> {
+async function parseError(
+	response: Response,
+): Promise<AgentDirectoryRequestError> {
 	try {
 		const parsed = errorSchema.safeParse(await response.json());
-		if (parsed.success) return new AgentDirectoryRequestError(response.status, parsed.data);
+		if (parsed.success)
+			return new AgentDirectoryRequestError(response.status, parsed.data);
 	} catch {
 		// 非 JSON 错误体仍收敛成稳定错误，不把 HTML 网关页面或内部细节带入界面。
 	}

@@ -1,8 +1,64 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+	act,
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { FormalWorkflow } from "@/lib/api/tasks";
-import FormalWorkflowView from "./formal-workflow-view";
+import {
+	confirmWorkflowNodeCandidate,
+	type FormalWorkflow,
+	rematchWorkflowNodeCandidates,
+	retryFailedWorkflowNodeExecution,
+	suggestTaskTags,
+	updateWorkflowBudgetPreference,
+	updateWorkflowNodeCapabilities,
+} from "@/lib/api/tasks";
+import FormalWorkflowView, {
+	type SelectionActionResult,
+} from "./formal-workflow-view";
+
+vi.mock("@/lib/api/tasks", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@/lib/api/tasks")>();
+	return {
+		...actual,
+		confirmWorkflowNodeCandidate: vi.fn(async () => ({
+			taskId,
+			nodeId: designNodeId,
+			agentId: "88888888-8888-4888-8888-888888888888",
+			agreedAmountMinor: "20000000",
+			selectedNodeCount: 1,
+			totalNodeCount: 3,
+			quotedTotalMinor: null,
+			taskStatus: "planning",
+		})),
+		updateWorkflowBudgetPreference: vi.fn(async () => ({
+			taskId,
+			budgetPreferenceMinor: "100000000",
+			nodePreferences: [],
+		})),
+		rematchWorkflowNodeCandidates: vi.fn(async () => ({})),
+		retryFailedWorkflowNodeExecution: vi.fn(async () => ({
+			taskId,
+			workflowNodeId: designNodeId,
+			assignmentId: "55555555-5555-4555-8555-555555555556",
+			transitionEventId: "55555555-5555-4555-8555-555555555557",
+			replayed: false,
+		})),
+		suggestTaskTags: vi.fn(async () => [
+			{ canonicalName: "next.js", matchedAlias: "nextjs" },
+			{ canonicalName: "accessibility", matchedAlias: null },
+		]),
+		updateWorkflowNodeCapabilities: vi.fn(async () => ({
+			taskId,
+			nodeId: designNodeId,
+			tags: ["ui", "accessibility"],
+		})),
+	};
+});
 
 const taskId = "11111111-1111-4111-8111-111111111111";
 const categoryId = "22222222-2222-4222-8222-222222222222";
@@ -10,10 +66,14 @@ const prdNodeId = "33333333-3333-4333-8333-333333333331";
 const designNodeId = "33333333-3333-4333-8333-333333333332";
 const codingNodeId = "33333333-3333-4333-8333-333333333333";
 
+async function successfulSelectionAction() {
+	return { ok: true } as const;
+}
+
 describe("FormalWorkflowView", () => {
 	afterEach(cleanup);
 
-	it("按持久化 DAG 展示所有阶段，并只把真实 assignment 高亮为执行 Agent", () => {
+	it("按持久化 DAG 展示所有阶段，并展示托管前候选证据与冻结报价", () => {
 		render(
 			<FormalWorkflowView
 				taskTitle="开发可信工作台"
@@ -21,23 +81,153 @@ describe("FormalWorkflowView", () => {
 				viewMode="allocation"
 				busy={false}
 				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
 			/>,
 		);
 
 		expect(screen.getByText("Agent 分配关系图")).toBeInTheDocument();
 		expect(screen.getByTestId(`formal-stage-${prdNodeId}`)).toBeInTheDocument();
-		expect(screen.getByTestId(`formal-stage-${designNodeId}`)).toBeInTheDocument();
-		expect(screen.getByTestId(`formal-stage-${codingNodeId}`)).toBeInTheDocument();
+		expect(
+			screen.getByTestId(`formal-stage-${designNodeId}`),
+		).toBeInTheDocument();
+		expect(
+			screen.getByTestId(`formal-stage-${codingNodeId}`),
+		).toBeInTheDocument();
 		expect(screen.getByTestId("formal-workflow-root")).toHaveClass("h-41");
 		expect(screen.getAllByText("PRD Specialist").length).toBeGreaterThan(0);
 		expect(screen.getAllByText("Design Candidate").length).toBeGreaterThan(0);
 		expect(screen.getAllByText("3").length).toBeGreaterThan(0);
 		expect(screen.getByText("为该阶段选择 Agent")).toBeInTheDocument();
-		expect(screen.getByText("本阶段最高预算").parentElement).toHaveClass("text-center");
-		expect(screen.getByText("已选 Agent 报价")).toBeInTheDocument();
+		expect(screen.getByText("阶段预算参考").parentElement).toHaveClass(
+			"text-center",
+		);
+		expect(screen.getByText("当前报价")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "综合推荐" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "质量优先" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "性价比优先" }),
+		).toBeInTheDocument();
+		expect(screen.getByText("平台已验证交付")).toBeInTheDocument();
+		expect(screen.getByText("Agent 自行提供")).toBeInTheDocument();
+		expect(screen.getByText("按时交付率")).toBeInTheDocument();
+		expect(screen.getByText("平台识别的能力需求")).toBeInTheDocument();
+		expect(screen.getByText("尚未覆盖")).toBeInTheDocument();
 	});
 
-	it("画布控制区使用真正的双向全屏按钮", async () => {
+	it("把预算上限保存为匹配偏好并重新生成所有未选择节点候选", async () => {
+		const run = vi.fn(
+			async (_label: string, action: () => Promise<unknown>) => {
+				await action();
+			},
+		);
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflowFixture()}
+				viewMode="allocation"
+				busy={false}
+				run={run}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+		const budget = screen.getByLabelText("期望总预算上限（可选）");
+		expect(budget).toHaveClass("bg-background");
+		expect(budget.parentElement).toHaveClass("md:row-start-2");
+		expect(
+			screen.getByRole("button", { name: "应用预算并重新推荐" }),
+		).toHaveClass("md:row-start-2");
+		fireEvent.change(budget, { target: { value: "100" } });
+		fireEvent.click(screen.getByRole("button", { name: "应用预算并重新推荐" }));
+
+		await waitFor(() =>
+			expect(updateWorkflowBudgetPreference).toHaveBeenCalledWith(
+				taskId,
+				"100000000",
+				expect.any(String),
+			),
+		);
+		expect(rematchWorkflowNodeCandidates).toHaveBeenCalledTimes(3);
+	});
+
+	it("区分阶段预算参考和选择后冻结的真实报价", () => {
+		const workflow = workflowFixture();
+		const requirementsNode = workflow.nodes[0];
+		const designNode = workflow.nodes[1];
+		if (requirementsNode === undefined || designNode === undefined) {
+			throw new Error("测试夹具必须包含需求和设计阶段");
+		}
+		workflow.nodes[0] = {
+			...requirementsNode,
+			assignment: null,
+			pricePreferenceMinor: "12000000",
+		};
+		workflow.nodes[1] = {
+			...designNode,
+			selection: {
+				agentId: "88888888-8888-4888-8888-888888888888",
+				agentName: "Design Candidate",
+				agreedAmountMinor: "20000000",
+			},
+		};
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflow}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		expect(screen.getByText("预算参考 12 USDC")).toBeInTheDocument();
+		expect(screen.getByText("已选报价 20 USDC")).toBeInTheDocument();
+		expect(screen.queryByText("偏好 12 USDC")).not.toBeInTheDocument();
+	});
+
+	it("允许修正平台识别能力，并在保存后只重新匹配当前阶段", async () => {
+		const run = vi.fn(
+			async (_label: string, action: () => Promise<unknown>) => {
+				await action();
+			},
+		);
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflowFixture()}
+				viewMode="allocation"
+				busy={false}
+				run={run}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "调整能力" }));
+		await waitFor(() => expect(suggestTaskTags).toHaveBeenCalled());
+		fireEvent.click(
+			await screen.findByRole("button", { name: "accessibility" }),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "保存并重新推荐" }));
+
+		await waitFor(() =>
+			expect(updateWorkflowNodeCapabilities).toHaveBeenCalledWith(
+				taskId,
+				designNodeId,
+				["ui", "responsive-design", "accessibility"],
+				expect.any(String),
+			),
+		);
+		expect(rematchWorkflowNodeCandidates).toHaveBeenCalledWith(
+			taskId,
+			designNodeId,
+		);
+	});
+
+	it("删除伪似全屏的视口恢复按钮，并保留真正的双向全屏按钮", async () => {
 		let fullscreenElement: Element | null = null;
 		const requestFullscreen = vi.fn(function request(this: Element) {
 			fullscreenElement = this;
@@ -61,6 +251,7 @@ describe("FormalWorkflowView", () => {
 			document,
 			"exitFullscreen",
 		);
+
 		Object.defineProperty(Element.prototype, "requestFullscreen", {
 			configurable: true,
 			value: requestFullscreen,
@@ -82,8 +273,19 @@ describe("FormalWorkflowView", () => {
 					viewMode="allocation"
 					busy={false}
 					run={vi.fn(async () => undefined)}
+					runSelection={successfulSelectionAction}
 				/>,
 			);
+
+			expect(
+				screen.queryByRole("button", { name: "重新显示全部节点" }),
+			).not.toBeInTheDocument();
+			expect(
+				screen.getByRole("button", { name: "Zoom In" }),
+			).toBeInTheDocument();
+			expect(
+				screen.getByRole("button", { name: "Zoom Out" }),
+			).toBeInTheDocument();
 
 			fireEvent.click(screen.getByRole("button", { name: "全屏查看" }));
 			const exitButton = await screen.findByRole("button", {
@@ -109,7 +311,315 @@ describe("FormalWorkflowView", () => {
 		}
 	});
 
-	it("只读关系图不会劫持页面滚轮，并提供重新显示全部节点的恢复入口", () => {
+	it("同一阶段的三个候选使用两列网格，第三个候选换行而不侵入下一阶段", () => {
+		const workflow = workflowFixture();
+		const designNode = workflow.nodes[1];
+		if (
+			designNode?.candidateRecord === null ||
+			designNode?.candidateRecord === undefined
+		) {
+			throw new Error("测试夹具必须包含设计阶段候选");
+		}
+		const firstCandidate = designNode.candidateRecord.candidates[0];
+		if (firstCandidate === undefined)
+			throw new Error("测试夹具必须至少包含一个候选");
+		workflow.nodes[1] = {
+			...designNode,
+			candidateRecord: {
+				...designNode.candidateRecord,
+				candidates: [
+					firstCandidate,
+					{
+						...firstCandidate,
+						agentId: "88888888-8888-4888-8888-888888888889",
+						name: "Design Candidate B",
+					},
+					{
+						...firstCandidate,
+						agentId: "88888888-8888-4888-8888-888888888890",
+						name: "Design Candidate C",
+					},
+				],
+			},
+		};
+
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflow}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		const firstNode = screen
+			.getByTestId(`formal-agent-${firstCandidate.agentId}`)
+			.closest(".react-flow__node");
+		const secondNode = screen
+			.getByTestId("formal-agent-88888888-8888-4888-8888-888888888889")
+			.closest(".react-flow__node");
+		const thirdNode = screen
+			.getByTestId("formal-agent-88888888-8888-4888-8888-888888888890")
+			.closest(".react-flow__node");
+		expect(firstNode).toHaveStyle({ transform: "translate(838px,260px)" });
+		expect(secondNode).toHaveStyle({ transform: "translate(1070px,260px)" });
+		expect(thirdNode).toHaveStyle({ transform: "translate(838px,364px)" });
+	});
+
+	it("重新选择提供加载与就地错误反馈，成功后只保留新 Agent", async () => {
+		const workflow = workflowFixture();
+		const designNode = workflow.nodes[1];
+		if (
+			designNode?.candidateRecord === null ||
+			designNode?.candidateRecord === undefined
+		) {
+			throw new Error("测试夹具必须包含设计阶段候选");
+		}
+		const frozenCandidateRecord = designNode.candidateRecord;
+		const selectedCandidate = frozenCandidateRecord.candidates[0];
+		if (selectedCandidate === undefined) {
+			throw new Error("测试夹具必须至少包含一个候选");
+		}
+		const secondCandidate = {
+			...selectedCandidate,
+			agentId: "88888888-8888-4888-8888-888888888889",
+			name: "Design Candidate B",
+			quoteMinor: "17000000",
+		};
+		const thirdCandidate = {
+			...selectedCandidate,
+			agentId: "88888888-8888-4888-8888-888888888890",
+			name: "Design Candidate C",
+			quoteMinor: "24000000",
+		};
+		workflow.nodes[1] = {
+			...designNode,
+			status: "selected",
+			selection: {
+				agentId: selectedCandidate.agentId,
+				agentName: selectedCandidate.name,
+				agreedAmountMinor: selectedCandidate.quoteMinor,
+			},
+			candidateRecord: {
+				...frozenCandidateRecord,
+				finalSelectionAgentId: selectedCandidate.agentId,
+				candidates: [selectedCandidate, secondCandidate, thirdCandidate],
+			},
+		};
+		const codingNode = workflow.nodes[2];
+		if (codingNode === undefined) throw new Error("测试夹具必须包含开发阶段");
+		workflow.nodes[2] = {
+			...codingNode,
+			status: "selected",
+			selection: {
+				agentId: "88888888-8888-4888-8888-888888888891",
+				agentName: "Coding Candidate",
+				agreedAmountMinor: "32000000",
+			},
+		};
+
+		let finishSelection: ((result: SelectionActionResult) => void) | undefined;
+		const runSelection = vi.fn(
+			() =>
+				new Promise<SelectionActionResult>((resolve) => {
+					finishSelection = resolve;
+				}),
+		);
+
+		const { rerender } = render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflow}
+				viewMode="allocation"
+				selectionEditable
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={runSelection}
+			/>,
+		);
+
+		// 默认关系图是已经确认的执行方案，候选 B/C 不应继续占据画布。
+		expect(
+			screen.getByTestId(`formal-agent-${selectedCandidate.agentId}`),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByTestId(`formal-agent-${secondCandidate.agentId}`),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByTestId(`formal-agent-${thirdCandidate.agentId}`),
+		).not.toBeInTheDocument();
+		fireEvent.click(
+			screen.getByRole("button", { name: "重新选择该阶段 Agent" }),
+		);
+		expect(
+			screen.getByTestId(`formal-agent-${secondCandidate.agentId}`),
+		).toBeInTheDocument();
+		expect(
+			screen.getByTestId(`formal-agent-${thirdCandidate.agentId}`),
+		).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "当前选择" })).toBeDisabled();
+		expect(
+			screen.getAllByRole("button", { name: "更换为此 Agent" }),
+		).toHaveLength(2);
+		const firstReplacementButton = screen.getAllByRole("button", {
+			name: "更换为此 Agent",
+		})[0];
+		if (firstReplacementButton === undefined) {
+			throw new Error("测试夹具必须包含可改选候选");
+		}
+		fireEvent.click(firstReplacementButton);
+		expect(screen.getByRole("button", { name: "正在更换…" })).toBeDisabled();
+
+		await act(async () => {
+			finishSelection?.({
+				ok: false,
+				message: "托管已经开始，请刷新后查看当前状态",
+			});
+		});
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"托管已经开始，请刷新后查看当前状态",
+		);
+		expect(
+			screen.getAllByRole("button", { name: "更换为此 Agent" }),
+		).toHaveLength(2);
+
+		const retryReplacementButton = screen.getAllByRole("button", {
+			name: "更换为此 Agent",
+		})[0];
+		if (retryReplacementButton === undefined) {
+			throw new Error("失败后必须恢复可改选按钮");
+		}
+		fireEvent.click(retryReplacementButton);
+		await act(async () => finishSelection?.({ ok: true }));
+		const updatedWorkflow: FormalWorkflow = {
+			...workflow,
+			nodes: workflow.nodes.map((node) =>
+				node.id === designNode.id
+					? {
+							...node,
+							selection: {
+								agentId: secondCandidate.agentId,
+								agentName: secondCandidate.name,
+								agreedAmountMinor: secondCandidate.quoteMinor,
+							},
+							candidateRecord: {
+								...frozenCandidateRecord,
+								finalSelectionAgentId: secondCandidate.agentId,
+							},
+						}
+					: node,
+			),
+		};
+		rerender(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={updatedWorkflow}
+				viewMode="allocation"
+				selectionEditable
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={runSelection}
+			/>,
+		);
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("button", { name: "取消重新选择" }),
+			).not.toBeInTheDocument(),
+		);
+		expect(
+			screen.getByTestId(`formal-agent-${secondCandidate.agentId}`),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByTestId(`formal-agent-${selectedCandidate.agentId}`),
+		).not.toBeInTheDocument();
+	});
+
+	it("任务根节点与首阶段水平对齐，并与首阶段候选保留安全间距", () => {
+		const workflow = workflowFixture();
+		const requirementsNode = workflow.nodes[0];
+		const designNode = workflow.nodes[1];
+		if (
+			requirementsNode === undefined ||
+			designNode?.candidateRecord === null ||
+			designNode?.candidateRecord === undefined
+		) {
+			throw new Error("测试夹具必须包含首阶段和候选记录");
+		}
+		const candidate = designNode.candidateRecord.candidates[0];
+		if (candidate === undefined) throw new Error("测试夹具必须包含候选 Agent");
+		workflow.nodes[0] = {
+			...requirementsNode,
+			status: "selecting",
+			assignment: null,
+			candidateRecord: {
+				...designNode.candidateRecord,
+				id: "77777777-7777-4777-8777-777777777778",
+				candidates: [
+					{
+						...candidate,
+						agentId: "88888888-8888-4888-8888-888888888893",
+					},
+					{
+						...candidate,
+						agentId: "88888888-8888-4888-8888-888888888891",
+					},
+					{
+						...candidate,
+						agentId: "88888888-8888-4888-8888-888888888892",
+					},
+				],
+			},
+		};
+
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflow}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		const rootNode = screen
+			.getByTestId("formal-workflow-root")
+			.closest(".react-flow__node");
+		const stageNode = screen
+			.getByTestId(`formal-stage-${prdNodeId}`)
+			.closest(".react-flow__node");
+		const firstCandidate = screen
+			.getByTestId("formal-agent-88888888-8888-4888-8888-888888888893")
+			.closest(".react-flow__node");
+		expect(rootNode).toHaveStyle({ transform: "translate(20px,40px)" });
+		expect(stageNode).toHaveStyle({ transform: "translate(380px,40px)" });
+		// 根节点右边界为 258px，首个候选从 278px 开始，始终保留 20px 安全区。
+		expect(firstCandidate).toHaveStyle({ transform: "translate(278px,260px)" });
+	});
+
+	it("只有存在下游依赖的阶段才显示右侧连接点", () => {
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflowFixture()}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		const designStage = screen.getByTestId(`formal-stage-${designNodeId}`);
+		const terminalStage = screen.getByTestId(`formal-stage-${codingNodeId}`);
+		expect(
+			designStage.querySelector(".react-flow__handle-right"),
+		).not.toBeNull();
+		expect(terminalStage.querySelector(".react-flow__handle-right")).toBeNull();
+	});
+
+	it("只读关系图不会劫持页面滚轮，也不会展示伪似全屏的恢复视口入口", () => {
 		const { container } = render(
 			<FormalWorkflowView
 				taskTitle="开发可信工作台"
@@ -117,6 +627,7 @@ describe("FormalWorkflowView", () => {
 				viewMode="allocation"
 				busy={false}
 				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
 			/>,
 		);
 
@@ -132,8 +643,8 @@ describe("FormalWorkflowView", () => {
 		// 关系图嵌在长页面中，普通滚轮必须继续滚动页面；缩放只通过明确的控制按钮触发。
 		expect(wheel.defaultPrevented).toBe(false);
 		expect(
-			screen.getByRole("button", { name: "重新显示全部节点" }),
-		).toBeInTheDocument();
+			screen.queryByRole("button", { name: "重新显示全部节点" }),
+		).not.toBeInTheDocument();
 	});
 
 	it("分配阶段点击未分配节点时展示候选选择，而不是不存在的交付产物", () => {
@@ -144,20 +655,61 @@ describe("FormalWorkflowView", () => {
 				viewMode="allocation"
 				busy={false}
 				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
 			/>,
 		);
 
 		fireEvent.click(screen.getByTestId(`formal-stage-${designNodeId}`));
-		expect(screen.getByRole("heading", { name: "界面设计" })).toBeInTheDocument();
+		expect(
+			screen.getByRole("heading", { name: "界面设计" }),
+		).toBeInTheDocument();
 		expect(screen.getByText("为该阶段选择 Agent")).toBeInTheDocument();
 		expect(screen.queryByText("该阶段尚未提交产物")).not.toBeInTheDocument();
+	});
+
+	it("选择候选时只提交 Agent 标识，由服务端冻结候选快照中的真实报价", async () => {
+		const runSelection = vi.fn(
+			async (_label: string, action: () => Promise<unknown>) => {
+				await action();
+				return { ok: true } as const;
+			},
+		);
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflowFixture()}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={runSelection}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "选择此 Agent" }));
+
+		expect(runSelection).toHaveBeenCalledWith(
+			"workflow-select",
+			expect.any(Function),
+		);
+		expect(confirmWorkflowNodeCandidate).toHaveBeenCalledWith(
+			taskId,
+			designNodeId,
+			"88888888-8888-4888-8888-888888888888",
+			expect.stringMatching(/^workflow-select:/),
+		);
 	});
 
 	it("收到真实进度后按阶段说明 Agent 正在执行的工作", () => {
 		const workflow = workflowFixture();
 		workflow.nodes[0] = {
 			...workflow.nodes[0],
-			execution: { progress: 10, state: "running" },
+			execution: {
+				progress: 10,
+				state: "running",
+				failureCode: null,
+				failureStage: null,
+				attentionMessage: null,
+			},
 		};
 		render(
 			<FormalWorkflowView
@@ -166,14 +718,189 @@ describe("FormalWorkflowView", () => {
 				viewMode="execution"
 				busy={false}
 				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
 			/>,
 		);
 
 		expect(screen.queryByText("Agent 分配关系图")).not.toBeInTheDocument();
 		expect(screen.getByText("多 Agent 执行进度")).toBeInTheDocument();
-		expect(screen.getByText("Agent 正在整理需求与拆分任务")).toBeInTheDocument();
+		expect(
+			screen.getByText("Agent 正在整理需求与拆分任务"),
+		).toBeInTheDocument();
 		expect(screen.getByText("正式执行进度")).toBeInTheDocument();
 		expect(screen.getByText("10%")).toBeInTheDocument();
+	});
+
+	it("返工保留旧产物时仍展示动态执行态，而不是误报阶段已完成", () => {
+		const workflow = completedWorkflowFixture();
+		const completedNode = workflow.nodes[0];
+		if (completedNode === undefined)
+			throw new Error("测试夹具必须包含 PRD 节点");
+		const assignment = completedNode.assignment;
+		if (assignment === null)
+			throw new Error("已完成节点必须保留正式 assignment");
+		workflow.nodes[0] = {
+			...completedNode,
+			status: "rework",
+			acceptedAt: null,
+			acceptance: null,
+			assignment: {
+				...assignment,
+				agentName: "规划测试修复 Coding Agent",
+			},
+			execution: {
+				progress: 95,
+				state: "running",
+				failureCode: null,
+				failureStage: null,
+				attentionMessage: null,
+			},
+		};
+
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflow}
+				viewMode="execution"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		expect(screen.getAllByText("返工中").length).toBeGreaterThanOrEqual(2);
+		expect(screen.queryByText("该阶段执行已完成")).not.toBeInTheDocument();
+		expect(screen.getByText("Agent 正在处理返工")).toBeInTheDocument();
+		const agentName = screen.getByTitle("规划测试修复 Coding Agent");
+		expect(agentName).toHaveClass("whitespace-nowrap");
+		expect(agentName.parentElement).toHaveClass("sm:w-fit", "sm:max-w-full");
+		expect(
+			screen.getByRole("progressbar", { name: "正式执行进度" }),
+		).toHaveAttribute("aria-valuenow", "95");
+		expect(
+			screen.getByRole("progressbar", { name: "正式执行进度" }).firstChild,
+		).toHaveClass("execution-progress-fill-active");
+	});
+
+	it("返工进度归零后等待真实 Agent 回调，不展示伪执行动画", () => {
+		const workflow = completedWorkflowFixture();
+		const node = workflow.nodes[0];
+		if (node === undefined) throw new Error("测试夹具必须包含 PRD 节点");
+		workflow.nodes[0] = {
+			...node,
+			status: "rework",
+			acceptedAt: null,
+			acceptance: null,
+			execution: {
+				progress: 0,
+				state: "running",
+				failureCode: null,
+				failureStage: null,
+				attentionMessage: null,
+			},
+		};
+
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflow}
+				viewMode="execution"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		expect(screen.getByText("返工已提交，等待 Agent 开始")).toBeInTheDocument();
+		expect(screen.queryByText("Agent 正在处理返工")).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("progressbar", { name: "正式执行进度" }).firstChild,
+		).not.toHaveClass("execution-progress-fill-active");
+	});
+
+	it("设计执行失败重试受理后立即切换为重新生成状态", async () => {
+		const workflow = failedDesignWorkflowFixture();
+		const run = vi.fn(
+			async (_label: string, action: () => Promise<unknown>) => {
+				await action();
+			},
+		);
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflow}
+				viewMode="execution"
+				busy={false}
+				run={run}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		expect(screen.getByText("界面设计生成失败")).toBeInTheDocument();
+		expect(
+			screen.getByText("本次界面设计未通过产物验收，没有提交不可用设计稿。"),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByText("Agent 正在生成界面设计"),
+		).not.toBeInTheDocument();
+		// Agent 只上报开始与产出两个里程碑，失败时的百分比恒定且无信息量；卡片必须展示
+		// 真实的校验阶段，让发布者知道失败发生在哪一步。
+		expect(screen.getByText("失败阶段")).toBeInTheDocument();
+		expect(screen.getByText("设计稿生成")).toBeInTheDocument();
+		expect(screen.queryByText("失败时进度")).not.toBeInTheDocument();
+		expect(screen.queryByText("10%")).not.toBeInTheDocument();
+		const retryButton = screen.getByRole("button", { name: "重试当前 Agent" });
+		expect(retryButton).toHaveClass(
+			"h-11",
+			"min-h-12",
+			"rounded-xl",
+			"px-6",
+			"text-sm",
+		);
+		fireEvent.click(retryButton);
+		await waitFor(() =>
+			expect(retryFailedWorkflowNodeExecution).toHaveBeenCalledWith(
+				taskId,
+				designNodeId,
+				expect.stringMatching(/^workflow-execution-retry:/),
+			),
+		);
+		expect(screen.getByText("正在重新生成界面设计")).toBeInTheDocument();
+		expect(screen.getAllByText("重新生成中")).toHaveLength(2);
+		expect(screen.queryByText("界面设计生成失败")).not.toBeInTheDocument();
+		expect(screen.queryByText("执行失败")).not.toBeInTheDocument();
+	});
+
+	it("重新生成请求失败后恢复真实失败状态", async () => {
+		vi.mocked(retryFailedWorkflowNodeExecution).mockRejectedValueOnce(
+			new Error("恢复事件写入失败"),
+		);
+		const run = vi.fn(
+			async (_label: string, action: () => Promise<unknown>) => {
+				try {
+					await action();
+				} catch {
+					// 父页面负责展示接口错误；本用例只验证工作流卡片不会滞留在乐观状态。
+				}
+			},
+		);
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={failedDesignWorkflowFixture()}
+				viewMode="execution"
+				busy={false}
+				run={run}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "重试当前 Agent" }));
+		await waitFor(() =>
+			expect(screen.getByText("界面设计生成失败")).toBeInTheDocument(),
+		);
+		expect(screen.queryByText("正在重新生成界面设计")).not.toBeInTheDocument();
+		expect(screen.getAllByText("执行失败").length).toBeGreaterThanOrEqual(1);
 	});
 
 	it("交付验收阶段以大尺寸产物区展示正式提交内容且不重复分配图", () => {
@@ -185,6 +912,7 @@ describe("FormalWorkflowView", () => {
 				viewMode="review"
 				busy={false}
 				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
 			/>,
 		);
 
@@ -193,10 +921,10 @@ describe("FormalWorkflowView", () => {
 		expect(
 			screen.getAllByRole("heading", { name: "可信工作台需求文档" }).length,
 		).toBeGreaterThan(0);
-		expect(screen.getByText("该阶段已验收")).toBeInTheDocument();
+		expect(screen.getByText("该阶段已通过质量验收")).toBeInTheDocument();
 	});
 
-	it("里程碑结算阶段展示权威金额与资金释放状态且不重复分配图", () => {
+	it("统一结算阶段展示权威金额与资金状态且不重复分配图", () => {
 		const workflow = completedWorkflowFixture();
 		render(
 			<FormalWorkflowView
@@ -205,11 +933,12 @@ describe("FormalWorkflowView", () => {
 				viewMode="settlement"
 				busy={false}
 				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
 			/>,
 		);
 
 		expect(screen.queryByText("Agent 分配关系图")).not.toBeInTheDocument();
-		expect(screen.getByText("里程碑结算记录")).toBeInTheDocument();
+		expect(screen.getByText("统一结算记录")).toBeInTheDocument();
 		expect(screen.getByText("阶段成交金额")).toBeInTheDocument();
 		expect(screen.getAllByText("18 USDC").length).toBeGreaterThan(0);
 		expect(screen.getByText("0.05 USDC")).toBeInTheDocument();
@@ -218,28 +947,23 @@ describe("FormalWorkflowView", () => {
 	});
 });
 
-/** 测试结束后恢复 jsdom 全局属性，避免全屏模拟影响后续工作流用例。 */
-function restoreProperty(
-	target: object,
-	key: PropertyKey,
-	descriptor: PropertyDescriptor | undefined,
-) {
-	if (descriptor === undefined) {
-		Reflect.deleteProperty(target, key);
-		return;
-	}
-	Object.defineProperty(target, key, descriptor);
-}
-
 /** 构造已交付、已验收并产生释放记录的节点，供验收与结算两个视图共享同一事实基线。 */
 function completedWorkflowFixture(): FormalWorkflow {
 	const workflow = workflowFixture();
+	const firstNode = workflow.nodes[0];
+	if (firstNode === undefined) throw new Error("测试工作流必须包含首个节点");
 	workflow.nodes[0] = {
-		...workflow.nodes[0]!,
+		...firstNode,
 		status: "accepted",
 		version: "3",
 		acceptedAt: "2026-08-29T00:20:00.000Z",
-		execution: { progress: 100, state: "completed" },
+		execution: {
+			progress: 100,
+			state: "completed",
+			failureCode: null,
+			failureStage: null,
+			attentionMessage: null,
+		},
 		latestResultBatch: {
 			id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 			batchNo: 1,
@@ -275,6 +999,35 @@ function completedWorkflowFixture(): FormalWorkflow {
 	return workflow;
 }
 
+function failedDesignWorkflowFixture(): FormalWorkflow {
+	const workflow = workflowFixture();
+	const prd = workflow.nodes[0];
+	const design = workflow.nodes[1];
+	if (prd === undefined || design === undefined)
+		throw new Error("测试夹具必须包含 PRD 与设计节点");
+	workflow.nodes[0] = { ...prd, status: "accepted" };
+	workflow.nodes[1] = {
+		...design,
+		status: "execution_failed",
+		assignment: {
+			id: "55555555-5555-4555-8555-555555555556",
+			agentId: "88888888-8888-4888-8888-888888888888",
+			agentName: "Mastra 产品设计 Agent",
+			status: "accepted",
+			agreedAmountMinor: "22000000",
+			acceptBy: "2026-08-29T00:10:00.000Z",
+		},
+		execution: {
+			progress: 10,
+			state: "failed",
+			failureCode: "MODEL_EXECUTION_FAILED",
+			failureStage: "design_draft",
+			attentionMessage: null,
+		},
+	};
+	return workflow;
+}
+
 function workflowFixture(): FormalWorkflow {
 	const shared = {
 		description: "正式工作流阶段说明。",
@@ -284,8 +1037,13 @@ function workflowFixture(): FormalWorkflow {
 		inputContract: "input.v1",
 		outputContract: "output.v1",
 		budgetCapMinor: "30000000",
+		pricePreferenceMinor: null,
+		pricePreferenceWeight: 100,
 		version: "1",
 		acceptedAt: null,
+		// 正式 API 对未选择节点显式返回 null；夹具也必须保留这一契约，避免把
+		// TypeScript 可选字段的 undefined 错当成“已经选择”，从而误锁预算偏好。
+		selection: null,
 		execution: null,
 		latestResultBatch: null,
 		acceptance: null,
@@ -295,12 +1053,15 @@ function workflowFixture(): FormalWorkflow {
 		run: {
 			id: "44444444-4444-4444-8444-444444444444",
 			taskId,
-			status: "running",
+			status: "planning",
 			version: "2",
 			currency: "USDC",
 			totalBudgetMinor: "100000000",
 			releasedAmountMinor: "0",
 			refundableAmountMinor: "100000000",
+			budgetPreferenceMinor: null,
+			quotedTotalMinor: null,
+			quoteConfirmedAt: null,
 			createdAt: "2026-08-29T00:00:00.000Z",
 			updatedAt: "2026-08-29T00:00:00.000Z",
 		},
@@ -325,12 +1086,13 @@ function workflowFixture(): FormalWorkflow {
 			},
 			{
 				...shared,
+				tags: ["ui", "responsive-design"],
 				id: designNodeId,
 				key: "design",
 				kind: "design",
 				title: "界面设计",
 				positionIndex: 1,
-				status: "matching",
+				status: "selecting",
 				assignment: null,
 				candidateRecord: {
 					id: "77777777-7777-4777-8777-777777777777",
@@ -341,6 +1103,7 @@ function workflowFixture(): FormalWorkflow {
 							agentId: "88888888-8888-4888-8888-888888888888",
 							name: "Design Candidate",
 							matchedTags: ["ui"],
+							unmatchedTags: ["responsive-design"],
 							quoteMinor: "20000000",
 							estimatedDurationSeconds: 600,
 							score: 4.8,
@@ -348,6 +1111,58 @@ function workflowFixture(): FormalWorkflow {
 							responseMinutes: 2,
 							isNew: false,
 							rankScore: "980",
+							recommendationBadges: ["best_overall", "quality_first"],
+							taskFitScore: 96,
+							confidence: "high",
+							sampleSize: 24,
+							similarCompleted: 8,
+							onTimeRate: 0.92,
+							reworkRate: 0.08,
+							disputeRate: 0.01,
+							currentLoad: 1,
+							scoreDimensions: {
+								completionStrength: {
+									recentValue: 4.9,
+									lifetimeValue: 4.8,
+									sampleSize: 24,
+								},
+								qualityFeedback: {
+									recentValue: 4.8,
+									lifetimeValue: 4.7,
+									sampleSize: 24,
+								},
+								communicationExperience: {
+									recentValue: 4.7,
+									lifetimeValue: 4.6,
+									sampleSize: 24,
+								},
+								disputeReliability: {
+									recentValue: 4.9,
+									lifetimeValue: 4.9,
+									sampleSize: 24,
+								},
+								completedHistory: {
+									recentValue: 4.6,
+									lifetimeValue: 4.5,
+									sampleSize: 24,
+								},
+							},
+							deliveryCases: [
+								{
+									source: "platform_verified",
+									title: "已验收工作台设计",
+									summary: "由平台任务完成、验收记录和正式制品共同证明。",
+									artifactKind: "image",
+									previewRef: "https://example.com/verified.png",
+								},
+								{
+									source: "agent_provided",
+									title: "提供者作品集",
+									summary: "由 Agent 提供者自行提交，仅作为能力参考。",
+									artifactKind: "website",
+									previewRef: "https://example.com/portfolio",
+								},
+							],
 						},
 					],
 				},
@@ -379,4 +1194,17 @@ function workflowFixture(): FormalWorkflow {
 			},
 		],
 	};
+}
+
+/** 测试结束后恢复 jsdom 全局属性，避免全屏模拟污染后续工作流用例。 */
+function restoreProperty(
+	target: object,
+	key: PropertyKey,
+	descriptor: PropertyDescriptor | undefined,
+) {
+	if (descriptor === undefined) {
+		Reflect.deleteProperty(target, key);
+		return;
+	}
+	Object.defineProperty(target, key, descriptor);
 }

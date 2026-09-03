@@ -65,6 +65,8 @@ describe("createAuthVerifyHttpHandler", () => {
     expect(responseBody).toEqual({ walletAddress: wallet.address });
     const setCookie = response.headers.get("set-cookie");
     expect(setCookie).toContain("session_id=session-1");
+    // Cookie 必须与数据库会话使用同一过期时间，避免浏览器与服务端提前出现状态分叉。
+    expect(setCookie).toContain("Expires=Sun, 23 Aug 2026 12:00:00 GMT");
     expect(setCookie).toContain("HttpOnly");
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://app.example.com");
   });

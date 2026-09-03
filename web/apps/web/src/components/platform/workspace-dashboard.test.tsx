@@ -65,4 +65,43 @@ describe("Publisher workspace statistics", () => {
 		expect(listOwnedTasks).toHaveBeenCalledWith(expect.any(AbortSignal));
 		expect(getPublisherTaskStats).toHaveBeenCalledWith(expect.any(AbortSignal));
 	});
+
+	it("任务卡片只展示用户决策所需信息，不暴露可见性和内部状态版本", async () => {
+		vi.mocked(listOwnedTasks).mockResolvedValue([
+			{
+				id: "140dca7d-2c2a-4f3e-8fe7-973dc7530199",
+				title: "开发一个智能电商营销首页",
+				description: "验证工作台任务卡片的信息层级。",
+				categoryId: "40000000-0000-4000-8000-000000000023",
+				tags: ["电商"],
+				pricing: { type: "fixed", amountMinor: "88000000" },
+				currency: "USDC",
+				deadline: "2026-09-30T00:00:00.000Z",
+				visibility: "public",
+				assignmentMode: { mode: "manual" },
+				acceptanceMode: { mode: "manual" },
+				status: "settled",
+				statusVersion: "19",
+				createdAt: "2026-09-01T00:00:00.000Z",
+				updatedAt: "2026-09-02T06:27:00.000Z",
+			},
+		]);
+		vi.mocked(getPublisherTaskStats).mockResolvedValue({
+			total: 1,
+			pending: 0,
+			executing: 0,
+			awaiting_review: 0,
+			completed: 1,
+			disputed: 0,
+		});
+
+		render(<WorkspaceDashboard />);
+
+		expect(
+			await screen.findByText("开发一个智能电商营销首页"),
+		).toBeInTheDocument();
+		expect(screen.queryByText("公开")).not.toBeInTheDocument();
+		expect(screen.queryByText("v19")).not.toBeInTheDocument();
+		expect(screen.getAllByText("已完成").length).toBeGreaterThanOrEqual(2);
+	});
 });

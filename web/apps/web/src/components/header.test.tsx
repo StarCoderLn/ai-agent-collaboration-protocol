@@ -12,19 +12,15 @@ import Header from "./header";
 const wallet = vi.hoisted(() => ({
 	status: "connected",
 	walletAddress: "0x1111111111111111111111111111111111111111" as string | null,
+	chainId: 31_337 as number | null,
 	error: null as string | null,
 	connect: vi.fn(async () => undefined),
 	logout: vi.fn(async () => undefined),
 }));
 const writeText = vi.hoisted(() => vi.fn(async () => undefined));
-const CONNECTED_WALLET_ADDRESS =
-	"0x1111111111111111111111111111111111111111";
+const CONNECTED_WALLET_ADDRESS = "0x1111111111111111111111111111111111111111";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/workspace/tasks" }));
-vi.mock("wagmi", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("wagmi")>();
-	return { ...actual, useConnection: () => ({ chainId: 31_337 }) };
-});
 vi.mock("@/components/auth/wallet-session-provider", () => ({
 	useWalletSession: () => wallet,
 }));
@@ -33,6 +29,7 @@ describe("Header wallet account control", () => {
 	beforeEach(() => {
 		wallet.status = "connected";
 		wallet.walletAddress = CONNECTED_WALLET_ADDRESS;
+		wallet.chainId = 31_337;
 		wallet.error = null;
 		Object.defineProperty(navigator, "clipboard", {
 			configurable: true,
@@ -60,6 +57,11 @@ describe("Header wallet account control", () => {
 			"href",
 			"/workspace",
 		);
+		// DAO 属于全站治理入口，不在工作台重复放置同义卡片；主导航名称与路由保持稳定。
+		expect(screen.getByRole("link", { name: "DAO 仲裁" })).toHaveAttribute(
+			"href",
+			"/dao",
+		);
 	});
 
 	it("opens an account menu without starting another SIWE login", () => {
@@ -76,10 +78,10 @@ describe("Header wallet account control", () => {
 		expect(screen.getByText(CONNECTED_WALLET_ADDRESS)).toHaveClass(
 			"whitespace-nowrap",
 		);
-		expect(
-			screen.getByLabelText("当前钱包网络 AICP Local Anvil"),
-		).toBeInTheDocument();
+		// 当前交易网络来自服务端 SIWE 配置，不依赖页面加载时访问 MetaMask。
 		expect(screen.getByText("AICP Local Anvil")).toBeInTheDocument();
+		expect(screen.queryByText("登录会话有效")).not.toBeInTheDocument();
+		expect(screen.queryByText("钱包网络未连接")).not.toBeInTheDocument();
 		expect(wallet.connect).not.toHaveBeenCalled();
 	});
 
@@ -110,6 +112,7 @@ describe("Header wallet account control", () => {
 	it("starts SIWE login when no authenticated session exists", () => {
 		wallet.status = "disconnected";
 		wallet.walletAddress = null;
+		wallet.chainId = null;
 		render(<Header />);
 
 		fireEvent.click(screen.getByRole("button", { name: "连接钱包" }));

@@ -4,13 +4,14 @@
  * 权威表结构见 services/business-service/migrations/0002_auth_nonces_and_sessions.up.sql；
  * 权威设计见 specs/2.agent-registration/design.md 「模块 5」。`session_id` 直接是
  * Cookie 承载的不透明值（不是自解释 JWT），服务端必须持有本表才能校验/吊销。
- * 会话 TTL 24 小时（design.md 模块 5），过期后要求重新走一遍 SIWE 流程。
+ * 会话 TTL 7 天（design.md 模块 5），过期后要求重新走一遍 SIWE 流程。
  */
 
 import { randomBytes } from "node:crypto";
 import type { QueryExecutor } from "../db/pool";
 
-const DEFAULT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+// 固定 7 天兼顾日常使用体验与钱包会话泄露后的风险窗口；这里是默认 TTL 的唯一权威值。
+const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SESSION_ID_BYTES = 32;
 
 export interface SessionRecord {
