@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/protocol"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/quickagent"
 )
 
 const maxSandboxResponseBytes = 1 << 20
@@ -23,7 +24,11 @@ type HTTPCaller struct {
 }
 
 func (c *HTTPCaller) Call(ctx context.Context, input CallRequest) (CallOutcome, error) {
-	if c.Client == nil || input.Secret == "" || len(input.Body) == 0 || input.IdempotencyKey == "" {
+	mode := input.IntegrationMode
+	if mode == "" {
+		mode = "aicp_hmac"
+	}
+	if c.Client == nil || (mode == "aicp_hmac" && input.Secret == "") || len(input.Body) == 0 || input.IdempotencyKey == "" {
 		return CallOutcome{}, errors.New("sandbox HTTP caller is not configured")
 	}
 	endpoint, err := url.Parse(input.Endpoint)
@@ -34,26 +39,44 @@ func (c *HTTPCaller) Call(ctx context.Context, input CallRequest) (CallOutcome, 
 	if path == "" {
 		path = "/"
 	}
-	headers, err := protocol.Sign(
-		protocol.SignRequest{Method: http.MethodPost, Path: path, Body: input.Body},
-		input.Secret,
-		protocol.CallTypeSandbox,
-	)
-	if err != nil {
-		return CallOutcome{}, errors.New("sandbox request signing failed")
+	requestBody := input.Body
+	if mode == "http_json" {
+		// 沙箱使用与正式派发相同的顶层字段，提供者照页面模板读取 task 即可；测试模板
+		// 作为 task 原样嵌入，不要求 Agent 识别平台内部的 round/run 标识。
+		requestBody, err = json.Marshal(struct {
+			Task              json.RawMessage `json:"task"`
+			UpstreamArtifacts []any           `json:"upstreamArtifacts"`
+		}{Task: input.Body, UpstreamArtifacts: []any{}})
+		if err != nil {
+			return CallOutcome{}, errors.New("sandbox quick request is invalid")
+		}
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(input.Body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(requestBody))
 	if err != nil {
 		return CallOutcome{}, err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Idempotency-Key", input.IdempotencyKey)
 	request.Header.Set("X-Request-ID", input.RoundID+"-"+input.IdempotencyKey[len(input.IdempotencyKey)-1:])
-	request.Header.Set(protocol.HeaderProtocolVersion, headers.ProtocolVersion)
-	request.Header.Set(protocol.HeaderTimestamp, headers.Timestamp)
-	request.Header.Set(protocol.HeaderNonce, headers.Nonce)
-	request.Header.Set(protocol.HeaderSignature, headers.Signature)
-	request.Header.Set(protocol.HeaderCallType, string(headers.CallType))
+	if mode == "aicp_hmac" {
+		headers, signErr := protocol.Sign(
+			protocol.SignRequest{Method: http.MethodPost, Path: path, Body: input.Body},
+			input.Secret,
+			protocol.CallTypeSandbox,
+		)
+		if signErr != nil {
+			return CallOutcome{}, errors.New("sandbox request signing failed")
+		}
+		request.Header.Set(protocol.HeaderProtocolVersion, headers.ProtocolVersion)
+		request.Header.Set(protocol.HeaderTimestamp, headers.Timestamp)
+		request.Header.Set(protocol.HeaderNonce, headers.Nonce)
+		request.Header.Set(protocol.HeaderSignature, headers.Signature)
+		request.Header.Set(protocol.HeaderCallType, string(headers.CallType))
+	} else if mode == "http_json" && input.Secret != "" {
+		request.Header.Set("Authorization", "Bearer "+input.Secret)
+	} else if mode != "http_json" {
+		return failedOutcome(0, 0, string(protocol.ErrCodeProtocolVersionUnsupported), nil, false, 0), nil
+	}
 
 	startedAt := c.now()
 	response, err := c.Client.Do(request)
@@ -72,7 +95,12 @@ func (c *HTTPCaller) Call(ctx context.Context, input CallRequest) (CallOutcome, 
 	}
 	outputRef := inlineOutputReference(response.Header.Get("Content-Type"), body)
 	if status >= 200 && status < 300 {
-		if !validJSONObject(body) {
+		validResponse := validJSONObject(body)
+		if mode == "http_json" {
+			_, parseErr := quickagent.ParseResponse(body)
+			validResponse = parseErr == nil
+		}
+		if !validResponse {
 			return failedOutcome(latency, status, string(protocol.ErrCodeAgentInternalError), outputRef, false, int64(len(body))), nil
 		}
 		return CallOutcome{

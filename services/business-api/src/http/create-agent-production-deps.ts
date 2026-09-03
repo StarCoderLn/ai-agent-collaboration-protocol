@@ -27,7 +27,7 @@ import type { CreateAgentHttpDeps } from "./create-agent-handler";
 const KMS_KEY_ID_ENV_VAR = "AGENT_CREDENTIALS_KMS_KEY_ID";
 
 /** 用事务内 `client` 构造一次性的、事务边界内的 `CreateAgentDeps`。 */
-function buildTransactionalDeps(client: PoolClientLike, encryptor: EnvelopeEncryptor): CreateAgentDeps {
+function buildTransactionalDeps(client: PoolClientLike, encryptor: CreateAgentDeps["encryptor"]): CreateAgentDeps {
   return {
     repository: new PgAgentRepository(client),
     encryptor,
@@ -43,7 +43,15 @@ function buildTransactionalDeps(client: PoolClientLike, encryptor: EnvelopeEncry
  */
 export function createProductionCreateAgentDeps(): Pick<CreateAgentHttpDeps, "runInTransaction" | "allowedOrigin"> {
   const pool: PoolLike = getSharedPgPool();
-  const encryptor = new EnvelopeEncryptor({ kmsKeyId: getRequiredEnv(KMS_KEY_ID_ENV_VAR) });
+  // 公开快速 HTTP Agent 不携带访问凭证，不应仅因为部署没有配置 KMS 就无法注册。
+  // 加密器延迟到首次真正加密时创建；带凭证的生产注册仍会严格要求 KMS Key ID。
+  let envelopeEncryptor: EnvelopeEncryptor | undefined;
+  const encryptor = {
+    encryptCredential(plaintextSecret: string) {
+      envelopeEncryptor ??= new EnvelopeEncryptor({ kmsKeyId: getRequiredEnv(KMS_KEY_ID_ENV_VAR) });
+      return envelopeEncryptor.encryptCredential(plaintextSecret);
+    },
+  };
   const config = loadSiweConfigFromEnv();
 
   return {

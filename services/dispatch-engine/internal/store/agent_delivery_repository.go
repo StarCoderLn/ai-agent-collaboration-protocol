@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -26,90 +25,92 @@ func (r *AgentDeliveryRepository) LoadTarget(ctx context.Context, message dispat
 	if r.Pool == nil || r.Decryptor == nil || r.CallbackBaseURL == "" {
 		return delivery.Target{}, errors.New("agent delivery repository is not configured")
 	}
-	var assignmentStatus, attemptStatus, endpoint, encrypted string
-	var taskPayload json.RawMessage
+	var assignmentStatus, attemptStatus, endpoint, integrationMode, encrypted string
+	var storedQuickResult []byte
+	var quickResultDeliveredAt *time.Time
 	err := r.Pool.QueryRow(ctx, `
-		SELECT assignment.status, attempt.status, agent.service_endpoint,
-		       credential.encrypted_secret,
-		       jsonb_build_object(
-		         'schemaVersion','dispatch.v1',
-		         'requestId',attempt.protocol_request_id,
-		         'assignmentId',assignment.id,
-		         'workflow',CASE WHEN node.id IS NULL THEN NULL ELSE jsonb_build_object(
-		           'nodeId',node.id,'nodeKey',node.node_key,'kind',node.kind,'title',node.title,
-		           'inputContract',node.input_contract,'outputContract',node.output_contract,
-		           'budgetCapMinor',node.budget_cap_minor::text,
-		           'agreedAmountMinor',assignment.agreed_amount_minor::text
-		         ) END,
-		         'upstreamArtifacts',CASE WHEN node.id IS NULL THEN '[]'::jsonb ELSE COALESCE((
-		           WITH RECURSIVE ancestors(node_id) AS (
-		             SELECT edge.source_node_id FROM task_workflow_edges edge
-		              WHERE edge.target_node_id=node.id
-		             UNION
-		             SELECT edge.source_node_id FROM task_workflow_edges edge
-		              JOIN ancestors prior ON prior.node_id=edge.target_node_id
-		           )
-		           SELECT jsonb_agg(jsonb_build_object(
-		             'workflowNodeId',upstream.id,'nodeKey',upstream.node_key,
-		             'outputContract',upstream.output_contract,'resultId',result.id,
-		             'artifactKind',result.artifact_kind,'mimeType',result.mime_type,
-		             'bodyOrFileRef',result.body_or_file_ref,'generatedAt',result.generated_at
-		           ) ORDER BY upstream.position_index,upstream.id)
-		             FROM ancestors
-		             JOIN task_workflow_nodes upstream ON upstream.id=ancestors.node_id
-		             JOIN LATERAL (
-		               SELECT current_result.* FROM workflow_node_results current_result
-		                WHERE current_result.workflow_node_id=upstream.id AND current_result.is_latest
-		                ORDER BY current_result.submitted_at DESC,current_result.id DESC LIMIT 1
-		             ) result ON TRUE
-		            WHERE upstream.status='accepted'
-		         ),'[]'::jsonb) END,
-		         'task',jsonb_build_object(
-		           'id',task.id,'title',task.title,'description',task.description,
-		           'acceptanceCriteria',task.acceptance_criteria,
-		           'deliverableFormat',task.deliverable_format,'tags',task.tag_names,
-		           'pricingType',CASE WHEN node.id IS NULL THEN task.pricing_type ELSE 'fixed' END,
-		           'budgetMinMinor',COALESCE(node.budget_cap_minor,task.budget_min_minor)::text,
-		           'budgetMaxMinor',COALESCE(node.budget_cap_minor,task.budget_max_minor)::text,'currency',task.currency,
-		           'deadline',task.deadline,'requiredCapability',task.required_capability,
-		           'attachments',task.attachments
-		         ),
-		         'callbacks',jsonb_build_object(
-		           'ack',$2 || '/agent-callback/assignments/' || assignment.id || '/ack',
-		           'status',CASE WHEN node.id IS NULL
-		             THEN $2 || '/agent-callback/tasks/' || task.id || '/status'
-		             ELSE $2 || '/agent-callback/tasks/' || task.id || '/workflow-nodes/' || node.id || '/status' END,
-		           'results',CASE WHEN node.id IS NULL
-		             THEN $2 || '/agent-callback/tasks/' || task.id || '/results'
-		             ELSE $2 || '/agent-callback/tasks/' || task.id || '/workflow-nodes/' || node.id || '/results' END
-		         )
-		       )
+		SELECT assignment.status,attempt.status,agent.service_endpoint,agent.integration_mode,
+		       COALESCE(credential.encrypted_secret,''),attempt.quick_result_payload,
+		       attempt.quick_result_delivered_at
 		  FROM dispatch_attempts attempt
 		  JOIN task_assignments assignment ON assignment.id=attempt.assignment_id
-		  JOIN tasks task ON task.id=assignment.task_id
-		  LEFT JOIN task_workflow_nodes node ON node.id=assignment.workflow_node_id
 		  JOIN agents agent ON agent.id=assignment.agent_id
-		  JOIN agent_credentials credential ON credential.agent_id=agent.id
-		 WHERE attempt.id=$1 AND assignment.id=$3 AND assignment.task_id=$4
-		   AND assignment.agent_id=$5 AND attempt.protocol_request_id=$6
-		   AND COALESCE(assignment.workflow_node_id::text,'')=$7`,
-		message.AttemptID, r.CallbackBaseURL, message.AssignmentID, message.TaskID,
+		  LEFT JOIN agent_credentials credential ON credential.agent_id=agent.id
+		 WHERE attempt.id=$1 AND assignment.id=$2 AND assignment.task_id=$3
+		   AND assignment.agent_id=$4 AND attempt.protocol_request_id=$5
+		   AND COALESCE(assignment.workflow_node_id::text,'')=$6`,
+		message.AttemptID, message.AssignmentID, message.TaskID,
 		message.AgentID, message.ProtocolRequestID, message.WorkflowNodeID,
-	).Scan(&assignmentStatus, &attemptStatus, &endpoint, &encrypted, &taskPayload)
+	).Scan(&assignmentStatus, &attemptStatus, &endpoint, &integrationMode, &encrypted, &storedQuickResult, &quickResultDeliveredAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return delivery.Target{}, &delivery.CallError{Code: "DISPATCH_TARGET_NOT_FOUND", Retryable: false}
 	}
 	if err != nil {
 		return delivery.Target{}, err
 	}
-	if assignmentStatus != "pending_ack" || attemptStatus == "accepted" || attemptStatus == "rejected" || attemptStatus == "dead_letter" {
+	quickResultPending := len(storedQuickResult) > 0 && quickResultDeliveredAt == nil
+	if !quickResultPending && (assignmentStatus != "pending_ack" || attemptStatus == "accepted" || attemptStatus == "rejected" || attemptStatus == "dead_letter") {
 		return delivery.Target{}, delivery.ErrDeliveryAlreadyFinal
 	}
-	secret, err := r.Decryptor.DecryptCredential(ctx, encrypted)
-	if err != nil {
-		return delivery.Target{}, &delivery.CallError{Code: "AGENT_CREDENTIAL_UNAVAILABLE", Retryable: true}
+	var taskPayload []byte
+	if !quickResultPending {
+		taskPayload, err = loadFormalDispatchPayload(
+			ctx, r.Pool, r.CallbackBaseURL, message.AssignmentID, message.TaskID,
+			message.AgentID, message.WorkflowNodeID, message.ProtocolRequestID, false,
+		)
+		if err != nil {
+			return delivery.Target{}, err
+		}
 	}
-	return delivery.Target{Endpoint: endpoint, Secret: secret, Body: taskPayload}, nil
+	secret := ""
+	if encrypted != "" {
+		secret, err = r.Decryptor.DecryptCredential(ctx, encrypted)
+		if err != nil {
+			return delivery.Target{}, &delivery.CallError{Code: "AGENT_CREDENTIAL_UNAVAILABLE", Retryable: true}
+		}
+	} else if integrationMode == "aicp_hmac" {
+		return delivery.Target{}, &delivery.CallError{Code: "AGENT_CREDENTIAL_UNAVAILABLE", Retryable: false}
+	}
+	return delivery.Target{
+		Endpoint: endpoint, Secret: secret, Body: taskPayload, IntegrationMode: integrationMode,
+		StoredQuickResult: append([]byte(nil), storedQuickResult...),
+	}, nil
+}
+
+// StoreQuickResult 在确认接单之前保存同步交付。同一 attempt 只允许写入一次；
+// 重试会读取这份快照，绝不再请求外部 Agent。
+func (r *AgentDeliveryRepository) StoreQuickResult(ctx context.Context, attemptID string, payload []byte) error {
+	if r.Pool == nil || attemptID == "" || len(payload) == 0 {
+		return errors.New("quick result persistence is not configured")
+	}
+	command, err := r.Pool.Exec(ctx, `
+		UPDATE dispatch_attempts
+		   SET quick_result_payload=$2::jsonb,updated_at=now()
+		 WHERE id=$1 AND quick_result_payload IS NULL`, attemptID, payload)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return errors.New("quick result was already persisted")
+	}
+	return nil
+}
+
+func (r *AgentDeliveryRepository) MarkQuickResultDelivered(ctx context.Context, attemptID string, deliveredAt time.Time) error {
+	if r.Pool == nil || attemptID == "" || deliveredAt.IsZero() {
+		return errors.New("quick result delivery acknowledgement is not configured")
+	}
+	command, err := r.Pool.Exec(ctx, `
+		UPDATE dispatch_attempts
+		   SET quick_result_delivered_at=$2,updated_at=$2
+		 WHERE id=$1 AND quick_result_payload IS NOT NULL AND quick_result_delivered_at IS NULL`, attemptID, deliveredAt)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return delivery.ErrDeliveryAlreadyFinal
+	}
+	return nil
 }
 
 func (r *AgentDeliveryRepository) RecordFailure(

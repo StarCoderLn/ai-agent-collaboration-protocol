@@ -4,7 +4,7 @@ import { GenerateDataKeyCommand, type GenerateDataKeyCommandOutput } from "@aws-
 
 import { EnvelopeEncryptor, type KmsLike } from "../crypto/envelope-encryption.js";
 import { Idempotency, type IdempotencyStore, type ResponseSnapshot } from "../idempotency/idempotency-store.js";
-import { createAgent, ApiError, type CreateAgentDeps } from "./create-agent.js";
+import { createAgent, type CreateAgentDeps } from "./create-agent.js";
 import type { AgentRepository as CreateAgentRepository, CreatedAgent } from "./agent-repository.js";
 import { patchAgent } from "./patch-agent.js";
 import { replaceAgentCredentials, type AgentCredentialStore, type CredentialEncryptor } from "./credentials.js";
@@ -134,7 +134,7 @@ function validCreateBody(overrides?: Partial<Record<string, unknown>>): Record<s
   };
 }
 
-describe("Agent 注册集成流程：必填校验（含邮箱）", () => {
+describe("Agent 注册集成流程：必填与兼容字段校验", () => {
   const REQUIRED_FIELD_CASES: Array<{ field: string; overrides: Record<string, unknown> }> = [
     { field: "name", overrides: { name: "" } },
     { field: "categoryId", overrides: { categoryId: "not-a-uuid" } },
@@ -166,23 +166,15 @@ describe("Agent 注册集成流程：必填校验（含邮箱）", () => {
     });
   }
 
-  it("rejects creation when email is entirely absent from the request body", async () => {
+  it("accepts creation when the legacy email field is entirely absent", async () => {
     const deps = makeCreateDeps();
     const body = validCreateBody();
     delete (body as Record<string, unknown>).email;
 
-    let caught: unknown;
-    try {
-      await createAgent(body, "idem-key-2", WALLET_ADDRESS, deps);
-    } catch (err) {
-      caught = err;
-    }
+    const result = await createAgent(body, "idem-key-2", WALLET_ADDRESS, deps);
 
-    expect(caught).toBeInstanceOf(ApiError);
-    const apiError = caught as ApiError;
-    expect(apiError.httpStatus).toBe(422);
-    expect(apiError.body.fields?.some((f) => f.field === "email")).toBe(true);
-    expect((deps.repository as InMemoryCreateAgentRepository).rows).toHaveLength(0);
+    expect(result.statusCode).toBe(201);
+    expect((deps.repository as InMemoryCreateAgentRepository).rows).toHaveLength(1);
   });
 
   it("rejects creation when tags is entirely absent from the request body", async () => {

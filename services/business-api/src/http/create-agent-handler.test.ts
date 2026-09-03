@@ -27,16 +27,18 @@ function validBody(overrides?: Partial<Record<string, unknown>>): Record<string,
 
 function makeDeps(actorId: string): CreateAgentHttpDeps & {
   createAgentWithCredential: ReturnType<typeof vi.fn>;
+  encryptCredential: ReturnType<typeof vi.fn>;
 } {
   const createAgentWithCredential = vi.fn(
-    async (_input: CreateAgentInput, _encryptedSecret: string): Promise<CreatedAgent> => ({
+    async (_input: CreateAgentInput, _encryptedSecret: string | null): Promise<CreatedAgent> => ({
       agentId: "agent-1",
       status: "pending_review",
     }),
   );
   const repository: AgentRepository = { createAgentWithCredential };
 
-  const encryptor = { encryptCredential: vi.fn(async (plaintext: string) => ({ encryptedSecret: `enc(${plaintext})` })) };
+  const encryptCredential = vi.fn(async (plaintext: string) => ({ encryptedSecret: `enc(${plaintext})` }));
+  const encryptor = { encryptCredential };
 
   const store: IdempotencyStore = {
     reserve: vi.fn(async () => ({ inserted: true, committed: false, snapshot: null })),
@@ -54,6 +56,7 @@ function makeDeps(actorId: string): CreateAgentHttpDeps & {
     runInTransaction: (<T,>(fn: (deps: typeof txDeps) => Promise<T>) => fn(txDeps)),
     allowedOrigin: "https://app.example.com",
     createAgentWithCredential,
+    encryptCredential,
   };
 }
 
@@ -79,6 +82,22 @@ describe("createAgentHttpHandler", () => {
     expect(deps.createAgentWithCredential).toHaveBeenCalledWith(
       expect.objectContaining({ walletAddress: WALLET_ADDRESS, payoutWalletAddress: OTHER_WALLET_ADDRESS }),
       expect.any(String),
+    );
+  });
+
+  it("公开快速 HTTP Agent 不调用 KMS 且以空凭证创建", async () => {
+    const deps = makeDeps(WALLET_ADDRESS);
+    const handler = createAgentHttpHandler(deps);
+    const input = validBody({ integrationMode: "http_json" });
+    delete input.credentialSecret;
+
+    const response = await handler(makeRequest(input));
+
+    expect(response.status).toBe(201);
+    expect(deps.encryptCredential).not.toHaveBeenCalled();
+    expect(deps.createAgentWithCredential).toHaveBeenCalledWith(
+      expect.objectContaining({ integrationMode: "http_json" }),
+      null,
     );
   });
 

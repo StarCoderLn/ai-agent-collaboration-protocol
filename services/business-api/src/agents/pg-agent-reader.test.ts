@@ -70,4 +70,30 @@ describe("PgAgentReader", () => {
 
     expect(agent).toBeNull();
   });
+
+  it("maps a newly registered Agent whose historical email column is NULL", async () => {
+    const row = {
+      id: AGENT_ID,
+      provider_wallet_address: "0x1234567890123456789012345678901234567890",
+      payout_wallet_address: "0x000000000000000000000000000000000000dEaD",
+      name: "No email Agent",
+      category_id: "22222222-2222-2222-2222-222222222222",
+      capability_desc: "does things",
+      tags: ["tag-a"],
+      pricing_type: "fixed",
+      price_amount: "1000000",
+      price_currency: "USDC",
+      service_endpoint: "https://agent.example.com",
+      email: null,
+      status: "pending_review" as const,
+      pause_reason: null,
+      created_at: new Date("2026-01-01T00:00:00Z"),
+      updated_at: new Date("2026-01-01T00:00:00Z"),
+    };
+    const { db } = makeFakeDb([row]);
+
+    const agent = await new PgAgentReader(db).findById(AGENT_ID);
+
+    expect(agent?.email).toBeNull();
+  });
 });

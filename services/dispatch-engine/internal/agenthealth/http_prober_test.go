@@ -29,7 +29,7 @@ func TestHTTPProberSignsHealthRequestAndClassifiesSuccess(t *testing.T) {
 	})}
 
 	observation := (&HTTPProber{Client: client}).Probe(
-		context.Background(), "agent-1", "https://agent.example/v1/tasks?ignored=true", "test-secret",
+		context.Background(), "agent-1", "https://agent.example/v1/tasks?ignored=true", "test-secret", "aicp_hmac",
 	)
 	if observation.Result != domain.ProbeSuccess || observation.ResultCode != "HEALTH_OK" {
 		t.Fatalf("unexpected success observation: %+v", observation)
@@ -44,7 +44,7 @@ func TestHTTPProberPreservesProtocolErrorCategory(t *testing.T) {
 		), nil
 	})}
 
-	observation := (&HTTPProber{Client: client}).Probe(context.Background(), "agent-1", "https://agent.example", "test-secret")
+	observation := (&HTTPProber{Client: client}).Probe(context.Background(), "agent-1", "https://agent.example", "test-secret", "aicp_hmac")
 	if observation.Result != domain.ProbeAuthFailure || observation.ResultCode != string(protocol.ErrCodeAuthExpiredTimestamp) {
 		t.Fatalf("unexpected auth observation: %+v", observation)
 	}
@@ -55,9 +55,25 @@ func TestHTTPProberClassifiesTransportTimeout(t *testing.T) {
 		return nil, errors.New("dial timeout")
 	})}
 
-	observation := (&HTTPProber{Client: client}).Probe(context.Background(), "agent-1", "https://agent.example", "test-secret")
+	observation := (&HTTPProber{Client: client}).Probe(context.Background(), "agent-1", "https://agent.example", "test-secret", "aicp_hmac")
 	if observation.Result != domain.ProbeConnectionTimeout || observation.ResultCode != string(protocol.ErrCodeConnTimeout) {
 		t.Fatalf("unexpected timeout observation: %+v", observation)
+	}
+}
+
+func TestHTTPProberChecksPublicQuickAgentWithoutProtocolSignature(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/healthz" || request.Header.Get(protocol.HeaderSignature) != "" || request.Header.Get("Authorization") != "" {
+			t.Fatalf("unexpected public quick health request: url=%s headers=%v", request.URL, request.Header)
+		}
+		return healthResponse(http.StatusOK, `{"status":"ok"}`), nil
+	})}
+
+	observation := (&HTTPProber{Client: client}).Probe(
+		context.Background(), "agent-1", "https://agent.example/run", "", "http_json",
+	)
+	if observation.Result != domain.ProbeSuccess || observation.ResultCode != "HEALTH_OK" {
+		t.Fatalf("unexpected quick health observation: %+v", observation)
 	}
 }
 

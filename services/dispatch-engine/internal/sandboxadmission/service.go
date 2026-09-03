@@ -34,6 +34,7 @@ type RoundPlan struct {
 	RoundID             string
 	TemplateID          string
 	Endpoint            string
+	IntegrationMode     string
 	EncryptedCredential string
 	TestInput           json.RawMessage
 }
@@ -79,13 +80,14 @@ type Claim struct {
 }
 
 type CallRequest struct {
-	AgentID        string
-	RoundID        string
-	RunNo          int
-	Endpoint       string
-	Secret         string
-	Body           []byte
-	IdempotencyKey string
+	AgentID         string
+	RoundID         string
+	RunNo           int
+	Endpoint        string
+	IntegrationMode string
+	Secret          string
+	Body            []byte
+	IdempotencyKey  string
 }
 
 type CallOutcome struct {
@@ -146,7 +148,8 @@ func (s *Service) RunSandboxTest(ctx context.Context, command Command) (Result, 
 	if err != nil {
 		return Result{}, err
 	}
-	if len(plan.TestInput) == 0 || plan.Endpoint == "" || plan.EncryptedCredential == "" {
+	if len(plan.TestInput) == 0 || plan.Endpoint == "" ||
+		(plan.IntegrationMode != "http_json" && plan.EncryptedCredential == "") {
 		return Result{}, errors.New("sandbox round target is incomplete")
 	}
 
@@ -161,7 +164,7 @@ func (s *Service) RunSandboxTest(ctx context.Context, command Command) (Result, 
 		if !claimed {
 			continue
 		}
-		if secret == "" {
+		if secret == "" && plan.EncryptedCredential != "" {
 			secret, err = s.Decryptor.DecryptCredential(ctx, plan.EncryptedCredential)
 			if err != nil || secret == "" {
 				_ = s.Repository.ReleaseRun(ctx, claim)
@@ -171,7 +174,8 @@ func (s *Service) RunSandboxTest(ctx context.Context, command Command) (Result, 
 		callsStarted++
 		outcome, callErr := s.Caller.Call(ctx, CallRequest{
 			AgentID: command.AgentID, RoundID: command.RoundID, RunNo: runNo,
-			Endpoint: plan.Endpoint, Secret: secret, Body: append([]byte(nil), plan.TestInput...),
+			Endpoint: plan.Endpoint, IntegrationMode: plan.IntegrationMode,
+			Secret: secret, Body: append([]byte(nil), plan.TestInput...),
 			IdempotencyKey: sandboxIdempotencyKey(command.RoundID, runNo),
 		})
 		if callErr != nil {

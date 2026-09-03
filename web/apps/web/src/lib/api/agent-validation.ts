@@ -19,7 +19,6 @@ import {
 	parseUsdcToMinor,
 } from "@/lib/platform/money";
 
-const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const SERVICE_ENDPOINT_PATTERN = /^https?:\/\//;
 const UUID_PATTERN =
 	/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -33,7 +32,6 @@ export interface AgentEditFormValues {
 	priceAmount: string;
 	priceCurrency: string;
 	serviceEndpoint: string;
-	email: string;
 }
 
 export type AgentEditFormErrors = Partial<
@@ -86,10 +84,6 @@ export function validateAgentEditForm(
 	if (!SERVICE_ENDPOINT_PATTERN.test(values.serviceEndpoint)) {
 		errors.serviceEndpoint = "服务地址必须是合法的 http(s) URL";
 	}
-	if (!EMAIL_PATTERN.test(values.email)) {
-		errors.email = "邮箱格式非法";
-	}
-
 	return errors;
 }
 

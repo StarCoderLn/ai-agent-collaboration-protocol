@@ -69,24 +69,15 @@ describe("AgentEditForm", () => {
 		);
 	});
 
-	it("提交非法邮箱格式时展示字段级错误，且不发起请求", async () => {
+	it("不再展示或编辑历史联系邮箱", () => {
 		render(<AgentEditForm agent={baseAgent} onSaved={vi.fn()} />);
-		fireEvent.change(screen.getByLabelText("邮箱"), {
-			target: { value: "not-an-email" },
-		});
-		fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 
-		expect(await screen.findByText("邮箱格式非法")).toBeInTheDocument();
-		const email = screen.getByLabelText("邮箱");
-		expect(email).toHaveAttribute("aria-invalid", "true");
-		expect(email).toHaveAttribute("aria-describedby", "email-error");
-		await waitFor(() => expect(email).toHaveFocus());
-		expect(fetch).not.toHaveBeenCalled();
+		expect(screen.queryByLabelText("邮箱")).not.toBeInTheDocument();
 	});
 
 	it("只提交实际变化的字段（PATCH body 不含未变化字段）", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
-			new Response(JSON.stringify({ ...baseAgent, email: "new@example.com" }), {
+			new Response(JSON.stringify({ ...baseAgent, name: "New Name" }), {
 				status: 200,
 				headers: { "content-type": "application/json" },
 			}),
@@ -94,8 +85,8 @@ describe("AgentEditForm", () => {
 		const onSaved = vi.fn();
 		render(<AgentEditForm agent={baseAgent} onSaved={onSaved} />);
 
-		fireEvent.change(screen.getByLabelText("邮箱"), {
-			target: { value: "new@example.com" },
+		fireEvent.change(screen.getByLabelText("名称"), {
+			target: { value: "New Name" },
 		});
 		fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 
@@ -104,7 +95,7 @@ describe("AgentEditForm", () => {
 			"https://business-api.test/api/agents/agent-123",
 			expect.objectContaining({
 				method: "PATCH",
-				body: JSON.stringify({ email: "new@example.com" }),
+				body: JSON.stringify({ name: "New Name" }),
 			}),
 		);
 	});
@@ -116,27 +107,27 @@ describe("AgentEditForm", () => {
 					error_code: "VALIDATION_FAILED",
 					message: "请求字段校验失败",
 					retryable: false,
-					fields: { email: "邮箱已被占用" },
+					fields: { serviceEndpoint: "服务地址不可访问" },
 				}),
 				{ status: 422, headers: { "content-type": "application/json" } },
 			),
 		);
 		render(<AgentEditForm agent={baseAgent} onSaved={vi.fn()} />);
 
-		fireEvent.change(screen.getByLabelText("邮箱"), {
-			target: { value: "new@example.com" },
+		fireEvent.change(screen.getByLabelText("服务地址"), {
+			target: { value: "https://new-agent.example.com/run" },
 		});
 		fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 
-		expect(await screen.findByText("邮箱已被占用")).toBeInTheDocument();
+		expect(await screen.findByText("服务地址不可访问")).toBeInTheDocument();
 	});
 
 	it("网络失败时展示可读的失败提示", async () => {
 		vi.mocked(fetch).mockRejectedValueOnce(new TypeError("network error"));
 		render(<AgentEditForm agent={baseAgent} onSaved={vi.fn()} />);
 
-		fireEvent.change(screen.getByLabelText("邮箱"), {
-			target: { value: "new@example.com" },
+		fireEvent.change(screen.getByLabelText("名称"), {
+			target: { value: "New Name" },
 		});
 		fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 

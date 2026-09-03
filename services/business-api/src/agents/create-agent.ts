@@ -91,10 +91,14 @@ export async function createAgent(
     throw idempotencyInProgressError();
   }
 
-  const encrypted = await deps.encryptor.encryptCredential(parsed.data.credentialSecret);
+  // 快速 HTTP 接入允许公开端点不配置 Bearer Token。只有用户确实提供凭证时才触发
+  // KMS，这也让本地无 KMS 的公开 Agent 注册保持可用，而不是制造无意义占位密钥。
+  const encrypted = parsed.data.credentialSecret === undefined
+    ? null
+    : await deps.encryptor.encryptCredential(parsed.data.credentialSecret);
   const created = await deps.repository.createAgentWithCredential(
     parsed.data,
-    encrypted.encryptedSecret,
+    encrypted?.encryptedSecret ?? null,
   );
 
   // 审计摘要显式只含 agentId/status，绝不包含 encryptedSecret 或其任何片段

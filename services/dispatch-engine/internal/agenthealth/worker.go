@@ -16,6 +16,7 @@ type Claim struct {
 	AgentID             string
 	LockToken           string
 	Endpoint            string
+	IntegrationMode     string
 	EncryptedCredential string
 }
 
@@ -35,7 +36,7 @@ type CredentialDecryptor interface {
 }
 
 type Prober interface {
-	Probe(ctx context.Context, agentID, endpoint, secret string) Observation
+	Probe(ctx context.Context, agentID, endpoint, secret, integrationMode string) Observation
 }
 
 type RunResult struct {
@@ -73,12 +74,19 @@ func (w *Worker) RunOnce(ctx context.Context, limit int) (RunResult, error) {
 	result := RunResult{Claimed: len(claims)}
 	var combined error
 	for _, claim := range claims {
-		secret, decryptErr := w.Decryptor.DecryptCredential(ctx, claim.EncryptedCredential)
-		if decryptErr != nil {
-			combined = errors.Join(combined, decryptErr, w.Repository.Release(ctx, claim, now.Add(time.Minute)))
+		secret := ""
+		if claim.EncryptedCredential != "" {
+			var decryptErr error
+			secret, decryptErr = w.Decryptor.DecryptCredential(ctx, claim.EncryptedCredential)
+			if decryptErr != nil {
+				combined = errors.Join(combined, decryptErr, w.Repository.Release(ctx, claim, now.Add(time.Minute)))
+				continue
+			}
+		} else if claim.IntegrationMode != "http_json" {
+			combined = errors.Join(combined, errors.New("signed Agent health credential is unavailable"), w.Repository.Release(ctx, claim, now.Add(time.Minute)))
 			continue
 		}
-		observation := w.Prober.Probe(ctx, claim.AgentID, claim.Endpoint, secret)
+		observation := w.Prober.Probe(ctx, claim.AgentID, claim.Endpoint, secret, claim.IntegrationMode)
 		// 明文 secret 只活到单次网络调用结束，不进入结果、错误或日志。
 		secret = ""
 		if ctx.Err() != nil {

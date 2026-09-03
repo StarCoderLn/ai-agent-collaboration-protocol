@@ -27,7 +27,7 @@ interface AgentRow {
   price_amount: string;
   price_currency: string;
   service_endpoint: string;
-  email: string;
+  email: string | null;
   status: Agent["status"];
   pause_reason: Agent["pauseReason"];
   created_at: Date;

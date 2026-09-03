@@ -2,6 +2,7 @@ package sandboxadmission
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -63,6 +64,50 @@ func TestHTTPCallerClassifiesProtocolErrorAndMalformedSuccess(t *testing.T) {
 				t.Fatalf("unexpected classification: outcome=%+v err=%v", outcome, err)
 			}
 		})
+	}
+}
+
+func TestHTTPCallerUsesFormalQuickAgentShapeDuringSandboxAdmission(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("Authorization") != "Bearer provider-token" || request.Header.Get(protocol.HeaderSignature) != "" {
+			t.Fatalf("quick sandbox authentication mismatch: %v", request.Header)
+		}
+		var body struct {
+			Task struct {
+				Request string `json:"request"`
+			} `json:"task"`
+			UpstreamArtifacts []any `json:"upstreamArtifacts"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body.Task.Request != "test" || body.UpstreamArtifacts == nil {
+			t.Fatalf("quick sandbox body does not match formal dispatch shape: body=%+v err=%v", body, err)
+		}
+		return response(request, 200, `{
+			"status":"completed",
+			"artifacts":[{"type":"document","summary":"测试交付","content":"done"}]
+		}`), nil
+	})}
+	request := baseCallRequest()
+	request.IntegrationMode = "http_json"
+	request.Secret = "provider-token"
+
+	caller := HTTPCaller{Client: client}
+	outcome, err := caller.Call(context.Background(), request)
+	if err != nil || !outcome.Succeeded || !outcome.Metrics.ProtocolCompliant {
+		t.Fatalf("valid quick sandbox call failed: outcome=%+v err=%v", outcome, err)
+	}
+}
+
+func TestHTTPCallerRejectsGenericJSONFromQuickAgent(t *testing.T) {
+	caller := HTTPCaller{Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return response(request, 200, `{"result":{"ok":true}}`), nil
+	})}}
+	request := baseCallRequest()
+	request.IntegrationMode = "http_json"
+	request.Secret = ""
+
+	outcome, err := caller.Call(context.Background(), request)
+	if err != nil || outcome.Succeeded || outcome.Metrics.ProtocolCompliant {
+		t.Fatalf("non-contract quick result must fail admission: outcome=%+v err=%v", outcome, err)
 	}
 }
 

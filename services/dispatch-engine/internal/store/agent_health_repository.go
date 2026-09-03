@@ -67,6 +67,7 @@ func (r *AgentHealthRepository) ClaimDue(
 		  RETURNING schedule.agent_id,schedule.lock_token
 		)
 		SELECT claimed.agent_id::text,claimed.lock_token::text,agent.service_endpoint,
+		       agent.integration_mode,
 		       COALESCE(credential.encrypted_secret,'')
 		  FROM claimed JOIN agents agent ON agent.id=claimed.agent_id
 		  LEFT JOIN agent_credentials credential ON credential.agent_id=claimed.agent_id
@@ -78,7 +79,7 @@ func (r *AgentHealthRepository) ClaimDue(
 	claims := make([]agenthealth.Claim, 0, limit)
 	for rows.Next() {
 		var claim agenthealth.Claim
-		if err = rows.Scan(&claim.AgentID, &claim.LockToken, &claim.Endpoint, &claim.EncryptedCredential); err != nil {
+		if err = rows.Scan(&claim.AgentID, &claim.LockToken, &claim.Endpoint, &claim.IntegrationMode, &claim.EncryptedCredential); err != nil {
 			return nil, err
 		}
 		claims = append(claims, claim)

@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/webhook"
@@ -12,7 +14,10 @@ import (
 
 var ErrWebhookLeaseLost = errors.New("webhook delivery lease is no longer owned")
 
-type WebhookRepository struct{ Pool *pgxpool.Pool }
+type WebhookRepository struct {
+	Pool            *pgxpool.Pool
+	CallbackBaseURL string
+}
 
 func (r *WebhookRepository) ClaimDue(
 	ctx context.Context,
@@ -54,7 +59,6 @@ func (r *WebhookRepository) ClaimDue(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	deliveries := make([]webhook.Delivery, 0, limit)
 	for rows.Next() {
 		var delivery webhook.Delivery
@@ -64,11 +68,55 @@ func (r *WebhookRepository) ClaimDue(
 			&delivery.EventType, &delivery.StatusVersion, &delivery.Payload,
 			&delivery.EventCreatedAt, &delivery.EncryptedCredential,
 		); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		deliveries = append(deliveries, delivery)
 	}
-	return deliveries, rows.Err()
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	// 先释放 ClaimDue 查询占用的连接，再重建返工正文。否则在 MaxConns=1 的测试或
+	// 小型部署中，循环内再次向同一连接池查询会永久等待自己释放连接。
+	for index := range deliveries {
+		if deliveries[index].EventType != "task.rework_requested" {
+			continue
+		}
+		deliveries[index].Payload, err = r.enrichReworkPayload(ctx, deliveries[index])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return deliveries, nil
+}
+
+// enrichReworkPayload 在投递时从数据库重建完整 dispatch.v1。task_events 仍只保存返工
+// 业务事实，不复制可能很大的任务正文和上游制品；Webhook 每次重试则得到相同的权威
+// 输入。这样 Product Workflow Agent 重启后无需保留首次派发的进程内 Map。
+func (r *WebhookRepository) enrichReworkPayload(
+	ctx context.Context,
+	delivery webhook.Delivery,
+) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(delivery.Payload, &fields); err != nil {
+		return nil, fmt.Errorf("decode rework event payload: %w", err)
+	}
+	var workflowNodeID, requestID string
+	if err := json.Unmarshal(fields["workflowNodeId"], &workflowNodeID); err != nil || workflowNodeID == "" {
+		return nil, errors.New("rework event is missing workflowNodeId")
+	}
+	if err := json.Unmarshal(fields["requestId"], &requestID); err != nil || requestID == "" {
+		return nil, errors.New("rework event is missing requestId")
+	}
+	dispatchPayload, err := loadReworkFormalDispatchPayload(
+		ctx, r.Pool, r.CallbackBaseURL, delivery.TaskID, delivery.AgentID, workflowNodeID, requestID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("rebuild rework dispatch: %w", err)
+	}
+	fields["dispatch"] = dispatchPayload
+	return json.Marshal(fields)
 }
 
 func (r *WebhookRepository) MarkDelivered(

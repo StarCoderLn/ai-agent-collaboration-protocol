@@ -50,7 +50,7 @@ describe("AgentConfigEditView", () => {
 		expect(
 			await screen.findByRole("heading", { name: "编辑 Agent 配置" }),
 		).toBeInTheDocument();
-		expect(screen.getByLabelText("邮箱")).toHaveValue("provider@example.com");
+		expect(screen.queryByLabelText("邮箱")).not.toBeInTheDocument();
 		expect(screen.getByLabelText("新认证配置")).toBeInTheDocument();
 	});
 

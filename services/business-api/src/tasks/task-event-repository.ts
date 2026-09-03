@@ -81,8 +81,50 @@ export async function emitTaskEvent(db: QueryExecutor, event: TaskEventToEmit): 
        FROM inserted_event
        JOIN recipient ON TRUE
        JOIN agents agent ON agent.id=recipient.agent_id
+                         AND agent.integration_mode='aicp_hmac'
      ON CONFLICT (idempotency_key) DO NOTHING`,
     [event.taskId, event.statusVersion.toString(), event.eventType, JSON.stringify(event.payload), event.createdAt],
+  );
+}
+
+/**
+ * 向一个已经确定的 Agent 写入任务事件与 Webhook outbox。
+ *
+ * 正式多 Agent 工作流不能沿用“任务最近一次 assignment”推断收件人：返工的可能是
+ * 任意历史节点，而任务最近分配的往往是另一个下游 Agent。调用方必须先在事务内锁定
+ * 工作流节点并解析其当前 assignment，再把明确的 Agent ID 传入这里。事件与投递仍在
+ * 同一事务落库，因此接口返回成功就意味着返工通知已经具备可靠重试依据。
+ */
+export async function emitTaskEventToAgent(
+  db: QueryExecutor,
+  event: TaskEventToEmit,
+  agentId: string,
+): Promise<void> {
+  await db.query(
+    `WITH inserted_event AS (
+       INSERT INTO task_events(task_id,status_version,event_type,payload,created_at)
+       VALUES ($1,$2,$3,$4::jsonb,$5)
+       RETURNING id
+     )
+     INSERT INTO webhook_deliveries(
+       task_event_id,agent_id,endpoint,idempotency_key,status,next_attempt_at
+     )
+     SELECT inserted_event.id,agent.id,
+            regexp_replace(agent.service_endpoint, '/+$', '') || '/webhook',
+            'webhook:' || $1::text || ':' || inserted_event.id::text || '-' || agent.id::text,
+            'pending',$5
+       FROM inserted_event
+       JOIN agents agent ON agent.id=$6
+                         AND agent.integration_mode='aicp_hmac'
+     ON CONFLICT (idempotency_key) DO NOTHING`,
+    [
+      event.taskId,
+      event.statusVersion.toString(),
+      event.eventType,
+      JSON.stringify(event.payload),
+      event.createdAt,
+      agentId,
+    ],
   );
 }
 
@@ -90,7 +132,10 @@ export class PgTaskEventReader {
   constructor(private readonly db: QueryExecutor) {}
 
   async canRead(taskId: string, actorId: string): Promise<boolean> {
-    const result = await this.db.query("SELECT 1 FROM tasks WHERE id=$1 AND lower(publisher_id)=lower($2)", [taskId, actorId]);
+    const result = await this.db.query(
+      "SELECT 1 FROM tasks WHERE id=$1 AND lower(publisher_id)=lower($2) AND archived_at IS NULL",
+      [taskId, actorId],
+    );
     return result.rows[0] !== undefined;
   }
 

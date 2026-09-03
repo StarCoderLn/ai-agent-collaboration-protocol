@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/delivery"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/dispatch"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/domain"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matching"
@@ -19,6 +21,7 @@ const (
 	dispatchTaskID   = "81000000-0000-4000-8000-000000000001"
 	dispatchAgentAID = "81000000-0000-4000-8000-000000000002"
 	dispatchAgentBID = "81000000-0000-4000-8000-000000000003"
+	dispatchCategory = "81000000-0000-4000-8000-000000000004"
 )
 
 type concurrentQueue struct {
@@ -286,10 +289,96 @@ func TestAssignmentRepositoryPostgresConcurrencyIdempotencyAndRecovery(t *testin
 	}
 }
 
+func TestAgentDeliveryRepositoryPersistsAndRecoversQuickHTTPResult(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	cleanupDispatchFixtures(t, ctx, pool)
+	t.Cleanup(func() { cleanupDispatchFixtures(t, ctx, pool) })
+	seedDispatchFixtures(t, ctx, pool)
+
+	// 快速 HTTP Agent 可以是公开端点：持久化模式是 http_json，凭证行缺失时仓储
+	// 必须返回空 secret，而不是把公开 Agent 误判为配置损坏。
+	if _, err = pool.Exec(ctx, `UPDATE agents SET integration_mode='http_json' WHERE id=$1`, dispatchAgentAID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `DELETE FROM agent_credentials WHERE agent_id=$1`, dispatchAgentAID); err != nil {
+		t.Fatal(err)
+	}
+	matcher := matching.Service{Repository: &MatchingRepository{Pool: pool}, Now: time.Now}
+	record, err := matcher.RunMatching(ctx, dispatchTaskID)
+	if err != nil || len(record.Candidates) != 2 {
+		t.Fatalf("prepare quick candidate: record=%+v err=%v", record, err)
+	}
+	dispatcher := dispatch.Service{
+		Repository: &AssignmentRepository{Pool: pool}, Queue: &concurrentQueue{}, Now: time.Now,
+	}
+	locked, err := dispatcher.ConfirmCandidate(ctx, dispatch.LockCommand{
+		TaskID: dispatchTaskID, AgentID: dispatchAgentAID, ActorID: "publisher-dispatch",
+		IdempotencyKey: "dispatch:quick-result",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &AgentDeliveryRepository{
+		Pool: pool, Decryptor: integrationDecryptor{}, CallbackBaseURL: "http://dispatch.local",
+	}
+	message := dispatch.DispatchMessage{
+		AssignmentID: locked.Assignment.ID, TaskID: dispatchTaskID, AgentID: dispatchAgentAID,
+		AttemptID: locked.Attempt.ID, ProtocolRequestID: locked.Attempt.ProtocolRequestID,
+	}
+	target, err := repository.LoadTarget(ctx, message)
+	if err != nil || target.IntegrationMode != "http_json" || target.Secret != "" || len(target.Body) == 0 {
+		t.Fatalf("quick HTTP target mismatch: target=%+v err=%v", target, err)
+	}
+
+	quickResult := []byte(`{"agentId":"81000000-0000-4000-8000-000000000002","assignmentId":"` + locked.Assignment.ID + `","results":[{"kind":"inline","summary":"result","mimeType":"text/plain","generatedAt":"2026-09-03T00:00:00Z","content":"done"}]}`)
+	if err = repository.StoreQuickResult(ctx, locked.Attempt.ID, quickResult); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟“结果已保存、接单已确认，但 Business API 结果转交尚未成功”的崩溃窗口。
+	// LoadTarget 必须绕过 assignment/attempt 终态并取回快照，而且不再重建派发正文。
+	if _, err = pool.Exec(ctx, `UPDATE task_assignments SET status='accepted' WHERE id=$1`, locked.Assignment.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE dispatch_attempts SET status='accepted' WHERE id=$1`, locked.Attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := repository.LoadTarget(ctx, message)
+	var expectedResult, recoveredResult any
+	expectedJSONErr := json.Unmarshal(quickResult, &expectedResult)
+	recoveredJSONErr := json.Unmarshal(recovered.StoredQuickResult, &recoveredResult)
+	if err != nil || expectedJSONErr != nil || recoveredJSONErr != nil ||
+		!reflect.DeepEqual(recoveredResult, expectedResult) || len(recovered.Body) != 0 {
+		t.Fatalf("persisted quick result was not recoverable: target=%+v err=%v", recovered, err)
+	}
+	if err = repository.MarkQuickResultDelivered(ctx, locked.Attempt.ID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repository.LoadTarget(ctx, message); !errors.Is(err, delivery.ErrDeliveryAlreadyFinal) {
+		t.Fatalf("delivered quick result must become final: %v", err)
+	}
+}
+
 func seedDispatchFixtures(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	deadline := time.Now().UTC().Add(2 * time.Hour)
+	// 专用分类让集成测试不受开发数据库里其它 active Agent 数量影响；仅使用独特标签
+	// 仍不够，因为匹配规则会保留同分类但标签未命中的低分候选。
 	_, err := pool.Exec(ctx, `
+		INSERT INTO categories(id,name,slug,version)
+		VALUES ($1,'派发集成测试','dispatch-integration-fixture',1)`, dispatchCategory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
 		INSERT INTO tasks (
 		 id, publisher_id, title, description, acceptance_criteria, deliverable_format,
 		 category_id, category_version, tag_names, pricing_type, budget_min_minor,
@@ -297,10 +386,10 @@ func seedDispatchFixtures(t *testing.T, ctx context.Context, pool *pgxpool.Pool)
 		 visibility, status, assignment_mode_config, acceptance_mode, acceptor_config
 		) VALUES (
 		 $1,'publisher-dispatch','并发候选确认集成任务','验证多个候选同时确认时只有一个数据库锁成功。',
-		 '拒单和超时后都可以选择另一个候选。','Go 测试',$2,1,ARRAY['agent'],
+		 '拒单和超时后都可以选择另一个候选。','Go 测试',$2,1,ARRAY['dispatch-integration-fixture'],
 		 'fixed',8000000,8000000,'USDC',$3,'Go 并发与 PostgreSQL','[]'::jsonb,
 		 'public','matching','{"mode":"manual"}'::jsonb,'manual','{}'::jsonb
-		)`, dispatchTaskID, integrationCategory, deadline)
+		)`, dispatchTaskID, dispatchCategory, deadline)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,9 +402,9 @@ func seedDispatchFixtures(t *testing.T, ctx context.Context, pool *pgxpool.Pool)
 			 id, provider_wallet_address, payout_wallet_address, name, category_id, capability_desc, tags,
 			 pricing_type, price_amount, price_currency, service_endpoint, email, status,
 			 estimated_duration_seconds, response_minutes
-			) VALUES ($1,$2,$2,$3,$4,'Go API',ARRAY['agent'],'fixed',7000000,'USDC',
+			) VALUES ($1,$2,$2,$3,$4,'Go API',ARRAY['dispatch-integration-fixture'],'fixed',7000000,'USDC',
 			 'http://127.0.0.1:3999/agent','dispatch@example.com','active',1800,1)`,
-			values.id, values.wallet, values.name, integrationCategory)
+			values.id, values.wallet, values.name, dispatchCategory)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -337,6 +426,7 @@ func cleanupDispatchFixtures(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		`DELETE FROM job_distribution_records WHERE task_id='81000000-0000-4000-8000-000000000001'`,
 		`DELETE FROM agents WHERE id IN ('81000000-0000-4000-8000-000000000002','81000000-0000-4000-8000-000000000003')`,
 		`DELETE FROM tasks WHERE id='81000000-0000-4000-8000-000000000001'`,
+		`DELETE FROM categories WHERE id='81000000-0000-4000-8000-000000000004'`,
 	}
 	for _, statement := range statements {
 		if _, err := pool.Exec(ctx, statement); err != nil {

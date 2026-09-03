@@ -30,13 +30,14 @@ func (r *SandboxAdmissionRepository) PrepareRound(
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
-	var status, endpoint, encryptedCredential, categoryID string
+	var status, endpoint, integrationMode, encryptedCredential, categoryID string
 	err = transaction.QueryRow(ctx, `
-		SELECT agent.status,agent.service_endpoint,credential.encrypted_secret,agent.category_id::text
+		SELECT agent.status,agent.service_endpoint,agent.integration_mode,
+		       COALESCE(credential.encrypted_secret,''),agent.category_id::text
 		  FROM agents agent
-		  JOIN agent_credentials credential ON credential.agent_id=agent.id
+		  LEFT JOIN agent_credentials credential ON credential.agent_id=agent.id
 		 WHERE agent.id=$1
-		 FOR SHARE OF agent,credential`, agentID).Scan(&status, &endpoint, &encryptedCredential, &categoryID)
+		 FOR SHARE OF agent`, agentID).Scan(&status, &endpoint, &integrationMode, &encryptedCredential, &categoryID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sandboxadmission.RoundPlan{}, sandboxadmission.ErrAgentNotFound
 	}
@@ -93,7 +94,8 @@ func (r *SandboxAdmissionRepository) PrepareRound(
 	}
 	return sandboxadmission.RoundPlan{
 		AgentID: agentID, RoundID: roundID, TemplateID: templateID, Endpoint: endpoint,
-		EncryptedCredential: encryptedCredential, TestInput: append([]byte(nil), testInput...),
+		IntegrationMode: integrationMode, EncryptedCredential: encryptedCredential,
+		TestInput: append([]byte(nil), testInput...),
 	}, nil
 }
 

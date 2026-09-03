@@ -66,7 +66,7 @@ function mockTaxonomyResponses() {
 	vi.mocked(fetch).mockResolvedValueOnce(categoryResponse());
 }
 
-async function fillValidForm() {
+async function fillValidForm(options: { withCredential?: boolean } = {}) {
 	await screen.findByLabelText("Agent 名称");
 	fireEvent.change(screen.getByLabelText("Agent 名称"), {
 		target: { value: "Translator Agent" },
@@ -77,12 +77,11 @@ async function fillValidForm() {
 	fireEvent.change(screen.getByLabelText("Agent 执行地址"), {
 		target: { value: "https://agent.example.com/run" },
 	});
-	fireEvent.change(screen.getByLabelText("访问密钥"), {
-		target: { value: "secret" },
-	});
-	fireEvent.change(screen.getByLabelText("联系邮箱"), {
-		target: { value: "provider@example.com" },
-	});
+	if (options.withCredential !== false) {
+		fireEvent.change(screen.getByLabelText("访问密钥"), {
+			target: { value: "secret" },
+		});
+	}
 	fireEvent.change(screen.getByLabelText("单次服务报价（USDC）"), {
 		target: { value: "12" },
 	});
@@ -99,6 +98,20 @@ async function fillValidForm() {
 	const tagInput = screen.getByRole("textbox", { name: "技能标签" });
 	fireEvent.change(tagInput, { target: { value: "next.js" } });
 	fireEvent.keyDown(tagInput, { key: "Enter" });
+}
+
+function connectionSuccessResponse(latencyMs = 18) {
+	return new Response(JSON.stringify({ status: "connected", latencyMs }), {
+		status: 200,
+		headers: { "content-type": "application/json" },
+	});
+}
+
+async function verifyConnection() {
+	fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+	await waitFor(() =>
+		expect(screen.getByText(/连接成功，响应耗时/)).toBeInTheDocument(),
+	);
 }
 
 describe("AgentRegistrationForm", () => {
@@ -132,6 +145,30 @@ describe("AgentRegistrationForm", () => {
 		expect(nameInput).toHaveAttribute("aria-invalid", "true");
 		await waitFor(() => expect(nameInput).toHaveFocus());
 		expect(fetch).toHaveBeenCalledOnce();
+	});
+
+	it("测试空地址时只在输入框附近展示一次错误", async () => {
+		mockTaxonomyResponses();
+		render(<AgentRegistrationForm />);
+
+		fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+		const endpoint = screen.getByLabelText("Agent 执行地址");
+		expect(endpoint).toHaveAttribute("aria-invalid", "true");
+		expect(screen.getAllByText("Agent 执行地址不能为空")).toHaveLength(1);
+		expect(
+			screen.queryByText("填写完成后测试连接，确认平台可以访问你的 Agent。"),
+		).not.toBeInTheDocument();
+		await waitFor(() => expect(endpoint).toHaveFocus());
+	});
+
+	it("不收集联系邮箱，避免把未启用的通知能力变成上架门槛", async () => {
+		mockTaxonomyResponses();
+		render(<AgentRegistrationForm />);
+
+		await screen.findByLabelText("Agent 名称");
+		expect(screen.queryByLabelText("联系邮箱")).not.toBeInTheDocument();
+		expect(screen.queryByText(/异常通知/)).not.toBeInTheDocument();
 	});
 
 	it("未连接钱包时先触发连接，不提交空表单", async () => {
@@ -171,10 +208,36 @@ describe("AgentRegistrationForm", () => {
 			"placeholder",
 			"例如：25",
 		);
+		const sectionHeadings = screen
+			.getAllByRole("heading")
+			.map((heading) => heading.textContent);
+		expect(sectionHeadings.indexOf("交付案例")).toBeGreaterThan(
+			sectionHeadings.indexOf("报价与收款"),
+		);
+		const optionalBadges = screen.getAllByText("可选");
+		expect(optionalBadges).toHaveLength(2);
+		expect(new Set(optionalBadges.map((badge) => badge.className)).size).toBe(
+			1,
+		);
+		expect(screen.queryByText("完全可选，可跳过")).not.toBeInTheDocument();
 		expect(screen.queryByText("AICP v1")).not.toBeInTheDocument();
 		expect(
-			screen.getByText("提交后，平台将自动检查服务连通性和接入要求。"),
+			screen.getByText(
+				"连接测试通过后即可提交；平台上架后会持续记录服务运行状态。",
+			),
 		).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"公开 Agent 可以留空；填写后会加密保存，提交后不再显示明文。",
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByText("凭证安全")).not.toBeInTheDocument();
+		expect(screen.queryByText("上架前只需准备三样")).not.toBeInTheDocument();
+		expect(
+			screen.queryByText(
+				"你的报价是发布者看到的成交金额；平台服务费仅在成功结算时从 Agent 收入中扣除，最终明细会在验收前展示。",
+			),
+		).not.toBeInTheDocument();
 		fireEvent.change(screen.getByLabelText("收款钱包"), {
 			target: { value: PAYOUT_WALLET },
 		});
@@ -231,23 +294,29 @@ describe("AgentRegistrationForm", () => {
 		).toBeInTheDocument();
 	});
 
-	it("展示并复制可直接运行的 TypeScript AICP 接入模板", async () => {
+	it("只展示 HTTP 边界代码，不再要求提供者安装 SDK", async () => {
 		mockTaxonomyResponses();
 		render(<AgentRegistrationForm />);
 
 		fireEvent.click(screen.getByRole("button", { name: "查看接入示例" }));
 
 		const dialog = screen.getByRole("dialog", {
-			name: "可直接使用的 AICP 接入模板",
+			name: "快速接入你的 Agent",
 		});
-		expect(dialog).toHaveTextContent("createServer");
-		expect(dialog).toHaveTextContent("/healthz");
-		expect(dialog).toHaveTextContent("Idempotency-Key");
-		expect(dialog).toHaveTextContent("X-Signature");
+		expect(dialog).toHaveTextContent("HTTP API");
+		expect(dialog).toHaveTextContent('app.post("/run"');
+		expect(dialog).toHaveTextContent("myAgent.run");
+		expect(dialog).not.toHaveTextContent("@aicp/agent-sdk");
+		expect(dialog).not.toHaveTextContent("timingSafeEqual");
+		expect(dialog).not.toHaveTextContent("Idempotency-Key");
+		expect(dialog).not.toHaveTextContent("多实例");
+		expect(dialog).not.toHaveTextContent("共享持久化");
+		expect(screen.queryByRole("tab")).not.toBeInTheDocument();
 
-		fireEvent.click(screen.getByRole("button", { name: "复制完整代码" }));
+		fireEvent.click(screen.getByRole("button", { name: "复制接入模板" }));
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-		expect(writeText.mock.calls[0]?.[0]).toContain("createHmac");
+		expect(writeText.mock.calls[0]?.[0]).toContain('app.post("/run"');
+		expect(writeText.mock.calls[0]?.[0]).not.toContain("createHmac");
 		expect(
 			screen.getByRole("button", { name: "代码已复制" }),
 		).toBeInTheDocument();
@@ -255,6 +324,7 @@ describe("AgentRegistrationForm", () => {
 
 	it("提交成功后清空凭证并链接到正式编辑页", async () => {
 		mockTaxonomyResponses();
+		vi.mocked(fetch).mockResolvedValueOnce(connectionSuccessResponse());
 		vi.mocked(fetch).mockResolvedValueOnce(
 			new Response(
 				JSON.stringify({ agentId: "agent-123", status: "pending_review" }),
@@ -267,6 +337,7 @@ describe("AgentRegistrationForm", () => {
 
 		render(<AgentRegistrationForm />);
 		await fillValidForm();
+		await verifyConnection();
 		fireEvent.click(screen.getByRole("button", { name: "提交上架" }));
 
 		await waitFor(() =>
@@ -282,6 +353,11 @@ describe("AgentRegistrationForm", () => {
 			}),
 		);
 		const request = vi.mocked(fetch).mock.calls.at(-1)?.[1];
+		const requestBody = JSON.parse(String(request?.body)) as Record<
+			string,
+			unknown
+		>;
+		expect(requestBody).not.toHaveProperty("email");
 		expect(request?.body).toEqual(
 			expect.stringContaining('"amount":"12000000"'),
 		);
@@ -291,6 +367,9 @@ describe("AgentRegistrationForm", () => {
 		expect(request?.body).toEqual(
 			expect.stringContaining(`"payoutWalletAddress":"${PAYOUT_WALLET}"`),
 		);
+		// 无案例是正常的首次上架路径，请求不发送空数组，也不会让服务端误判为缺失资料。
+		expect(requestBody).not.toHaveProperty("portfolioCases");
+		expect(screen.queryByText("公开案例")).not.toBeInTheDocument();
 		expect(screen.getByRole("link", { name: "继续配置" })).toHaveAttribute(
 			"href",
 			"/agents/agent-123/edit",
@@ -298,8 +377,48 @@ describe("AgentRegistrationForm", () => {
 		expect(screen.getByLabelText("访问密钥")).toHaveValue("");
 	});
 
+	it("允许附带公开案例，并把案例作为 Agent 自提供证据提交", async () => {
+		mockTaxonomyResponses();
+		vi.mocked(fetch).mockResolvedValueOnce(connectionSuccessResponse());
+		vi.mocked(fetch).mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({ agentId: "agent-case", status: "pending_review" }),
+				{ status: 201, headers: { "content-type": "application/json" } },
+			),
+		);
+		render(<AgentRegistrationForm />);
+		await fillValidForm();
+		await verifyConnection();
+
+		fireEvent.click(screen.getByRole("button", { name: "添加案例" }));
+		fireEvent.change(screen.getByLabelText("案例标题"), {
+			target: { value: "电商营销首页" },
+		});
+		fireEvent.change(screen.getByLabelText("公开预览地址"), {
+			target: { value: "https://example.com/storefront" },
+		});
+		fireEvent.change(screen.getByLabelText("案例说明"), {
+			target: { value: "展示完整视觉设计与可访问页面。" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "提交上架" }));
+
+		await screen.findByRole("status");
+		const requestBody = String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body);
+		expect(JSON.parse(requestBody)).toMatchObject({
+			portfolioCases: [
+				{
+					title: "电商营销首页",
+					summary: "展示完整视觉设计与可访问页面。",
+					artifactKind: "website",
+					previewRef: "https://example.com/storefront",
+				},
+			],
+		});
+	});
+
 	it("将服务端嵌套报价错误映射到报价输入项", async () => {
 		mockTaxonomyResponses();
+		vi.mocked(fetch).mockResolvedValueOnce(connectionSuccessResponse());
 		vi.mocked(fetch).mockResolvedValueOnce(
 			new Response(
 				JSON.stringify({
@@ -314,8 +433,72 @@ describe("AgentRegistrationForm", () => {
 
 		render(<AgentRegistrationForm />);
 		await fillValidForm();
+		await verifyConnection();
 		fireEvent.click(screen.getByRole("button", { name: "提交上架" }));
 
 		expect(await screen.findByText("报价超出允许范围")).toBeInTheDocument();
+	});
+
+	it("公开 Agent 不填写访问密钥也能测试并提交", async () => {
+		mockTaxonomyResponses();
+		vi.mocked(fetch).mockResolvedValueOnce(connectionSuccessResponse(9));
+		vi.mocked(fetch).mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({ agentId: "public-agent", status: "pending_review" }),
+				{ status: 201, headers: { "content-type": "application/json" } },
+			),
+		);
+		render(<AgentRegistrationForm />);
+		await fillValidForm({ withCredential: false });
+
+		await verifyConnection();
+		const connectionBody = JSON.parse(
+			String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body),
+		);
+		expect(connectionBody).not.toHaveProperty("credentialSecret");
+		fireEvent.click(screen.getByRole("button", { name: "提交上架" }));
+
+		await waitFor(() =>
+			expect(screen.getByText("继续配置")).toBeInTheDocument(),
+		);
+		const registrationBody = JSON.parse(
+			String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body),
+		);
+		expect(registrationBody).toMatchObject({ integrationMode: "http_json" });
+		expect(registrationBody).not.toHaveProperty("credentialSecret");
+	});
+
+	it("执行地址变化后清除旧连接结果并要求重新测试", async () => {
+		mockTaxonomyResponses();
+		vi.mocked(fetch).mockResolvedValueOnce(connectionSuccessResponse());
+		render(<AgentRegistrationForm />);
+		await fillValidForm();
+		await verifyConnection();
+
+		fireEvent.change(screen.getByLabelText("Agent 执行地址"), {
+			target: { value: "https://agent-two.example.com/run" },
+		});
+
+		expect(screen.getByText("尚未测试")).toBeInTheDocument();
+		expect(
+			screen.getByText("填写完成后测试连接，确认平台可以访问你的 Agent。"),
+		).toBeInTheDocument();
+	});
+
+	it("完整资料未测试连接时不发送上架请求，并聚焦测试按钮", async () => {
+		mockTaxonomyResponses();
+		render(<AgentRegistrationForm />);
+		await fillValidForm();
+
+		fireEvent.click(screen.getByRole("button", { name: "提交上架" }));
+
+		expect(
+			await screen.findByText("请先测试 Agent 连接，确认服务可用后再提交"),
+		).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: "测试连接" })).toHaveFocus(),
+		);
+		// 唯一一次请求来自分类加载，说明连接测试门禁没有误发正式注册请求。
+		expect(fetch).toHaveBeenCalledTimes(1);
 	});
 });

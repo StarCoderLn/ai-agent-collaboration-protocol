@@ -33,8 +33,8 @@ export interface Agent {
   priceAmount: bigint;
   priceCurrency: string;
   serviceEndpoint: string;
-  /** 站外通知渠道，非登录凭证；不要求所有权验证（design.md 模块 1）。 */
-  email: string;
+  /** 历史兼容的可选站外联系方式；新上架流程不再收集，旧档案仍可保留原值。 */
+  email: string | null;
   /**
    * 状态机权威实现在 Go 分发引擎（specs/3.agent-health-lifecycle），
    * 本 feature 的编辑接口不允许客户端直接改写，只读展示。

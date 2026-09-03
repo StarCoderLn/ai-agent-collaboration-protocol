@@ -47,6 +47,17 @@ const priceSchema = z.object({
   currency: z.literal(MVP_CURRENCY),
 });
 
+const portfolioCaseSchema = z.object({
+  title: z.string().trim().min(1, { message: "案例标题不能为空" }).max(120, { message: "案例标题最多 120 个字符" }),
+  summary: z.string().trim().min(1, { message: "案例说明不能为空" }).max(600, { message: "案例说明最多 600 个字符" }),
+  artifactKind: z.enum(["document", "image", "video", "website", "code", "other"]),
+  // 提供者案例必须是公开可访问的 HTTP(S) 地址；服务端不会代表用户抓取或复制内容，
+  // 候选页只把它作为“自行提供”的外部证据展示，不能与平台验收制品混为一谈。
+  previewRef: z.string().trim().max(2000, { message: "案例地址最多 2000 个字符" })
+    .url({ message: "案例地址必须是合法 URL" })
+    .regex(/^https?:\/\//, { message: "案例地址必须以 http:// 或 https:// 开头" }),
+});
+
 export const createAgentInputSchema = z.object({
   name: z.string().trim().min(1, { message: "name 不能为空" }),
   categoryId: categoryIdSchema,
@@ -66,10 +77,31 @@ export const createAgentInputSchema = z.object({
   walletAddress: ethereumWalletSchema("walletAddress"),
   payoutWalletAddress: ethereumWalletSchema("payoutWalletAddress"),
   serviceEndpoint: serviceEndpointSchema,
-  credentialSecret: z.string().min(1, { message: "credentialSecret 不能为空" }),
-  // email 是站外通知渠道而非登录凭证，只做格式校验，不做真实性验证
-  // （design.md 模块 1：不发验证邮件阻断注册流程）。
-  email: z.string().trim().email({ message: "email 格式不合法" }),
+  // 未显式声明的旧客户端继续进入 HMAC 模式，避免一次 API 升级悄悄改变历史接入
+  // 语义；新版上架页固定发送 http_json，并允许公开 Agent 不配置访问密钥。
+  integrationMode: z.enum(["aicp_hmac", "http_json"]).default("aicp_hmac"),
+  credentialSecret: z.union([
+    z.literal("").transform(() => undefined),
+    z.string().min(1).max(4_096, { message: "credentialSecret 最多 4096 个字符" }),
+  ]).optional(),
+  // 旧版客户端可能仍会发送邮箱，因此保留格式校验以维持协议兼容；新上架流程不再
+  // 收集该字段。缺失时仓储写入 NULL，不能为了满足旧表约束伪造占位联系方式。
+  email: z.string().trim().email({ message: "email 格式不合法" }).optional(),
+  // 案例是可选的选择证据，不应增加首次上架门槛；限制为三条，避免候选快照和比较页
+  // 被未经验证的自述内容淹没。平台真实验收案例仍由工作流结果自动生成。
+  portfolioCases: z.array(portfolioCaseSchema)
+    .max(3, { message: "portfolioCases 最多提交 3 个案例" })
+    .optional(),
+}).superRefine((input, context) => {
+  // 历史 AICP 协议必须拥有双方共享密钥；快速 HTTP 模式则使用可选 Bearer Token。
+  // 规则集中在服务端边界，不能依赖前端是否恰好显示了必填星号。
+  if (input.integrationMode === "aicp_hmac" && input.credentialSecret === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["credentialSecret"],
+      message: "credentialSecret 不能为空",
+    });
+  }
 });
 
 export type CreateAgentInput = z.infer<typeof createAgentInputSchema>;

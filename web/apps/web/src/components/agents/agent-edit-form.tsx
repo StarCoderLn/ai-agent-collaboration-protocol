@@ -33,7 +33,6 @@ function toFormValues(agent: Agent): AgentEditFormValues {
 		priceAmount: formatUsdcInputAmount(agent.priceAmount),
 		priceCurrency: agent.priceCurrency,
 		serviceEndpoint: agent.serviceEndpoint,
-		email: agent.email,
 	};
 }
 
@@ -65,7 +64,6 @@ type SubmitStatus = "idle" | "submitting" | "success" | "error";
 const EDIT_FIELD_ORDER = [
 	"name",
 	"categoryId",
-	"email",
 	"serviceEndpoint",
 	"pricingType",
 	"priceAmount",
@@ -87,7 +85,6 @@ const EDIT_FIELD_IDS: Readonly<Record<keyof AgentEditFormValues, string>> = {
 	priceAmount: "priceAmount",
 	priceCurrency: "priceCurrency",
 	serviceEndpoint: "serviceEndpoint",
-	email: "email",
 };
 
 /** 按页面阅读顺序选择首个错误，避免依赖对象属性的偶然顺序。 */
@@ -241,17 +238,6 @@ export default function AgentEditForm({ agent, onSaved }: AgentEditFormProps) {
 							aria-describedby={
 								errors.categoryId ? "categoryId-error" : undefined
 							}
-						/>
-					</Field>
-
-					<Field label={t("邮箱")} htmlFor="email" error={errors.email}>
-						<Input
-							id="email"
-							type="email"
-							value={values.email}
-							onChange={(event) => updateField("email", event.target.value)}
-							aria-invalid={Boolean(errors.email)}
-							aria-describedby={errors.email ? "email-error" : undefined}
 						/>
 					</Field>
 

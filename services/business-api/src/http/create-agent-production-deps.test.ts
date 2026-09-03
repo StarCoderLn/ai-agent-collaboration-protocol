@@ -35,13 +35,16 @@ describe("createProductionCreateAgentDeps", () => {
     expect(() => createProductionCreateAgentDeps()).toThrow(/DATABASE_URL/);
   });
 
-  it("fails fast with a clear error when AGENT_CREDENTIALS_KMS_KEY_ID is missing", () => {
+  it("公开 Agent 的依赖装配不因缺少 KMS 配置而提前失败", () => {
     process.env.DATABASE_URL = "postgres://user:pass@localhost:5432/test";
     delete process.env.AGENT_CREDENTIALS_KMS_KEY_ID;
+    process.env.SIWE_EXPECTED_DOMAIN = "app.example.com";
+    process.env.SIWE_EXPECTED_URI = "https://app.example.com/login";
+    process.env.SIWE_EXPECTED_CHAIN_ID = "1";
 
-    expect(() => createProductionCreateAgentDeps()).toThrow(
-      /AGENT_CREDENTIALS_KMS_KEY_ID/,
-    );
+    const deps = createProductionCreateAgentDeps();
+
+    expect(typeof deps.runInTransaction).toBe("function");
   });
 
   it("assembles a runInTransaction function and allowedOrigin when required env vars are present", () => {

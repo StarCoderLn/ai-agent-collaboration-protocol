@@ -24,7 +24,7 @@ export interface CreatedAgent {
 }
 
 export interface AgentRepository {
-  createAgentWithCredential(input: CreateAgentInput, encryptedSecret: string): Promise<CreatedAgent>;
+  createAgentWithCredential(input: CreateAgentInput, encryptedSecret: string | null): Promise<CreatedAgent>;
 }
 
 interface AgentInsertRow {
@@ -44,7 +44,7 @@ interface AgentRow {
   price_amount: string;
   price_currency: string;
   service_endpoint: string;
-  email: string;
+  email: string | null;
   status: Agent["status"];
   pause_reason: Agent["pauseReason"];
   created_at: Date;
@@ -77,13 +77,13 @@ export class PgAgentRepository implements AgentRepository, AgentProfileRepositor
 
   async createAgentWithCredential(
     input: CreateAgentInput,
-    encryptedSecret: string,
+    encryptedSecret: string | null,
   ): Promise<CreatedAgent> {
     const agentResult = await this.db.query<AgentInsertRow>(
       `INSERT INTO agents (
          provider_wallet_address, payout_wallet_address, name, category_id, capability_desc, tags,
-         pricing_type, price_amount, price_currency, service_endpoint, email
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         pricing_type, price_amount, price_currency, service_endpoint, integration_mode, email
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING id, status`,
       [
         input.walletAddress,
@@ -96,7 +96,8 @@ export class PgAgentRepository implements AgentRepository, AgentProfileRepositor
         input.price.amount,
         input.price.currency,
         input.serviceEndpoint,
-        input.email,
+        input.integrationMode,
+        input.email ?? null,
       ],
     );
     const row = agentResult.rows[0];
@@ -104,11 +105,34 @@ export class PgAgentRepository implements AgentRepository, AgentProfileRepositor
       throw new Error("PgAgentRepository: INSERT INTO agents 未返回新建行");
     }
 
-    await this.db.query(
-      `INSERT INTO agent_credentials (agent_id, encrypted_secret, key_version)
-       VALUES ($1, $2, 1)`,
-      [row.id, encryptedSecret],
-    );
+    // 公开快速 HTTP Agent 不需要伪造占位密钥。没有凭证行就是“调用时不发送
+    // Authorization”的唯一持久化表达；有访问密钥时仍沿用原信封加密表。
+    if (encryptedSecret !== null) {
+      await this.db.query(
+        `INSERT INTO agent_credentials (agent_id, encrypted_secret, key_version)
+         VALUES ($1, $2, 1)`,
+        [row.id, encryptedSecret],
+      );
+    }
+
+    // 提供者案例和 Agent 档案共用外层创建事务：任何一条案例写入失败时，档案、凭证、
+    // 审计和幂等结果都会一起回滚，不会留下“市场已有 Agent 但案例只写了一半”的状态。
+    for (const portfolioCase of input.portfolioCases ?? []) {
+      await this.db.query(
+        `INSERT INTO agent_portfolio_cases (
+           agent_id,title,summary,artifact_kind,preview_ref,category_id,tags
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          row.id,
+          portfolioCase.title,
+          portfolioCase.summary,
+          portfolioCase.artifactKind,
+          portfolioCase.previewRef,
+          input.categoryId,
+          input.tags,
+        ],
+      );
+    }
 
     return { agentId: row.id, status: row.status };
   }

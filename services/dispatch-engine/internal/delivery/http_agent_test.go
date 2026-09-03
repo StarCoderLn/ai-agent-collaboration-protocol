@@ -92,3 +92,55 @@ func TestHTTPAgentCallerTreats202AsAsynchronousQueueAcceptance(t *testing.T) {
 		t.Fatalf("202 must wait for the signed asynchronous callback: result=%+v err=%v", result, err)
 	}
 }
+
+func TestHTTPAgentCallerAcceptsQuickAgentWithoutSDKOrSharedSecret(t *testing.T) {
+	client := &http.Client{Transport: agentRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get(protocol.HeaderSignature) != "" || request.Header.Get("Authorization") != "" {
+			t.Fatalf("a public quick Agent must not receive invented authentication headers: %v", request.Header)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{
+				"status":"completed",
+				"artifacts":[{"type":"document","summary":"PRD 交付","content":"# PRD"}]
+			}`)),
+			Request: request,
+		}, nil
+	})}
+	result, err := (&HTTPAgentCaller{Client: client}).Call(context.Background(), dispatch.DispatchMessage{
+		AgentID:           "11111111-1111-4111-8111-111111111111",
+		AssignmentID:      "22222222-2222-4222-8222-222222222222",
+		TaskID:            "33333333-3333-4333-8333-333333333333",
+		ProtocolRequestID: "request-1",
+	}, Target{
+		Endpoint: "https://agent.local/run", IntegrationMode: "http_json",
+		Body: []byte(`{"task":{"title":"整理需求"}}`),
+	})
+	if err != nil || result.Accepted == nil || !*result.Accepted || len(result.QuickResultPayload) == 0 {
+		t.Fatalf("quick result mismatch: result=%+v err=%v", result, err)
+	}
+	payload := string(result.QuickResultPayload)
+	if !strings.Contains(payload, `"mimeType":"text/markdown"`) ||
+		!strings.Contains(payload, `"content":"# PRD"`) ||
+		!strings.Contains(payload, `"assignmentId":"22222222-2222-4222-8222-222222222222"`) {
+		t.Fatalf("quick result was not mapped to the internal artifact contract: %s", payload)
+	}
+}
+
+func TestHTTPAgentCallerUsesOptionalBearerTokenForQuickAgent(t *testing.T) {
+	client := &http.Client{Transport: agentRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("Authorization") != "Bearer provider-token" || request.Header.Get(protocol.HeaderSignature) != "" {
+			t.Fatalf("quick Agent authentication mismatch: %v", request.Header)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{"status":"completed","artifacts":[{"type":"website","summary":"预览","content":"https://example.com/preview"}]}`)), Request: request}, nil
+	})}
+	_, err := (&HTTPAgentCaller{Client: client}).Call(context.Background(), dispatch.DispatchMessage{
+		AgentID: "11111111-1111-4111-8111-111111111111", AssignmentID: "22222222-2222-4222-8222-222222222222",
+		TaskID: "33333333-3333-4333-8333-333333333333", ProtocolRequestID: "request-2",
+	}, Target{Endpoint: "https://agent.local/run", IntegrationMode: "http_json", Secret: "provider-token", Body: []byte(`{"task":{}}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

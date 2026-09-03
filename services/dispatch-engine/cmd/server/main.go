@@ -94,6 +94,9 @@ func run(ctx context.Context) error {
 		},
 		Lease: 30 * time.Second,
 	}
+	executionClient := &executionproxy.Client{
+		BaseURL: businessAPIURL, Token: internalToken, HTTP: &http.Client{Timeout: 30 * time.Second},
+	}
 	deliveryConsumer := &delivery.Consumer{
 		Source: transport.source,
 		Processor: &delivery.ProcessorService{
@@ -102,10 +105,11 @@ func run(ctx context.Context) error {
 			},
 			Caller:       &delivery.HTTPAgentCaller{Client: &http.Client{Timeout: 20 * time.Second}},
 			Acknowledger: dispatcher,
+			Submitter:    executionClient,
 		},
 	}
 	webhookWorker := &webhook.Worker{
-		Repository: &store.WebhookRepository{Pool: pool},
+		Repository: &store.WebhookRepository{Pool: pool, CallbackBaseURL: strings.TrimSuffix(publicDispatchURL, "/")},
 		Decryptor:  transport.decryptor,
 		Sender:     &webhook.HTTPSender{Client: &http.Client{Timeout: 20 * time.Second}},
 		Lease:      30 * time.Second,
@@ -119,9 +123,6 @@ func run(ctx context.Context) error {
 	verifier := &protocol.Verifier{
 		Keys:   store.CredentialKeyResolver{Pool: pool, Decryptor: transport.decryptor},
 		Nonces: store.NonceRepository{Pool: pool},
-	}
-	executionClient := &executionproxy.Client{
-		BaseURL: businessAPIURL, Token: internalToken, HTTP: &http.Client{Timeout: 30 * time.Second},
 	}
 	api := &httpapi.Server{
 		InternalToken: internalToken, Matcher: matcher, Dispatcher: dispatcher,

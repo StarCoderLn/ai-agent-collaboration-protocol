@@ -19,6 +19,44 @@ function validInput() {
 }
 
 describe("parseCreateAgentInput matching tags", () => {
+
+  it("快速 HTTP 接入允许公开 Agent 不填访问密钥", () => {
+    const input = validInput();
+    delete (input as Partial<typeof input>).credentialSecret;
+
+    const parsed = parseCreateAgentInput({ ...input, integrationMode: "http_json" });
+    expect(parsed).toMatchObject({
+      success: true,
+      data: { integrationMode: "http_json" },
+    });
+    if (parsed.success) expect(parsed.data.credentialSecret).toBeUndefined();
+  });
+
+  it("历史客户端未声明模式时仍要求 HMAC 凭证", () => {
+    const input = validInput();
+    delete (input as Partial<typeof input>).credentialSecret;
+
+    expect(parseCreateAgentInput(input)).toMatchObject({
+      success: false,
+      fieldErrors: [expect.objectContaining({ field: "credentialSecret" })],
+    });
+  });
+
+  it("allows registration without a contact email", () => {
+    const input = validInput();
+    delete (input as Partial<typeof input>).email;
+
+    const parsed = parseCreateAgentInput(input);
+    expect(parsed).toMatchObject({ success: true });
+    if (parsed.success) expect(parsed.data).not.toHaveProperty("email");
+  });
+
+  it("allows a new provider to register without portfolio cases", () => {
+    expect(parseCreateAgentInput(validInput())).toMatchObject({
+      success: true,
+    });
+  });
+
   it("normalizes and deduplicates platform and custom tags before persistence", () => {
     const parsed = parseCreateAgentInput({
       ...validInput(),
@@ -62,6 +100,57 @@ describe("parseCreateAgentInput matching tags", () => {
     })).toMatchObject({
       success: false,
       fieldErrors: [expect.objectContaining({ field: "price.amount" })],
+    });
+  });
+
+  it("accepts up to three public portfolio cases and rejects unsafe preview addresses", () => {
+    expect(parseCreateAgentInput({
+      ...validInput(),
+      portfolioCases: [{
+        title: "电商首页设计",
+        summary: "包含桌面端与移动端的完整视觉稿。",
+        artifactKind: "image",
+        previewRef: "https://example.com/cases/storefront.png",
+      }],
+    })).toMatchObject({ success: true });
+
+    expect(parseCreateAgentInput({
+      ...validInput(),
+      portfolioCases: [{
+        title: "不安全案例",
+        summary: "不允许把本地文件地址提交到公开候选证据。",
+        artifactKind: "document",
+        previewRef: "file:///tmp/private.pdf",
+      }],
+    })).toMatchObject({
+      success: false,
+      fieldErrors: [expect.objectContaining({ field: "portfolioCases.0.previewRef" })],
+    });
+
+    expect(parseCreateAgentInput({
+      ...validInput(),
+      portfolioCases: Array.from({ length: 4 }, (_, index) => ({
+        title: `案例 ${index + 1}`,
+        summary: "用于验证案例数量上限。",
+        artifactKind: "website",
+        previewRef: `https://example.com/cases/${index + 1}`,
+      })),
+    })).toMatchObject({
+      success: false,
+      fieldErrors: [expect.objectContaining({ field: "portfolioCases" })],
+    });
+
+    expect(parseCreateAgentInput({
+      ...validInput(),
+      portfolioCases: [{
+        title: "超长地址案例",
+        summary: "应用层必须在写数据库前给出字段错误，不能依赖数据库约束返回 500。",
+        artifactKind: "website",
+        previewRef: `https://example.com/${"a".repeat(2000)}`,
+      }],
+    })).toMatchObject({
+      success: false,
+      fieldErrors: [expect.objectContaining({ field: "portfolioCases.0.previewRef" })],
     });
   });
 });

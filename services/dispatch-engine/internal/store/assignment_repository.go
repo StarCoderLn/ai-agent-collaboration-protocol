@@ -61,7 +61,9 @@ func (r *AssignmentRepository) LockCandidate(ctx context.Context, command dispat
 		).Scan(&distributionID, &agreedAmountMinor)
 	} else {
 		// 节点选择只读取该节点最新一次冻结候选，并同时校验任务归属、工作流状态和
-		// 节点预算上限。这样调用方无法拿另一个节点或旧任务候选拼接出非法分配。
+		// 节点预算上限。system:auto 表示平台按规则自动选择，system:selected 表示平台
+		// 在托管确认后派发发布者已冻结的选择；只接受这两个精确身份，不能放行任意
+		// system:* 字符串。这样调用方无法拿另一个节点或旧任务候选拼接出非法分配。
 		err = tx.QueryRow(ctx, `
 			SELECT record.id::text, (candidate.value->>'quoteMinor')::bigint
 			  FROM task_workflow_nodes node
@@ -75,7 +77,7 @@ func (r *AssignmentRepository) LockCandidate(ctx context.Context, command dispat
 			  JOIN LATERAL jsonb_array_elements(record.candidates) candidate(value)
 			    ON candidate.value->>'agentId'=$3::text
 			 WHERE task.id=$1 AND node.id=$2 AND node.status='matching' AND run.status='running'
-			   AND (lower(task.publisher_id)=lower($4) OR $4='system:auto')
+			   AND (lower(task.publisher_id)=lower($4) OR $4 IN ('system:auto','system:selected'))
 			   AND candidate.value->>'quoteMinor' ~ '^[0-9]+$'
 			   AND (candidate.value->>'quoteMinor')::bigint <= node.budget_cap_minor`,
 			command.TaskID, command.WorkflowNodeID, command.AgentID, command.ActorID,
@@ -398,6 +400,145 @@ func (r *AssignmentRepository) PrepareExecutionRetry(
 	return dispatch.ExecutionRetryResult{
 		TaskID: taskID, AssignmentID: assignmentID, TransitionEventID: eventID, Replayed: replayed,
 	}, nil
+}
+
+// PrepareWorkflowExecutionRetry 只取消指定失败节点的当前分配，并写入该节点自己的
+// transition outbox。已验收上游、尚未解锁下游和现有 Escrow 都保持不变；worker 消费
+// assignment_failed 后会把节点恢复到 matching，再按冻结选择创建新的唯一 assignment。
+func (r *AssignmentRepository) PrepareWorkflowExecutionRetry(
+	ctx context.Context,
+	taskID, workflowNodeID, actorID string,
+) (dispatch.ExecutionRetryResult, error) {
+	if r.Pool == nil {
+		return dispatch.ExecutionRetryResult{}, errors.New("assignment repository requires pool")
+	}
+	tx, err := r.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return dispatch.ExecutionRetryResult{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var nodeStatus, publisherID, escrowStatus string
+	err = tx.QueryRow(ctx, `
+		SELECT node.status,task.publisher_id,COALESCE(intent.status,'')
+		  FROM task_workflow_nodes node
+		  JOIN tasks task ON task.id=node.task_id
+		  LEFT JOIN escrow_intents intent ON intent.task_id=task.id
+		 WHERE task.id=$1 AND node.id=$2
+		 FOR UPDATE OF task,node`, taskID, workflowNodeID,
+	).Scan(&nodeStatus, &publisherID, &escrowStatus)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !strings.EqualFold(publisherID, actorID)) {
+		return dispatch.ExecutionRetryResult{}, dispatch.ErrTaskNotFound
+	}
+	if err != nil {
+		return dispatch.ExecutionRetryResult{}, err
+	}
+	if nodeStatus != "execution_failed" && nodeStatus != "executing" {
+		return dispatch.ExecutionRetryResult{}, dispatch.ErrExecutionRetryNotAllowed
+	}
+	// 正式工作流会在每个上游里程碑验收后释放对应金额，此时 Escrow 合法地进入
+	// partially_released，但剩余节点预算仍被同一托管锁定。只允许这两个“仍有资金保障”
+	// 的状态；released/refunded/failed 继续拒绝，不能借重试重新使用已经离开托管的资金。
+	if !escrowSecuresWorkflowRetry(escrowStatus) {
+		return dispatch.ExecutionRetryResult{}, dispatch.ErrEscrowNotConfirmed
+	}
+
+	var assignmentID string
+	var assignmentStatus domain.AssignmentStatus
+	err = tx.QueryRow(ctx, `
+		SELECT id::text,status
+		  FROM task_assignments
+		 WHERE task_id=$1 AND workflow_node_id=$2
+		 ORDER BY assigned_at DESC,id DESC
+		 LIMIT 1 FOR UPDATE`, taskID, workflowNodeID,
+	).Scan(&assignmentID, &assignmentStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dispatch.ExecutionRetryResult{}, dispatch.ErrExecutionRetryNotAllowed
+	}
+	if err != nil {
+		return dispatch.ExecutionRetryResult{}, err
+	}
+	var executionAssignmentID string
+	err = tx.QueryRow(ctx, `
+		SELECT COALESCE((
+		  SELECT state.assignment_id::text
+		    FROM workflow_node_execution_state state
+		   WHERE state.workflow_node_id=$1
+		),'')`, workflowNodeID,
+	).Scan(&executionAssignmentID)
+	if err != nil {
+		return dispatch.ExecutionRetryResult{}, err
+	}
+	// execution_failed 是模型/制品失败的常规入口。executing 只在最新已接单 assignment
+	// 尚未建立自己的执行快照、状态仍明确指向旧 assignment 时允许恢复；这证明初始化
+	// 回调已中断。执行快照已绑定当前 assignment 时说明 Agent 可能仍在正常工作，必须拒绝。
+	if !workflowNodeAllowsExecutionRetry(nodeStatus, assignmentID, executionAssignmentID) {
+		return dispatch.ExecutionRetryResult{}, dispatch.ErrExecutionRetryNotAllowed
+	}
+
+	var eventID string
+	replayed := false
+	switch assignmentStatus {
+	case domain.AssignmentAccepted:
+		result, updateErr := tx.Exec(ctx, `
+			UPDATE task_assignments
+			   SET status='cancelled',version=version+1,updated_at=now()
+			 WHERE id=$1 AND status='accepted'`, assignmentID)
+		if updateErr != nil {
+			return dispatch.ExecutionRetryResult{}, updateErr
+		}
+		if result.RowsAffected() != 1 {
+			return dispatch.ExecutionRetryResult{}, dispatch.ErrExecutionRetryNotAllowed
+		}
+		err = tx.QueryRow(ctx, `
+			INSERT INTO workflow_node_transition_outbox(
+			 assignment_id,task_id,workflow_node_id,event_type,payload
+			) VALUES ($1,$2,$3,'assignment_failed',
+			 jsonb_build_object('reason','execution_retry_requested'))
+			RETURNING id::text`, assignmentID, taskID, workflowNodeID,
+		).Scan(&eventID)
+		if err != nil {
+			return dispatch.ExecutionRetryResult{}, err
+		}
+	case domain.AssignmentCancelled:
+		// 首次响应丢失后的重复请求只能重放同一节点、同一分配的恢复事件，不能把普通
+		// 取消或另一个节点的事件误认成执行重试成功。
+		err = tx.QueryRow(ctx, `
+			SELECT id::text FROM workflow_node_transition_outbox
+			 WHERE assignment_id=$1 AND task_id=$2 AND workflow_node_id=$3
+			   AND event_type='assignment_failed'`, assignmentID, taskID, workflowNodeID,
+		).Scan(&eventID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return dispatch.ExecutionRetryResult{}, dispatch.ErrExecutionRetryNotAllowed
+		}
+		if err != nil {
+			return dispatch.ExecutionRetryResult{}, err
+		}
+		replayed = true
+	default:
+		return dispatch.ExecutionRetryResult{}, dispatch.ErrExecutionRetryNotAllowed
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return dispatch.ExecutionRetryResult{}, err
+	}
+	return dispatch.ExecutionRetryResult{
+		TaskID: taskID, WorkflowNodeID: workflowNodeID, AssignmentID: assignmentID,
+		TransitionEventID: eventID, Replayed: replayed,
+	}, nil
+}
+
+// escrowSecuresWorkflowRetry 是工作流失败恢复唯一的资金状态规则。confirmed 表示尚未
+// 释放里程碑，partially_released 表示只释放了已验收上游；其他状态都不再保证剩余预算。
+func escrowSecuresWorkflowRetry(status string) bool {
+	return status == "confirmed" || status == "partially_released"
+}
+
+func workflowNodeAllowsExecutionRetry(nodeStatus, currentAssignmentID, executionAssignmentID string) bool {
+	if nodeStatus == "execution_failed" {
+		return true
+	}
+	return nodeStatus == "executing" && executionAssignmentID != "" && executionAssignmentID != currentAssignmentID
 }
 
 func (r *AssignmentRepository) findByIdempotency(ctx context.Context, key string) (dispatch.LockResult, error) {
