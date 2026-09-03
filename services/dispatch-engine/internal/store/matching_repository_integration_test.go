@@ -101,11 +101,14 @@ func TestMatchingRepositoryPostgresVerticalSlice(t *testing.T) {
 	if first.ID == "" || second.ID != first.ID {
 		t.Fatalf("same input must replay one persisted record: first=%+v second=%+v", first, second)
 	}
-	if len(first.Candidates) != 1 || first.Candidates[0].AgentID != integrationAgentID {
+	// 预算现在是推荐偏好而不是候选资格：略高于偏好的 Agent 仍应展示，让用户比较后
+	// 决定是否调整上限；真正的冻结金额只在所有节点完成选择后计算。
+	if len(first.Candidates) != 2 || first.Candidates[0].AgentID != integrationAgentID ||
+		first.Candidates[1].AgentID != overBudgetAgentID {
 		t.Fatalf("unexpected candidates: %+v", first.Candidates)
 	}
-	if first.FilterReasons[overBudgetAgentID] != "over_budget" {
-		t.Fatalf("missing over-budget reason: %+v", first.FilterReasons)
+	if _, filtered := first.FilterReasons[overBudgetAgentID]; filtered {
+		t.Fatalf("budget preference must not hide a valid candidate: %+v", first.FilterReasons)
 	}
 	latest, err := service.LatestCandidates(ctx, integrationTaskID)
 	if err != nil || latest.ID != first.ID || len(latest.InputSnapshot) == 0 {
@@ -296,8 +299,17 @@ func TestPendingInitialWorkflowNodesRetriesAutomaticNodeWithFrozenCandidates(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []matching.WorkflowMatchTarget{{TaskID: integrationTaskID, WorkflowNodeID: integrationNodeID}}
-	if len(targets) != 1 || targets[0] != want[0] {
+	want := matching.WorkflowMatchTarget{TaskID: integrationTaskID, WorkflowNodeID: integrationNodeID}
+	found := false
+	for _, target := range targets {
+		if target == want {
+			found = true
+			break
+		}
+	}
+	// 本地开发库可能同时存在用户正在恢复的真实节点；测试只验证自己的固定 UUID
+	// 能被扫描到，不能把“数据库里没有其他待处理业务”当成被测契约的一部分。
+	if !found {
 		t.Fatalf("automatic node with frozen candidates must remain retryable: got=%+v want=%+v", targets, want)
 	}
 }

@@ -1,11 +1,20 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"sort"
 	"time"
 )
+
+type AgentDeliveryCase struct {
+	Source       string `json:"source"`
+	Title        string `json:"title"`
+	Summary      string `json:"summary"`
+	ArtifactKind string `json:"artifactKind"`
+	PreviewRef   string `json:"previewRef"`
+}
 
 type AgentCandidate struct {
 	ID                      string
@@ -23,6 +32,12 @@ type AgentCandidate struct {
 	RatingSampleSize        int
 	PriorWeight             int
 	ProbationBudgetCapMinor int64
+	ScoreDimensions         json.RawMessage
+	DisputeRate             float64
+	SimilarCompleted        int
+	OnTimeRate              float64
+	ReworkRate              float64
+	DeliveryCases           []AgentDeliveryCase
 }
 
 type MatchTask struct {
@@ -58,16 +73,16 @@ func ValidateHardConstraints(task MatchTask, agent AgentCandidate, now time.Time
 	if agent.Currency != task.Currency {
 		return CurrencyMismatch
 	}
-	if agent.PriceMinor > task.BudgetMinor {
-		return OverBudget
-	}
 	if !task.Deadline.After(now) {
 		return DeadlinePassed
 	}
 	if agent.EstimatedDuration <= 0 || agent.EstimatedDuration > task.Deadline.Sub(now) {
 		return CannotMeetDeadline
 	}
-	if agent.RatingSampleSize < agent.PriorWeight && task.BudgetMinor > agent.ProbationBudgetCapMinor {
+	// 用户预算是规划参考，不是候选资格。若在这里按预算过滤，用户看不到更优但略贵的
+	// Agent，也无法先选组合再得到准确总价。受控上线额度是另一条安全规则：它比较
+	// Agent 自己的冻结报价与准入上限，而不是用用户填写的整单预算误伤所有候选。
+	if agent.RatingSampleSize < agent.PriorWeight && agent.PriceMinor > agent.ProbationBudgetCapMinor {
 		return ProbationBudgetExceeded
 	}
 	return Eligible

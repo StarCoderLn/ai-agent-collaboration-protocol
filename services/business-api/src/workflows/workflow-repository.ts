@@ -1,13 +1,12 @@
 import type { QueryExecutor } from "../db/pool";
 import { planFormalWorkflow } from "./workflow-planner";
-import type { WorkflowNodeStatus, WorkflowRunStatus } from "./workflow-state";
+import { transitionWorkflowNode, type WorkflowNodeStatus, type WorkflowRunStatus } from "./workflow-state";
 
 type TaskPlanningRow = {
   id: string;
   category_id: string;
   tag_names: string[];
   required_capability: string;
-  budget_max_minor: string;
   currency: string;
 };
 
@@ -17,9 +16,12 @@ type RunRow = {
   status: WorkflowRunStatus;
   version: string;
   currency: string;
-  total_budget_minor: string;
+  total_budget_minor: string | null;
   released_amount_minor: string;
-  refundable_amount_minor: string;
+  refundable_amount_minor: string | null;
+  budget_preference_minor: string | null;
+  quoted_total_minor: string | null;
+  quote_confirmed_at: Date | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -35,7 +37,9 @@ type NodeRow = {
   required_capability: string;
   input_contract: string;
   output_contract: string;
-  budget_cap_minor: string;
+  budget_cap_minor: string | null;
+  price_preference_minor: string | null;
+  price_preference_weight: number;
   position_index: number;
   status: WorkflowNodeStatus;
   version: string;
@@ -45,9 +49,15 @@ type NodeRow = {
   agent_name: string | null;
   assignment_status: string | null;
   agreed_amount_minor: string | null;
+  selected_agent_id: string | null;
+  selected_agent_name: string | null;
+  selected_amount_minor: string | null;
   assignment_accept_by: Date | null;
   progress: number | null;
   execution_state: string | null;
+	failure_code: string | null;
+	failure_stage: string | null;
+	attention_message: string | null;
   candidate_record_id: string | null;
   candidate_rule_version: string | null;
   candidates: unknown;
@@ -106,9 +116,12 @@ export type FormalWorkflowGraph = Readonly<{
     status: WorkflowRunStatus;
     version: string;
     currency: string;
-    totalBudgetMinor: string;
+    totalBudgetMinor: string | null;
     releasedAmountMinor: string;
-    refundableAmountMinor: string;
+    refundableAmountMinor: string | null;
+    budgetPreferenceMinor: string | null;
+    quotedTotalMinor: string | null;
+    quoteConfirmedAt: string | null;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -123,11 +136,18 @@ export type FormalWorkflowGraph = Readonly<{
     requiredCapability: string;
     inputContract: string;
     outputContract: string;
-    budgetCapMinor: string;
+    budgetCapMinor: string | null;
+    pricePreferenceMinor: string | null;
+    pricePreferenceWeight: number;
     positionIndex: number;
     status: WorkflowNodeStatus;
     version: string;
     acceptedAt: string | null;
+    selection: null | Readonly<{
+      agentId: string;
+      agentName: string;
+      agreedAmountMinor: string;
+    }>;
     assignment: null | Readonly<{
       id: string;
       agentId: string;
@@ -136,7 +156,13 @@ export type FormalWorkflowGraph = Readonly<{
       agreedAmountMinor: string;
       acceptBy: string;
     }>;
-    execution: null | Readonly<{ progress: number; state: string }>;
+	execution: null | Readonly<{
+		progress: number;
+		state: string;
+		failureCode: string | null;
+		failureStage: string | null;
+		attentionMessage: string | null;
+	}>;
     candidateRecord: null | Readonly<{
       id: string;
       ruleVersion: string;
@@ -202,34 +228,31 @@ export async function ensureFormalWorkflow(
   const existing = await findFormalWorkflow(db, taskId);
   if (existing !== null) return existing;
   const taskResult = await db.query<TaskPlanningRow>(
-    `SELECT id::text,category_id::text,tag_names,required_capability,
-            budget_max_minor::text,currency
+    `SELECT id::text,category_id::text,tag_names,required_capability,currency
        FROM tasks
-      WHERE id=$1 AND status IN ('awaiting_escrow','matching')
+      WHERE id=$1 AND status IN ('planning','awaiting_escrow','matching')
       FOR UPDATE`,
     [taskId],
   );
   const task = taskResult.rows[0];
   if (task === undefined) {
-    throw new WorkflowRepositoryError(409, "WORKFLOW_CREATION_NOT_ALLOWED", "只有待托管或待匹配任务可以创建正式工作流");
+    throw new WorkflowRepositoryError(409, "WORKFLOW_CREATION_NOT_ALLOWED", "只有规划中、待托管或待匹配任务可以创建正式工作流");
   }
   if (task.currency !== "USDC") {
     throw new WorkflowRepositoryError(409, "WORKFLOW_CREATION_NOT_ALLOWED", "正式多 Agent 工作流只支持 USDC");
   }
-  const totalBudgetMinor = BigInt(task.budget_max_minor);
   const plan = planFormalWorkflow({
     taskCategoryId: task.category_id,
     taskTags: task.tag_names,
     requiredCapability: task.required_capability,
-    totalBudgetMinor,
   });
   const runInsert = await db.query<{ id: string }>(
     `INSERT INTO task_workflow_runs(
        task_id,status,currency,total_budget_minor,released_amount_minor,refundable_amount_minor
-     ) VALUES ($1,'running','USDC',$2,0,$2)
+     ) VALUES ($1,'planning','USDC',NULL,0,NULL)
      ON CONFLICT (task_id) DO NOTHING
      RETURNING id::text`,
-    [taskId, totalBudgetMinor.toString()],
+    [taskId],
   );
   const insertedRunId = runInsert.rows[0]?.id;
   if (insertedRunId !== undefined) {
@@ -239,12 +262,12 @@ export async function ensureFormalWorkflow(
         `INSERT INTO task_workflow_nodes(
            workflow_run_id,task_id,node_key,kind,title,description,category_id,tags,
            required_capability,input_contract,output_contract,budget_cap_minor,
-           position_index,status
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           price_preference_minor,price_preference_weight,position_index,status
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULL,NULL,$12,$13,$14)
          RETURNING id::text`,
         [insertedRunId, taskId, node.key, node.kind, node.title, node.description,
           node.categoryId, [...node.tags], node.requiredCapability, node.inputContract,
-          node.outputContract, node.budgetCapMinor.toString(), node.positionIndex, node.status],
+          node.outputContract, node.budgetWeight, node.positionIndex, node.status],
       );
       const insertedNodeId = inserted.rows[0]?.id;
       if (insertedNodeId === undefined) throw new Error("WORKFLOW_NODE_NOT_INSERTED");
@@ -267,6 +290,53 @@ export async function ensureFormalWorkflow(
   return created;
 }
 
+/**
+ * 托管确认后才把“已选 Agent”节点转换为可执行图。根节点进入 matching，下游节点进入
+ * blocked；候选与冻结报价保持不变，分发 worker 随后按 final_selection_agent_id 派发。
+ */
+export async function activateFormalWorkflow(db: QueryExecutor, taskId: string, activatedAt: Date): Promise<void> {
+  const runResult = await db.query<{
+    id: string;
+    status: WorkflowRunStatus;
+    quoted_total_minor: string | null;
+    quote_confirmed_at: Date | null;
+  }>(
+    `SELECT id::text,status,quoted_total_minor::text,quote_confirmed_at
+       FROM task_workflow_runs WHERE task_id=$1 FOR UPDATE`,
+    [taskId],
+  );
+  const run = runResult.rows[0];
+  if (run === undefined || run.status !== "planning" || run.quoted_total_minor === null || run.quote_confirmed_at === null) {
+    throw new WorkflowRepositoryError(409, "WORKFLOW_CREATION_NOT_ALLOWED", "工作流报价尚未全部确认，不能开始执行");
+  }
+  const nodeResult = await db.query<{ id: string; status: WorkflowNodeStatus; has_upstream: boolean }>(
+    `SELECT node.id::text,node.status,
+            EXISTS(SELECT 1 FROM task_workflow_edges edge WHERE edge.target_node_id=node.id) AS has_upstream
+       FROM task_workflow_nodes node
+      WHERE node.workflow_run_id=$1
+      ORDER BY node.position_index,node.id
+      FOR UPDATE`,
+    [run.id],
+  );
+  if (nodeResult.rows.length === 0 || nodeResult.rows.some((node) => node.status !== "selected")) {
+    throw new WorkflowRepositoryError(409, "WORKFLOW_CREATION_NOT_ALLOWED", "仍有阶段没有冻结 Agent 报价");
+  }
+  for (const node of nodeResult.rows) {
+    const next = transitionWorkflowNode(
+      "selected",
+      node.has_upstream ? { type: "dependent_execution_activated" } : { type: "root_execution_activated" },
+    );
+    await db.query(
+      "UPDATE task_workflow_nodes SET status=$2,version=version+1,updated_at=$3 WHERE id=$1",
+      [node.id, next, activatedAt],
+    );
+  }
+  await db.query(
+    "UPDATE task_workflow_runs SET status='running',version=version+1,updated_at=$2 WHERE id=$1",
+    [run.id, activatedAt],
+  );
+}
+
 /** 发布者读取正式图；不存在和越权保持相同错误，避免枚举私密任务 ID。 */
 export async function readOwnedFormalWorkflow(
   db: QueryExecutor,
@@ -274,7 +344,9 @@ export async function readOwnedFormalWorkflow(
   actorId: string,
 ): Promise<FormalWorkflowGraph> {
   const access = await db.query<{ allowed: boolean }>(
-    `SELECT TRUE AS allowed FROM tasks WHERE id=$1 AND lower(publisher_id)=lower($2)`,
+    `SELECT TRUE AS allowed
+       FROM tasks
+      WHERE id=$1 AND lower(publisher_id)=lower($2) AND archived_at IS NULL`,
     [taskId, actorId],
   );
   if (access.rows[0] === undefined) {
@@ -291,6 +363,7 @@ async function findFormalWorkflow(db: QueryExecutor, taskId: string): Promise<Fo
   const runResult = await db.query<RunRow>(
     `SELECT id::text,task_id::text,status,version::text,currency,
             total_budget_minor::text,released_amount_minor::text,refundable_amount_minor::text,
+            budget_preference_minor::text,quoted_total_minor::text,quote_confirmed_at,
             created_at,updated_at
        FROM task_workflow_runs WHERE task_id=$1`,
     [taskId],
@@ -300,12 +373,16 @@ async function findFormalWorkflow(db: QueryExecutor, taskId: string): Promise<Fo
   const nodeResult = await db.query<NodeRow>(
     `SELECT node.id::text,node.node_key,node.kind,node.title,node.description,
             node.category_id::text,node.tags,node.required_capability,node.input_contract,
-            node.output_contract,node.budget_cap_minor::text,node.position_index,node.status,
+            node.output_contract,node.budget_cap_minor::text,node.price_preference_minor::text,
+            node.price_preference_weight,node.position_index,node.status,
             node.version::text,node.accepted_at,
             assignment.id::text AS assignment_id,assignment.agent_id::text,agent.name AS agent_name,
             assignment.status AS assignment_status,assignment.agreed_amount_minor::text,
             assignment.accept_by AS assignment_accept_by,
-            execution.progress,execution.execution_state,
+            node.selected_agent_id::text,selected_agent.name AS selected_agent_name,
+            node.agreed_amount_minor::text AS selected_amount_minor,
+			execution.progress,execution.execution_state,execution.failure_code,
+			execution.failure_stage,execution.attention_message,
             distribution.id::text AS candidate_record_id,
             distribution.rule_version AS candidate_rule_version,distribution.candidates,
             distribution.final_selection_agent_id::text
@@ -317,7 +394,11 @@ async function findFormalWorkflow(db: QueryExecutor, taskId: string): Promise<Fo
           ORDER BY current_assignment.assigned_at DESC,current_assignment.id DESC LIMIT 1
        ) assignment ON TRUE
        LEFT JOIN agents agent ON agent.id=assignment.agent_id
-       LEFT JOIN workflow_node_execution_state execution ON execution.workflow_node_id=node.id
+       LEFT JOIN agents selected_agent ON selected_agent.id=node.selected_agent_id
+		-- 执行状态属于一次具体 assignment。失败重试取消旧分配后不能继续把旧失败进度
+		-- 展示成新分配的当前状态，因此必须同时绑定当前活跃 assignment。
+		LEFT JOIN workflow_node_execution_state execution
+		  ON execution.workflow_node_id=node.id AND execution.assignment_id=assignment.id
        LEFT JOIN LATERAL (
          SELECT current_distribution.* FROM job_distribution_records current_distribution
           WHERE current_distribution.workflow_node_id=node.id
@@ -354,7 +435,7 @@ async function findFormalWorkflow(db: QueryExecutor, taskId: string): Promise<Fo
        FROM workflow_node_acceptances acceptance
        JOIN task_workflow_nodes node ON node.id=acceptance.workflow_node_id
        LEFT JOIN escrow_execution_jobs release
-         ON release.source='workflow_acceptance' AND release.source_ref=acceptance.id
+         ON release.source='workflow_run' AND release.source_ref=node.workflow_run_id
       WHERE node.workflow_run_id=$1`,
     [run.id],
   );
@@ -381,6 +462,9 @@ async function findFormalWorkflow(db: QueryExecutor, taskId: string): Promise<Fo
       totalBudgetMinor: run.total_budget_minor,
       releasedAmountMinor: run.released_amount_minor,
       refundableAmountMinor: run.refundable_amount_minor,
+      budgetPreferenceMinor: run.budget_preference_minor,
+      quotedTotalMinor: run.quoted_total_minor,
+      quoteConfirmedAt: run.quote_confirmed_at?.toISOString() ?? null,
       createdAt: run.created_at.toISOString(),
       updatedAt: run.updated_at.toISOString(),
     },
@@ -401,10 +485,19 @@ async function findFormalWorkflow(db: QueryExecutor, taskId: string): Promise<Fo
         inputContract: node.input_contract,
         outputContract: node.output_contract,
         budgetCapMinor: node.budget_cap_minor,
+        pricePreferenceMinor: node.price_preference_minor,
+        pricePreferenceWeight: node.price_preference_weight,
         positionIndex: node.position_index,
         status: node.status,
         version: node.version,
         acceptedAt: node.accepted_at?.toISOString() ?? null,
+        selection: node.selected_agent_id === null || node.selected_agent_name === null || node.selected_amount_minor === null
+          ? null
+          : {
+              agentId: node.selected_agent_id,
+              agentName: node.selected_agent_name,
+              agreedAmountMinor: node.selected_amount_minor,
+            },
         assignment: node.assignment_id === null || node.agent_id === null || node.agent_name === null
           || node.assignment_status === null || node.agreed_amount_minor === null || node.assignment_accept_by === null
           ? null
@@ -418,7 +511,13 @@ async function findFormalWorkflow(db: QueryExecutor, taskId: string): Promise<Fo
             },
         execution: node.progress === null || node.execution_state === null
           ? null
-          : { progress: node.progress, state: node.execution_state },
+					: {
+						progress: node.progress,
+						state: node.execution_state,
+						failureCode: node.failure_code,
+						failureStage: node.failure_stage,
+						attentionMessage: node.attention_message,
+					},
         candidateRecord: node.candidate_record_id === null || node.candidate_rule_version === null
           ? null
           : {

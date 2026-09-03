@@ -31,6 +31,29 @@ export function normalizeMatchingTags(
   return [...normalized].sort();
 }
 
+/**
+ * 从用户自然语言中识别平台词表已有的能力。这里只做可复现的词表召回，不伪装成
+ * 大模型语义理解：中文和较长短语允许直接包含，短英文词要求词边界，避免把 `go`
+ * 从 `google` 中误识别出来。更复杂的语义召回可以在同一接口后替换而不影响调用方。
+ */
+export function inferMatchingTagsFromText(
+  text: string,
+  canonicalByAlias: ReadonlyMap<string, string>,
+): readonly string[] {
+  const normalizedText = text.toLocaleLowerCase().replace(/\s+/gu, " ");
+  const inferred = new Set<string>();
+  for (const [alias, canonical] of canonicalByAlias) {
+    if (alias.length === 0) continue;
+    const containsCjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(alias);
+    const matched = containsCjk || alias.length >= 4
+      ? normalizedText.includes(alias)
+      : new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(alias)}([^\\p{L}\\p{N}]|$)`, "u").test(normalizedText);
+    if (matched) inferred.add(canonical);
+    if (inferred.size >= MAX_MATCHING_TAG_COUNT) break;
+  }
+  return [...inferred].sort();
+}
+
 /** 单个标签的展示值和匹配值必须一致，避免只在提交时突然改变用户输入。 */
 export function normalizeMatchingTag(rawTag: string): string {
   return rawTag.trim().replace(/\s+/gu, " ").toLocaleLowerCase();
@@ -79,4 +102,8 @@ export function isMatchingTagSyntaxValid(tag: string): boolean {
     return character === "," || character === "，" || codePoint < 32 || codePoint === 127;
   });
   return /[\p{L}\p{N}]/u.test(tag) && !containsUnsafeCharacter;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

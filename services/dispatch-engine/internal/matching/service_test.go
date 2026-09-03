@@ -72,7 +72,7 @@ func TestRunMatchingPersistsCompleteCandidateEvidenceAndReplaysSameFingerprint(t
 	candidate := first.Candidates[0]
 	if candidate.AgentID != "agent-1" || candidate.Name != "Go 工程师" || candidate.QuoteMinor != "8000" ||
 		candidate.EstimatedDurationSecond != 1_800 || candidate.Score != 4.8 || candidate.Completed != 42 ||
-		candidate.RankScore == "" || candidate.IsNew {
+		candidate.RankScore == "" || candidate.IsNew || candidate.DeliveryCases == nil {
 		t.Fatalf("candidate evidence incomplete: %+v", candidate)
 	}
 	if len(first.InputSnapshot) == 0 || first.RuleVersion != "ranking-v1" || first.InputFingerprint == "" {

@@ -17,7 +17,8 @@ const CHAIN_EVENT: ChainEvent = {
 
 describe("task state and fee authority", () => {
   it("allows the legal main path and rejects skipped escrow", () => {
-    expect(transitionTaskStatus("draft", { type: "submit" })).toBe("awaiting_escrow");
+    expect(transitionTaskStatus("draft", { type: "submit" })).toBe("planning");
+    expect(transitionTaskStatus("planning", { type: "workflow_quote_confirmed", amountMinor: 10_000_000n })).toBe("awaiting_escrow");
     expect(transitionTaskStatus("awaiting_escrow", { type: "escrow_confirmed", txHash: CHAIN_EVENT.txHash })).toBe("matching");
     expect(() => transitionTaskStatus("draft", { type: "escrow_confirmed", txHash: CHAIN_EVENT.txHash })).toThrow("draft cannot apply escrow_confirmed");
   });
@@ -38,6 +39,7 @@ describe("task state and fee authority", () => {
   });
 
   it("只允许正式工作流在最终链上结算后进入 settled，争议状态不能绕过仲裁", () => {
+    expect(transitionTaskStatus("matching", { type: "workflow_final_accepted" })).toBe("pending_settlement");
     expect(transitionTaskStatus("matching", {
       type: "workflow_settlement_confirmed",
       txHash: CHAIN_EVENT.txHash,

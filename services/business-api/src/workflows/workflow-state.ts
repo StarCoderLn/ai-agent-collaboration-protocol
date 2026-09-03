@@ -15,6 +15,8 @@ export type WorkflowRunStatus =
   | "cancelled";
 
 export type WorkflowNodeStatus =
+  | "selecting"
+  | "selected"
   | "blocked"
   | "matching"
   | "awaiting_agent_acceptance"
@@ -27,9 +29,13 @@ export type WorkflowNodeStatus =
   | "cancelled";
 
 export type WorkflowNodeEvent =
+  | Readonly<{ type: "candidate_selected" }>
+  | Readonly<{ type: "root_execution_activated" }>
+  | Readonly<{ type: "dependent_execution_activated" }>
   | Readonly<{ type: "assignment_locked" }>
   | Readonly<{ type: "agent_accepted" }>
   | Readonly<{ type: "assignment_failed" }>
+	| Readonly<{ type: "stale_execution_recovery" }>
   | Readonly<{ type: "progress_reported" }>
   | Readonly<{ type: "execution_failed" }>
   | Readonly<{ type: "results_submitted" }>
@@ -55,6 +61,14 @@ export class WorkflowStateError extends Error {
 }
 
 const NODE_TRANSITIONS: Readonly<Record<WorkflowNodeStatus, Partial<Record<WorkflowNodeEvent["type"], WorkflowNodeStatus>>>> = {
+  selecting: { candidate_selected: "selected", cancelled: "cancelled" },
+  // selected 只表示报价已冻结，不代表 Agent 已收到任务。托管确认后，根节点进入
+  // matching，存在上游依赖的节点进入 blocked，执行顺序仍由 DAG 解锁规则控制。
+  selected: {
+    root_execution_activated: "matching",
+    dependent_execution_activated: "blocked",
+    cancelled: "cancelled",
+  },
   blocked: { cancelled: "cancelled" },
   matching: { assignment_locked: "awaiting_agent_acceptance", cancelled: "cancelled" },
   awaiting_agent_acceptance: {
@@ -65,6 +79,9 @@ const NODE_TRANSITIONS: Readonly<Record<WorkflowNodeStatus, Partial<Record<Workf
   executing: {
     progress_reported: "executing",
     execution_failed: "execution_failed",
+		// 只有持久化仓储证明执行快照仍绑定旧 assignment 时，才会构造这个内部事件。
+		// 外部 assignment_failed 不能直接从 executing 回退，避免打断正常模型调用。
+		stale_execution_recovery: "matching",
     results_submitted: "awaiting_review",
     dispute_opened: "disputed",
     cancelled: "cancelled",
@@ -136,6 +153,7 @@ export function aggregateWorkflowStatus(nodes: readonly WorkflowNodeSnapshot[]):
   if (nodes.every((node) => node.status === "cancelled")) return "cancelled";
   if (nodes.some((node) => node.status === "execution_failed")) return "failed";
   if (nodes.some((node) => node.status === "awaiting_review")) return "awaiting_review";
+  if (nodes.every((node) => node.status === "selecting" || node.status === "selected")) return "planning";
   if (nodes.every((node) => node.status === "blocked")) return "planning";
   return "running";
 }

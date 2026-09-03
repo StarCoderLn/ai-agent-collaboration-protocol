@@ -97,12 +97,14 @@ func TestPendingReviewCanBeApprovedOrRejectedOnlyWithReviewEvidence(t *testing.T
 	}
 }
 
-func TestMatchingIsDeterministicAndFiltersProbationBudget(t *testing.T) {
+func TestMatchingIsDeterministicAndDoesNotHideCandidatesByBudget(t *testing.T) {
 	now := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
-	task := MatchTask{ID: "task-1", CategoryID: "code", Tags: []string{"Go", "API"}, BudgetMinor: 10_000, Deadline: now.Add(time.Hour)}
+	// 规划预算故意低于两个合格候选的报价，证明它不会作为候选硬过滤条件。
+	task := MatchTask{ID: "task-1", CategoryID: "code", Tags: []string{"Go", "API"}, BudgetMinor: 3_000, Deadline: now.Add(time.Hour)}
 	agents := []AgentCandidate{
 		{ID: "b", CategoryID: "code", Tags: []string{"Go"}, State: AgentState{Status: AgentActive}, PriceMinor: 9_000, Score: 4.5, Completed: 20, EstimatedDuration: 30 * time.Minute, ResponseMinutes: 2, RatingSampleSize: 30, PriorWeight: 20, ProbationBudgetCapMinor: 5_000},
-		{ID: "a", CategoryID: "code", Tags: []string{"Go", "API"}, State: AgentState{Status: AgentActive}, PriceMinor: 8_000, Score: 4.4, Completed: 40, EstimatedDuration: 30 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 2, PriorWeight: 20, ProbationBudgetCapMinor: 5_000},
+		{ID: "a", CategoryID: "code", Tags: []string{"Go", "API"}, State: AgentState{Status: AgentActive}, PriceMinor: 4_000, Score: 4.4, Completed: 40, EstimatedDuration: 30 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 2, PriorWeight: 20, ProbationBudgetCapMinor: 5_000},
+		{ID: "risk", CategoryID: "code", Tags: []string{"Go", "API"}, State: AgentState{Status: AgentActive}, PriceMinor: 6_000, Score: 4.7, Completed: 1, EstimatedDuration: 20 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 1, PriorWeight: 20, ProbationBudgetCapMinor: 5_000},
 		{ID: "c", CategoryID: "code", Tags: []string{"API"}, State: AgentState{Status: AgentPaused}, PriceMinor: 8_000, Score: 4.9, Completed: 100, EstimatedDuration: 20 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 100, PriorWeight: 20, ProbationBudgetCapMinor: 5_000},
 		{ID: "d", CategoryID: "code", Tags: []string{"Go"}, State: AgentState{Status: AgentPendingReview}, PriceMinor: 7_000, Score: 4.8, Completed: 80, EstimatedDuration: 20 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 100, PriorWeight: 20, ProbationBudgetCapMinor: 5_000},
 	}
@@ -115,10 +117,10 @@ func TestMatchingIsDeterministicAndFiltersProbationBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Candidates) != 1 || first.Candidates[0].Agent.ID != "b" {
+	if len(first.Candidates) != 2 || first.Candidates[0].Agent.ID != "a" || first.Candidates[1].Agent.ID != "b" {
 		t.Fatalf("unexpected candidates: %+v", first)
 	}
-	if first.FilterReasons["a"] != ProbationBudgetExceeded || first.FilterReasons["c"] != InactiveAgent || first.FilterReasons["d"] != InactiveAgent {
+	if first.FilterReasons["risk"] != ProbationBudgetExceeded || first.FilterReasons["c"] != InactiveAgent || first.FilterReasons["d"] != InactiveAgent {
 		t.Fatalf("missing filter reasons: %+v", first.FilterReasons)
 	}
 	if second.Candidates[0].RankScore != first.Candidates[0].RankScore {

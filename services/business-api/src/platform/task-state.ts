@@ -3,12 +3,13 @@
  * `tasks.status` 只是持久化结果，不允许各 Route Handler 自行拼接 UPDATE 状态。
  */
 export type TaskStatus =
-  | "draft" | "awaiting_escrow" | "matching" | "awaiting_agent_acceptance"
+  | "draft" | "planning" | "awaiting_escrow" | "matching" | "awaiting_agent_acceptance"
   | "executing" | "awaiting_review" | "rework" | "pending_settlement"
   | "execution_failed" | "settled" | "disputed" | "refunded" | "timed_out";
 
 export type TaskTransitionEvent =
   | { type: "submit" }
+  | { type: "workflow_quote_confirmed"; amountMinor: bigint }
   | { type: "escrow_confirmed"; txHash: string }
   | { type: "assignment_locked"; assignmentId: string }
   | { type: "agent_accepted"; assignmentId: string }
@@ -18,6 +19,7 @@ export type TaskTransitionEvent =
   | { type: "result_submitted"; resultId: string }
   | { type: "rework_requested"; requestId: string }
   | { type: "result_accepted" }
+  | { type: "workflow_final_accepted" }
   | { type: "settlement_confirmed"; txHash: string }
   | { type: "workflow_settlement_confirmed"; txHash: string }
   | { type: "dispute_opened"; disputeId: string }
@@ -26,16 +28,19 @@ export type TaskTransitionEvent =
   | { type: "deadline_elapsed" };
 
 const transitions: Readonly<Record<TaskStatus, Readonly<Partial<Record<TaskTransitionEvent["type"], TaskStatus>>>>> = {
-  draft: { submit: "awaiting_escrow" },
+  // 发布后先形成工作流并选择各阶段 Agent。只有全部报价被冻结，任务才允许进入托管；
+  // 这条状态边界防止浏览器绕过选人步骤，继续按用户预估预算直接存入资金。
+  draft: { submit: "planning" },
+  planning: { workflow_quote_confirmed: "awaiting_escrow" },
   awaiting_escrow: { escrow_confirmed: "matching" },
   // 正式工作流的细粒度执行状态由 task_workflow_runs/nodes 承载；tasks.status 在该模式
   // 下只是市场与通知投影，因此最终链上结算可以从 matching 投影直接进入 settled。
-  matching: { assignment_locked: "awaiting_agent_acceptance", workflow_settlement_confirmed: "settled", deadline_elapsed: "timed_out" },
+  matching: { assignment_locked: "awaiting_agent_acceptance", workflow_final_accepted: "pending_settlement", workflow_settlement_confirmed: "settled", deadline_elapsed: "timed_out" },
   awaiting_agent_acceptance: { agent_accepted: "executing", assignment_failed: "matching", deadline_elapsed: "timed_out" },
   // 执行中也允许争议：例如 Agent 已声明开始执行但长期不响应。争议一旦创建，
   // 后续资金操作只能由仲裁路径触发，不能继续走普通超时结算。
-  executing: { result_submitted: "awaiting_review", execution_failed: "execution_failed", workflow_settlement_confirmed: "settled", deadline_elapsed: "timed_out", dispute_opened: "disputed" },
-  awaiting_review: { rework_requested: "rework", result_accepted: "pending_settlement", workflow_settlement_confirmed: "settled", dispute_opened: "disputed" },
+  executing: { result_submitted: "awaiting_review", execution_failed: "execution_failed", workflow_final_accepted: "pending_settlement", workflow_settlement_confirmed: "settled", deadline_elapsed: "timed_out", dispute_opened: "disputed" },
+  awaiting_review: { rework_requested: "rework", result_accepted: "pending_settlement", workflow_final_accepted: "pending_settlement", workflow_settlement_confirmed: "settled", dispute_opened: "disputed" },
   rework: { result_submitted: "awaiting_review", execution_failed: "execution_failed", deadline_elapsed: "timed_out" },
   pending_settlement: { settlement_confirmed: "settled", workflow_settlement_confirmed: "settled", dispute_opened: "disputed" },
   // 执行失败不会自动退款或释放托管资金；由双方举证后通过争议状态机决定资金去向。

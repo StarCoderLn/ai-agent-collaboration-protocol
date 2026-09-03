@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_MATCHING_TAG_COUNT } from "./matching-tags";
+import { inferMatchingTagsFromText, MAX_MATCHING_TAG_COUNT } from "./matching-tags";
 import { normalizeTaskTags, validateTaskDraft, type TaskDraft, type TaskValidationConfig } from "./task-validation";
 
 const NOW = new Date("2026-08-23T00:00:00.000Z");
@@ -56,6 +56,12 @@ describe("validateTaskDraft", () => {
     expect(errors.map((item) => item.code)).toEqual(expect.arrayContaining(["BUDGET_RANGE_INVALID", "FORBIDDEN_TAG"]));
   });
 
+  it("允许发布阶段没有报价，但已有报价仍必须满足资金范围", () => {
+    expect(validateTaskDraft(validDraft({ pricing: null }), NOW, CONFIG)).toHaveLength(0);
+    expect(validateTaskDraft(validDraft({ pricing: { type: "fixed", amountMinor: 50n } }), NOW, CONFIG))
+      .toContainEqual(expect.objectContaining({ code: "BUDGET_OUT_OF_RANGE" }));
+  });
+
   it("bounds custom tag count, length and unsafe delimiters", () => {
     expect(validateTaskDraft(validDraft({ tags: Array.from({ length: MAX_MATCHING_TAG_COUNT + 1 }, (_, index) => `tag-${index}`) }), NOW, CONFIG))
       .toContainEqual(expect.objectContaining({ code: "TAG_COUNT_EXCEEDED" }));
@@ -86,4 +92,15 @@ describe("validateTaskDraft", () => {
 it("normalizes synonyms and custom whitespace once while removing duplicates", () => {
   expect(normalizeTaskTags([" NextJS ", "next.js", "UI", "RAG   Workflow"], new Map([["nextjs", "next.js"]])))
     .toEqual(["next.js", "rag workflow", "ui"]);
+});
+
+it("从自然语言识别规范能力，同时避免短英文标签的子串误命中", () => {
+  const vocabulary = new Map([
+    ["nextjs", "next.js"],
+    ["自动化测试", "testing"],
+    ["go", "go"],
+  ]);
+  expect(inferMatchingTagsFromText("使用 NextJS 并补充自动化测试", vocabulary))
+    .toEqual(["next.js", "testing"]);
+  expect(inferMatchingTagsFromText("Use Google APIs", vocabulary)).not.toContain("go");
 });

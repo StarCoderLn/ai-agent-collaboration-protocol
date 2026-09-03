@@ -14,6 +14,10 @@ export function GET(request: Request, context: WorkflowRouteContext): Promise<Re
   return getHandlers().detail(request, context);
 }
 
+export function PATCH(request: Request, context: WorkflowRouteContext): Promise<Response> {
+  return getHandlers().updatePreference(request, context);
+}
+
 export function OPTIONS(): Response {
-  return handleCorsPreflight(corsOriginFromSiweConfig(loadSiweConfigFromEnv()), "GET, OPTIONS");
+  return handleCorsPreflight(corsOriginFromSiweConfig(loadSiweConfigFromEnv()), "GET, PATCH, OPTIONS");
 }

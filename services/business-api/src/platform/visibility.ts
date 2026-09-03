@@ -18,8 +18,9 @@ export type TaskRecordForAudience = Readonly<{
   categoryId: string;
   tags: readonly string[];
   visibility: "public" | "private";
-  budgetMinMinor: bigint;
-  budgetMaxMinor: bigint;
+  /** 规划期没有冻结报价；选完 Agent 后才回写准确金额。 */
+  budgetMinMinor: bigint | null;
+  budgetMaxMinor: bigint | null;
   currency: string;
   deadline: Date;
   requiredCapability: string;

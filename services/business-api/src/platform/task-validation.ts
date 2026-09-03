@@ -33,16 +33,19 @@ export type TaskDraft = Readonly<{
   deliverableFormat: string;
   categoryId: string;
   tags: readonly string[];
-  pricing: TaskPricing;
+  /**
+   * 发布阶段尚未产生可托管报价，因此 pricing 可以为空。只有用户选完所有工作流
+   * Agent 后，系统才会把冻结报价回写为 fixed；不能用占位预算冒充资金事实。
+   */
+  pricing: TaskPricing | null;
   currency: string;
   deadline: Date;
   requiredCapability: string;
   attachments: readonly TaskAttachment[];
 }>;
 
-export type EditableTaskDraft = Readonly<Omit<TaskDraft, "categoryId" | "pricing" | "deadline"> & {
+export type EditableTaskDraft = Readonly<Omit<TaskDraft, "categoryId" | "deadline"> & {
   categoryId: string | null;
-  pricing: TaskPricing | null;
   deadline: Date | null;
 }>;
 
@@ -80,7 +83,8 @@ export function validateTaskDraft(input: TaskDraft, now: Date, config: TaskValid
   if (input.deadline.getTime() < now.getTime() + config.minExecutionPeriodMs) {
     errors.push(error("deadline", "DEADLINE_TOO_SOON", `截止时间至少应晚于当前 ${Math.ceil(config.minExecutionPeriodMs / 60_000)} 分钟`));
   }
-  validatePricing(input.pricing, config, errors);
+  // 已有报价（例如旧草稿或冻结报价）仍需完整校验；没有报价是新发布链路的合法状态。
+  if (input.pricing !== null) validatePricing(input.pricing, config, errors);
   errors.push(...validateMatchingTags(input.tags, config.forbiddenTags)
     .map((issue) => error("tags", issue.code, issue.message)));
   errors.push(...validateTaskAttachments(input.attachments, config.attachmentLimit));
@@ -89,17 +93,17 @@ export function validateTaskDraft(input: TaskDraft, now: Date, config: TaskValid
 
 /**
  * 草稿到可发布任务只有这一处类型收窄。预览、市场投影和提交命令共用它，避免某个
- * 入口忘记检查分类、预算或截止时间就把半成品当成正式任务。
+ * 入口忘记检查分类或截止时间就把半成品当成正式任务。预算不属于发布完整性：
+ * 准确金额要等用户在匹配阶段选完 Agent 后才能冻结。
  */
 export function inspectTaskDraftCompleteness(input: EditableTaskDraft): CompleteTaskDraftResult {
   const issues: TaskFieldError[] = [];
   if (input.categoryId === null) issues.push(error("categoryId", "CATEGORY_REQUIRED", "请选择任务分类"));
-  if (input.pricing === null) issues.push(error("pricing", "PRICING_REQUIRED", "请填写任务预算"));
   if (input.deadline === null) issues.push(error("deadline", "DEADLINE_REQUIRED", "请填写任务截止时间"));
-  if (issues.length > 0 || input.categoryId === null || input.pricing === null || input.deadline === null) {
+  if (issues.length > 0 || input.categoryId === null || input.deadline === null) {
     return { success: false, issues };
   }
-  return { success: true, draft: { ...input, categoryId: input.categoryId, pricing: input.pricing, deadline: input.deadline } };
+  return { success: true, draft: { ...input, categoryId: input.categoryId, deadline: input.deadline } };
 }
 
 export function requireCompleteTaskDraft(input: EditableTaskDraft): TaskDraft {

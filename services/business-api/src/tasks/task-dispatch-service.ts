@@ -1,5 +1,12 @@
 import type { TaskServiceResult } from "./task-service";
 import type { TaskRepository } from "./task-repository";
+import {
+  WorkflowSelectionRepositoryError,
+  type WorkflowSelectionErrorCode,
+  type WorkflowSelectionRepository,
+} from "../workflows/workflow-selection-repository";
+
+type TaskDispatchErrorCode = "TASK_NOT_FOUND" | "IDEMPOTENCY_KEY_REQUIRED" | WorkflowSelectionErrorCode;
 
 export interface DispatchEngineGateway {
   candidates(taskId: string, actorId: string): Promise<TaskServiceResult>;
@@ -7,6 +14,7 @@ export interface DispatchEngineGateway {
   confirm(taskId: string, agentId: string, actorId: string, idempotencyKey: string): Promise<TaskServiceResult>;
   latestAssignment(taskId: string, actorId: string): Promise<TaskServiceResult>;
   retryExecution(taskId: string, actorId: string, idempotencyKey: string): Promise<TaskServiceResult>;
+  retryWorkflowNodeExecution(taskId: string, nodeId: string, actorId: string, idempotencyKey: string): Promise<TaskServiceResult>;
   workflowNodeCandidates(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult>;
   rematchWorkflowNode(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult>;
   confirmWorkflowNode(taskId: string, nodeId: string, agentId: string, actorId: string, idempotencyKey: string): Promise<TaskServiceResult>;
@@ -15,7 +23,7 @@ export interface DispatchEngineGateway {
 
 export class TaskDispatchServiceError extends Error {
   constructor(
-    readonly code: "TASK_NOT_FOUND" | "IDEMPOTENCY_KEY_REQUIRED",
+    readonly code: TaskDispatchErrorCode,
     message: string,
     readonly statusCode: number,
   ) { super(message); }
@@ -31,6 +39,7 @@ export class TaskDispatchService {
   constructor(
     private readonly tasks: TaskRepository,
     private readonly dispatch: DispatchEngineGateway,
+    private readonly workflowSelection?: WorkflowSelectionRepository,
   ) {}
 
   async candidates(taskId: string, actorId: string): Promise<TaskServiceResult> {
@@ -78,8 +87,35 @@ export class TaskDispatchService {
     actorId: string,
     idempotencyKey: string | undefined,
   ): Promise<TaskServiceResult> {
-    await this.assertPublisher(taskId, actorId);
+    const task = await this.assertPublisher(taskId, actorId);
     this.assertIdempotencyKey(idempotencyKey, "确认节点候选");
+    // 选完全部阶段后任务会进入 awaiting_escrow，但在创建任何托管意图之前，发布者仍可
+    // 更换某一阶段的 Agent。两个状态都必须走同一个选择仓储，由仓储在事务内校验候选
+    // 快照、托管锁和报价重算；matching 及之后的正式执行状态仍交给派发引擎处理。
+    if (task.status === "planning" || task.status === "awaiting_escrow") {
+      if (this.workflowSelection === undefined) {
+        throw new TaskDispatchServiceError("TASK_NOT_FOUND", "工作流选择服务暂不可用", 503);
+      }
+      try {
+        return await this.workflowSelection.select({
+          taskId,
+          nodeId,
+          agentId,
+          actorId,
+          idempotencyKey,
+          selectedAt: new Date(),
+        });
+      } catch (error) {
+        if (error instanceof WorkflowSelectionRepositoryError) {
+          throw new TaskDispatchServiceError(
+            error.code,
+            error.message,
+            error.statusCode,
+          );
+        }
+        throw error;
+      }
+    }
     return this.dispatch.confirmWorkflowNode(taskId, nodeId, agentId, actorId, idempotencyKey);
   }
 
@@ -102,6 +138,21 @@ export class TaskDispatchService {
     return this.dispatch.retryExecution(taskId, actorId, idempotencyKey);
   }
 
+  /**
+   * 正式工作流只恢复失败节点，不回退已验收上游，也不创建新的托管意图。具体取消与
+   * outbox 原子性仍由分发引擎负责，Business API 只承担发布者授权和幂等键门禁。
+   */
+  async retryWorkflowNodeExecution(
+    taskId: string,
+    nodeId: string,
+    actorId: string,
+    idempotencyKey: string | undefined,
+  ): Promise<TaskServiceResult> {
+    await this.assertPublisher(taskId, actorId);
+    this.assertIdempotencyKey(idempotencyKey, "重新执行工作流节点");
+    return this.dispatch.retryWorkflowNodeExecution(taskId, nodeId, actorId, idempotencyKey);
+  }
+
   private assertIdempotencyKey(value: string | undefined, operation: string): asserts value is string {
     if (value === undefined || value.trim().length < 8 || value.length > 200) {
       throw new TaskDispatchServiceError(
@@ -112,10 +163,12 @@ export class TaskDispatchService {
     }
   }
 
-  private async assertPublisher(taskId: string, actorId: string): Promise<void> {
-    if (await this.tasks.findOwned(taskId, actorId) === null) {
+  private async assertPublisher(taskId: string, actorId: string) {
+    const task = await this.tasks.findOwned(taskId, actorId);
+    if (task === null) {
       // 与详情接口一致，对越权和不存在返回同一错误，避免枚举私密任务 ID。
       throw new TaskDispatchServiceError("TASK_NOT_FOUND", "任务不存在或无权访问", 404);
     }
+    return task;
   }
 }

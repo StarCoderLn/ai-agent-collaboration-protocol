@@ -15,6 +15,7 @@ export interface TaskDispatchOperations {
   confirm(taskId: string, agentId: string, actorId: string, idempotencyKey: string | undefined): Promise<TaskServiceResult>;
   latestAssignment(taskId: string, actorId: string): Promise<TaskServiceResult>;
   retryExecution(taskId: string, actorId: string, idempotencyKey: string | undefined): Promise<TaskServiceResult>;
+  retryWorkflowNodeExecution(taskId: string, nodeId: string, actorId: string, idempotencyKey: string | undefined): Promise<TaskServiceResult>;
   workflowNodeCandidates(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult>;
   rematchWorkflowNode(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult>;
   confirmWorkflowNode(taskId: string, nodeId: string, agentId: string, actorId: string, idempotencyKey: string | undefined): Promise<TaskServiceResult>;
@@ -41,6 +42,15 @@ export function createTaskDispatchHandlers(deps: TaskDispatchHttpDeps) {
         actorId,
         request.headers.get("idempotency-key") ?? undefined,
       )),
+    retryWorkflowNodeExecution: (request: Request, context: TaskDispatchRouteContext) => authenticatedNode(
+      request, context, deps,
+      (taskId, nodeId, actorId) => deps.service.retryWorkflowNodeExecution(
+        taskId,
+        nodeId,
+        actorId,
+        request.headers.get("idempotency-key") ?? undefined,
+      ),
+    ),
     workflowNodeCandidates: (request: Request, context: TaskDispatchRouteContext) => authenticatedNode(
       request, context, deps,
       (taskId, nodeId, actorId) => deps.service.workflowNodeCandidates(taskId, nodeId, actorId),

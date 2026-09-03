@@ -36,12 +36,21 @@ type MatchInput struct {
 	// AssignmentMode 与候选输入一起进入指纹和快照。自动分配只能依据这份被冻结的
 	// 匹配事实，不能在生成候选后重新读取可能已经变化的任务设置。
 	AssignmentMode AssignmentMode
+	// DispatchReady 是节点当前阶段的瞬时门禁，不进入输入指纹。selecting 与 matching
+	// 使用同一份候选事实；托管确认只改变是否可派发，不应凭空生成另一版候选。
+	DispatchReady bool `json:"-"`
+	// PreviousAssignmentID 只在最新分配已经取消时存在，用来标识当前派发是对哪一次
+	// 执行的替换。该运行态事实不能进入候选指纹，否则一次恢复会制造新的候选版本。
+	PreviousAssignmentID string `json:"-"`
 }
 
 type CandidateView struct {
 	AgentID     string   `json:"agentId"`
 	Name        string   `json:"name,omitempty"`
 	MatchedTags []string `json:"matchedTags"`
+	// UnmatchedTags 只表示 Agent 的声明标签尚未覆盖该能力，不等于 Agent 一定做不到；
+	// 前端据此诚实展示证据缺口，不能把缺少标签伪装成已验证能力。
+	UnmatchedTags []string `json:"unmatchedTags"`
 	// 金额通过十进制字符串跨服务传输，避免浏览器把 BIGINT 解码为不安全的 float64。
 	QuoteMinor              string  `json:"quoteMinor"`
 	EstimatedDurationSecond int64   `json:"estimatedDurationSeconds"`
@@ -50,6 +59,18 @@ type CandidateView struct {
 	ResponseMinutes         int     `json:"responseMinutes"`
 	IsNew                   bool    `json:"isNew"`
 	RankScore               string  `json:"rankScore"`
+	// 推荐徽标与证据全部来自冻结输入，不由浏览器根据展示顺序临时猜测。
+	RecommendationBadges []string                   `json:"recommendationBadges"`
+	TaskFitScore         int                        `json:"taskFitScore"`
+	Confidence           string                     `json:"confidence"`
+	SampleSize           int                        `json:"sampleSize"`
+	SimilarCompleted     int                        `json:"similarCompleted"`
+	OnTimeRate           float64                    `json:"onTimeRate"`
+	ReworkRate           float64                    `json:"reworkRate"`
+	DisputeRate          float64                    `json:"disputeRate"`
+	CurrentLoad          int                        `json:"currentLoad"`
+	ScoreDimensions      json.RawMessage            `json:"scoreDimensions"`
+	DeliveryCases        []domain.AgentDeliveryCase `json:"deliveryCases"`
 }
 
 type Record struct {
@@ -64,6 +85,10 @@ type Record struct {
 	AssignmentMode   AssignmentMode                      `json:"assignmentMode"`
 	FinalSelectionID string                              `json:"finalSelectionAgentId,omitempty"`
 	CreatedAt        time.Time                           `json:"createdAt"`
+	DispatchReady    bool                                `json:"-"`
+	// PreviousAssignmentID 标识本轮派发正在替换的已取消分配。它只参与构造新的
+	// 派发幂等身份，不属于候选快照，也不能通过外部 API 伪造或持久化回候选记录。
+	PreviousAssignmentID string `json:"-"`
 }
 
 type Repository interface {
@@ -99,10 +124,12 @@ func (s *Service) RunMatching(ctx context.Context, taskID string) (Record, error
 		s.Repository.LoadInput,
 		s.Repository.FindByFingerprint,
 		s.Repository.Save,
+		nil,
 	)
 }
 
-// RunWorkflowNodeMatching 使用节点自身的分类、标签、预算上限和依赖截止时间匹配。
+// RunWorkflowNodeMatching 使用节点自身的分类、标签、价格偏好和依赖截止时间匹配。
+// 价格偏好为 0 表示用户尚未设置上限，不会过滤候选，也不会冒充冻结报价。
 // 候选仍复用同一排序领域函数，但快照和唯一键都带 node id，互不覆盖相邻节点。
 func (s *Service) RunWorkflowNodeMatching(ctx context.Context, taskID, workflowNodeID string) (Record, error) {
 	if taskID == "" || workflowNodeID == "" || s.Repository == nil {
@@ -123,6 +150,9 @@ func (s *Service) RunWorkflowNodeMatching(ctx context.Context, taskID, workflowN
 			return repository.FindWorkflowNodeByFingerprint(ctx, taskID, workflowNodeID, fingerprint)
 		},
 		repository.SaveWorkflowNode,
+		func(ctx context.Context, taskID string) (Record, error) {
+			return repository.LatestWorkflowNode(ctx, taskID, workflowNodeID)
+		},
 	)
 }
 
@@ -133,10 +163,22 @@ func (s *Service) runMatching(
 	load func(context.Context, string) (MatchInput, error),
 	find func(context.Context, string, string) (Record, error),
 	save func(context.Context, Record) (Record, error),
+	latest func(context.Context, string) (Record, error),
 ) (Record, error) {
 	input, err := load(ctx, taskID)
 	if err != nil {
 		return Record{}, err
+	}
+	// 托管确认后必须派发用户已经冻结的候选，不能因为节点 updated_at 或预算帽变更
+	// 重新排名。此时直接读取最新选择快照；没有选择才继续走普通匹配/自动分配路径。
+	if input.DispatchReady && latest != nil {
+		if selected, latestErr := latest(ctx, taskID); latestErr == nil && selected.FinalSelectionID != "" {
+			selected.DispatchReady = true
+			selected.PreviousAssignmentID = input.PreviousAssignmentID
+			return selected, nil
+		} else if latestErr != nil && !errors.Is(latestErr, ErrRecordNotFound) {
+			return Record{}, latestErr
+		}
 	}
 	canonicalizeInput(&input)
 	snapshot, fingerprint, err := snapshotInput(input)
@@ -144,6 +186,8 @@ func (s *Service) runMatching(
 		return Record{}, err
 	}
 	if existing, findErr := find(ctx, taskID, fingerprint); findErr == nil {
+		existing.DispatchReady = input.DispatchReady
+		existing.PreviousAssignmentID = input.PreviousAssignmentID
 		return existing, nil
 	} else if !errors.Is(findErr, ErrRecordNotFound) {
 		return Record{}, findErr
@@ -157,14 +201,16 @@ func (s *Service) runMatching(
 		return Record{}, err
 	}
 	record := Record{
-		TaskID:           taskID,
-		WorkflowNodeID:   workflowNodeID,
-		RuleVersion:      distribution.RuleVersion,
-		InputFingerprint: fingerprint,
-		InputSnapshot:    snapshotWithEvaluationTime(snapshot, evaluatedAt),
-		Candidates:       candidateViews(distribution.Candidates),
-		FilterReasons:    distribution.FilterReasons,
-		AssignmentMode:   input.AssignmentMode,
+		TaskID:               taskID,
+		WorkflowNodeID:       workflowNodeID,
+		RuleVersion:          distribution.RuleVersion,
+		InputFingerprint:     fingerprint,
+		InputSnapshot:        snapshotWithEvaluationTime(snapshot, evaluatedAt),
+		Candidates:           candidateViews(distribution.Candidates, input.Task.Tags),
+		FilterReasons:        distribution.FilterReasons,
+		AssignmentMode:       input.AssignmentMode,
+		DispatchReady:        input.DispatchReady,
+		PreviousAssignmentID: input.PreviousAssignmentID,
 	}
 	return save(ctx, record)
 }
@@ -187,13 +233,29 @@ func (s *Service) LatestWorkflowNodeCandidates(ctx context.Context, taskID, work
 	return repository.LatestWorkflowNode(ctx, taskID, workflowNodeID)
 }
 
-func candidateViews(candidates []domain.RankedCandidate) []CandidateView {
+func candidateViews(candidates []domain.RankedCandidate, taskTags []string) []CandidateView {
+	qualityIndex, valueIndex := preferredCandidateIndexes(candidates)
 	views := make([]CandidateView, 0, len(candidates))
-	for _, candidate := range candidates {
+	for index, candidate := range candidates {
+		badges := make([]string, 0, 3)
+		if index == 0 {
+			badges = append(badges, "best_overall")
+		}
+		if index == qualityIndex {
+			badges = append(badges, "quality_first")
+		}
+		if index == valueIndex {
+			badges = append(badges, "best_value")
+		}
+		fitScore := 100
+		if len(taskTags) > 0 {
+			fitScore = len(candidate.MatchedTags) * 100 / len(taskTags)
+		}
 		views = append(views, CandidateView{
 			AgentID:                 candidate.Agent.ID,
 			Name:                    candidate.Agent.Name,
 			MatchedTags:             append([]string(nil), candidate.MatchedTags...),
+			UnmatchedTags:           unmatchedTags(taskTags, candidate.MatchedTags),
 			QuoteMinor:              strconv.FormatInt(candidate.Agent.PriceMinor, 10),
 			EstimatedDurationSecond: int64(candidate.Agent.EstimatedDuration / time.Second),
 			Score:                   candidate.Agent.Score,
@@ -201,9 +263,72 @@ func candidateViews(candidates []domain.RankedCandidate) []CandidateView {
 			ResponseMinutes:         candidate.Agent.ResponseMinutes,
 			IsNew:                   candidate.Agent.RatingSampleSize < candidate.Agent.PriorWeight,
 			RankScore:               strconv.FormatInt(candidate.RankScore, 10),
+			RecommendationBadges:    badges,
+			TaskFitScore:            fitScore,
+			Confidence:              confidence(candidate.Agent.RatingSampleSize, candidate.Agent.PriorWeight),
+			SampleSize:              candidate.Agent.RatingSampleSize,
+			SimilarCompleted:        candidate.Agent.SimilarCompleted,
+			OnTimeRate:              candidate.Agent.OnTimeRate,
+			ReworkRate:              candidate.Agent.ReworkRate,
+			DisputeRate:             candidate.Agent.DisputeRate,
+			CurrentLoad:             candidate.Agent.CurrentLoad,
+			ScoreDimensions:         append(json.RawMessage(nil), candidate.Agent.ScoreDimensions...),
+			// API 契约中的案例始终是数组。没有案例时输出 [] 而不是 null，避免浏览器把
+			// 整份候选响应判定为结构损坏，也让调用方无需维护两套“没有数据”语义。
+			DeliveryCases: append(
+				make([]domain.AgentDeliveryCase, 0, len(candidate.Agent.DeliveryCases)),
+				candidate.Agent.DeliveryCases...,
+			),
 		})
 	}
 	return views
+}
+
+func preferredCandidateIndexes(candidates []domain.RankedCandidate) (int, int) {
+	if len(candidates) == 0 {
+		return -1, -1
+	}
+	qualityIndex, valueIndex := 0, 0
+	for index := 1; index < len(candidates); index++ {
+		if candidates[index].Agent.Score > candidates[qualityIndex].Agent.Score {
+			qualityIndex = index
+		}
+		// score 先量化为千分位，再交叉相乘比较“每单位价格的质量”，避免浮点除法
+		// 和不同运行时舍入让同一冻结快照得到不同徽标。
+		currentQuality := int64(candidates[index].Agent.Score * 1000)
+		bestQuality := int64(candidates[valueIndex].Agent.Score * 1000)
+		if currentQuality*candidates[valueIndex].Agent.PriceMinor > bestQuality*candidates[index].Agent.PriceMinor {
+			valueIndex = index
+		}
+	}
+	return qualityIndex, valueIndex
+}
+
+func confidence(sampleSize, priorWeight int) string {
+	if sampleSize < priorWeight {
+		return "low"
+	}
+	if sampleSize < priorWeight*2 {
+		return "medium"
+	}
+	return "high"
+}
+
+// unmatchedTags 从任务能力中减去已有证据交集。返回稳定顺序，确保候选快照、页面说明
+// 和幂等重放一致；它只描述标签证据缺口，不对 Agent 的真实能力作超出证据的判断。
+func unmatchedTags(taskTags, matchedTags []string) []string {
+	matched := make(map[string]struct{}, len(matchedTags))
+	for _, tag := range matchedTags {
+		matched[tag] = struct{}{}
+	}
+	missing := make([]string, 0, len(taskTags))
+	for _, tag := range taskTags {
+		if _, ok := matched[tag]; !ok {
+			missing = append(missing, tag)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 // 指纹要求 slice 顺序稳定；仓储即使改变 SQL 查询计划，也不能改变“相同输入”的定义。

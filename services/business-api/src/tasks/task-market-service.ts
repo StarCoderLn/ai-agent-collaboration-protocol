@@ -21,8 +21,11 @@ export async function listTaskMarket(url: string, repository: TaskReadRepository
   const tag = normalizeOptional(params.get("tag"), 60, "标签最多 60 个字符");
   const limit = boundedInteger(params.get("limit"), 20, 1, 50, "limit");
   const offset = boundedInteger(params.get("offset"), 0, 0, 10_000, "offset");
-  const tasks = await repository.listPublicMarket({ keyword, categoryId, tag, status, limit, offset });
-  return { statusCode: 200, body: { tasks: tasks.map((task) => projectStoredTask(task, "public")), limit, offset } };
+  const page = await repository.listPublicMarket({ keyword, categoryId, tag, status, limit, offset });
+  return {
+    statusCode: 200,
+    body: { tasks: page.tasks.map((task) => projectStoredTask(task, "public")), total: page.total, limit, offset },
+  };
 }
 
 /**

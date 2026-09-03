@@ -27,6 +27,20 @@ export class DispatchEngineClient implements DispatchEngineGateway {
   retryExecution(taskId: string, actorId: string, idempotencyKey: string): Promise<TaskServiceResult> {
     return this.request("POST", `/internal/tasks/${taskId}/execution-retry`, actorId, undefined, idempotencyKey);
   }
+	retryWorkflowNodeExecution(
+		taskId: string,
+		nodeId: string,
+		actorId: string,
+		idempotencyKey: string,
+	): Promise<TaskServiceResult> {
+		return this.request(
+			"POST",
+			`/internal/tasks/${taskId}/workflow-nodes/${nodeId}/execution-retry`,
+			actorId,
+			undefined,
+			idempotencyKey,
+		);
+	}
   workflowNodeCandidates(taskId: string, nodeId: string, actorId: string): Promise<TaskServiceResult> {
     return this.request("GET", `/internal/tasks/${taskId}/workflow-nodes/${nodeId}/candidates`, actorId);
   }

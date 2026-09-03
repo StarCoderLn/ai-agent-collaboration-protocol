@@ -88,6 +88,27 @@ func (c InitialMatchCoordinator) RunWorkflowNodeMatching(
 	if err != nil {
 		return Record{}, err
 	}
+	// planning 阶段只生成和展示候选。托管确认把根节点激活为 matching 后，同一冻结
+	// 快照才允许创建 assignment，避免 Agent 在资金尚未到位时收到正式任务。
+	if !record.DispatchReady {
+		return record, nil
+	}
+	if record.FinalSelectionID != "" {
+		if c.Dispatcher == nil || record.ID == "" {
+			return Record{}, errors.New("selected workflow candidate requires dispatcher and matching record")
+		}
+		_, err = c.Dispatcher.ConfirmCandidate(ctx, dispatch.LockCommand{
+			TaskID: taskID, WorkflowNodeID: workflowNodeID,
+			AgentID: record.FinalSelectionID, ActorID: "system:selected",
+			IdempotencyKey: workflowDispatchIdempotencyKey(
+				"selected", taskID, workflowNodeID, record.ID, record.PreviousAssignmentID,
+			),
+		})
+		if err != nil {
+			return Record{}, err
+		}
+		return record, nil
+	}
 	switch record.AssignmentMode {
 	case AssignmentManual:
 		return record, nil
@@ -101,7 +122,9 @@ func (c InitialMatchCoordinator) RunWorkflowNodeMatching(
 		_, err = c.Dispatcher.ConfirmCandidate(ctx, dispatch.LockCommand{
 			TaskID: taskID, WorkflowNodeID: workflowNodeID,
 			AgentID: record.Candidates[0].AgentID, ActorID: "system:auto",
-			IdempotencyKey: fmt.Sprintf("dispatch:auto:%s:%s:%s", taskID, workflowNodeID, record.ID),
+			IdempotencyKey: workflowDispatchIdempotencyKey(
+				"auto", taskID, workflowNodeID, record.ID, record.PreviousAssignmentID,
+			),
 		})
 		if err != nil {
 			return Record{}, err
@@ -110,6 +133,19 @@ func (c InitialMatchCoordinator) RunWorkflowNodeMatching(
 	default:
 		return Record{}, fmt.Errorf("unsupported assignment mode %q", record.AssignmentMode)
 	}
+}
+
+// workflowDispatchIdempotencyKey 让首次派发继续沿用稳定的候选记录身份；节点恢复时再把
+// 被替换的已取消 assignment 纳入身份。同一个恢复 tick 重试会重放，下一次真正失败
+// 恢复则引用新的 assignment，因此既不会吞掉合法重试，也不会重复创建或调用 Agent。
+func workflowDispatchIdempotencyKey(
+	mode, taskID, workflowNodeID, recordID, previousAssignmentID string,
+) string {
+	key := fmt.Sprintf("dispatch:%s:%s:%s:%s", mode, taskID, workflowNodeID, recordID)
+	if previousAssignmentID == "" {
+		return key
+	}
+	return fmt.Sprintf("%s:replacement:%s", key, previousAssignmentID)
 }
 
 type InitialMatchWorker struct {

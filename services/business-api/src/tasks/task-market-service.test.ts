@@ -39,7 +39,7 @@ function task(overrides: Partial<StoredTask> = {}): StoredTask {
 function repository(storedTask: StoredTask = task()): TaskReadRepository & { listPublicMarket: ReturnType<typeof vi.fn> } {
   return {
     findForAudience: vi.fn(async () => ({ task: storedTask, assignedProviderWallets: ["0x2222222222222222222222222222222222222222"] })),
-    listPublicMarket: vi.fn(async () => [storedTask]),
+    listPublicMarket: vi.fn(async () => ({ tasks: [storedTask], total: 1 })),
     listOwnedTasks: vi.fn(async () => [storedTask]),
     readMarketStats: vi.fn(async () => ({ total: 9, matching: 3 })),
     readPublisherStats: vi.fn(async () => ({ total: 4, pending: 2 })),
@@ -53,6 +53,7 @@ describe("task market service", () => {
     const detail = await getTaskDetail(TASK_ID, task().publisherId, repo);
     const expected = projectStoredTaskPublicPreview(task());
     expect((market.body.tasks as readonly unknown[])[0]).toEqual(expected);
+    expect(market.body.total).toBe(1);
     expect(detail.body.task).toEqual(expected);
     expect(expected).not.toHaveProperty("publisherId");
     expect(expected).not.toHaveProperty("attachments");

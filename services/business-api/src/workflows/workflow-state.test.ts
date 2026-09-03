@@ -13,6 +13,12 @@ const nodes = (statuses: readonly WorkflowNodeSnapshot["status"][]): WorkflowNod
   statuses.map((status, index) => ({ id: `node-${index + 1}`, status }));
 
 describe("formal workflow state", () => {
+  it("在托管前只冻结候选，托管确认后再按依赖激活节点", () => {
+    expect(transitionWorkflowNode("selecting", { type: "candidate_selected" })).toBe("selected");
+    expect(transitionWorkflowNode("selected", { type: "root_execution_activated" })).toBe("matching");
+    expect(transitionWorkflowNode("selected", { type: "dependent_execution_activated" })).toBe("blocked");
+  });
+
   it("按分配、接单、交付和验收顺序推进节点", () => {
     expect(transitionWorkflowNode("matching", { type: "assignment_locked" })).toBe("awaiting_agent_acceptance");
     expect(transitionWorkflowNode("awaiting_agent_acceptance", { type: "agent_accepted" })).toBe("executing");
@@ -25,6 +31,13 @@ describe("formal workflow state", () => {
       new WorkflowStateError("INVALID_NODE_TRANSITION", "workflow node cannot apply result_accepted from executing"),
     );
   });
+
+	it("只允许仓储已验证的旧执行快照恢复正在执行节点", () => {
+		expect(transitionWorkflowNode("executing", { type: "stale_execution_recovery" })).toBe("matching");
+		expect(() => transitionWorkflowNode("executing", { type: "assignment_failed" })).toThrow(
+			/workflow node cannot apply assignment_failed from executing/,
+		);
+	});
 
   it("共同上游验收后同时解锁并行节点，下游仍等待所有分支", () => {
     const current = nodes(["accepted", "blocked", "blocked", "blocked"]);

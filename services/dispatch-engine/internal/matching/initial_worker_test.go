@@ -83,6 +83,10 @@ func (f recordRunnerFake) RunMatching(context.Context, string) (Record, error) {
 	return f.record, f.err
 }
 
+func (f recordRunnerFake) RunWorkflowNodeMatching(context.Context, string, string) (Record, error) {
+	return f.record, f.err
+}
+
 func TestInitialMatchCoordinatorLeavesManualSelectionToPublisher(t *testing.T) {
 	dispatcher := &automaticDispatchFake{}
 	coordinator := InitialMatchCoordinator{
@@ -158,5 +162,25 @@ func TestInitialMatchCoordinatorDoesNotInventAssignmentWithoutCandidates(t *test
 	}
 	if len(dispatcher.commands) != 0 {
 		t.Fatalf("empty candidate set must remain unassigned: %+v", dispatcher.commands)
+	}
+}
+
+func TestWorkflowRetryUsesCancelledAssignmentAsNewDispatchGeneration(t *testing.T) {
+	dispatcher := &automaticDispatchFake{}
+	coordinator := InitialMatchCoordinator{
+		Matcher: recordRunnerFake{record: Record{
+			ID: "record-1", TaskID: "task-1", WorkflowNodeID: "node-design",
+			AssignmentMode: AssignmentManual, FinalSelectionID: "agent-design",
+			DispatchReady: true, PreviousAssignmentID: "assignment-failed",
+		}},
+		Dispatcher: dispatcher,
+	}
+
+	if _, err := coordinator.RunWorkflowNodeMatching(context.Background(), "task-1", "node-design"); err != nil {
+		t.Fatal(err)
+	}
+	want := "dispatch:selected:task-1:node-design:record-1:replacement:assignment-failed"
+	if len(dispatcher.commands) != 1 || dispatcher.commands[0].IdempotencyKey != want {
+		t.Fatalf("retry must use a new stable dispatch generation: got=%+v want=%s", dispatcher.commands, want)
 	}
 }

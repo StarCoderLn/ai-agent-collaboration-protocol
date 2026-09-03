@@ -3,6 +3,7 @@ import {
   aggregateWorkflowStatus,
   transitionWorkflowNode,
   WorkflowStateError,
+	type WorkflowNodeEvent,
   type WorkflowNodeStatus,
   type WorkflowRunStatus,
 } from "./workflow-state";
@@ -75,9 +76,31 @@ export class PgWorkflowTransitionRepository implements WorkflowTransitionReposit
       throw new WorkflowTransitionError("ASSIGNMENT_NOT_FOUND", "工作节点分配不存在或与事件不一致", 404, false);
     }
 
+		let domainEvent: WorkflowNodeEvent = { type: input.eventType };
+		if (node.status === "executing" && input.eventType === "assignment_failed") {
+			const staleResult = await this.db.query<{ stale: boolean }>(
+				`SELECT EXISTS(
+				   SELECT 1 FROM workflow_node_execution_state state
+				    WHERE state.workflow_node_id=$1 AND state.assignment_id<>$2
+				 ) AS stale`,
+				[workflowNodeId, input.assignmentId],
+			);
+			if (staleResult.rows[0]?.stale !== true) {
+				throw new WorkflowTransitionError(
+					"TRANSITION_NOT_READY",
+					"当前工作节点已有正在执行的 assignment，不能重复恢复",
+					409,
+					true,
+				);
+			}
+			// 外部事件仍记录 assignment_failed；只有通过数据库证据校验后，才映射为
+			// 状态机的内部恢复事件，避免把 executing -> matching 变成无条件通路。
+			domainEvent = { type: "stale_execution_recovery" };
+		}
+
     let nextStatus: WorkflowNodeStatus;
     try {
-      nextStatus = transitionWorkflowNode(node.status, { type: input.eventType });
+			nextStatus = transitionWorkflowNode(node.status, domainEvent);
     } catch (error) {
       if (error instanceof WorkflowStateError) {
         throw new WorkflowTransitionError("TRANSITION_NOT_READY", "工作节点尚未到达可应用该事件的状态", 409, true);

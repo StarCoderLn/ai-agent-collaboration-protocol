@@ -63,7 +63,8 @@ func (r *MatchingRepository) PendingInitialWorkflowNodes(
 		  FROM task_workflow_nodes node
 		  JOIN task_workflow_runs run ON run.id=node.workflow_run_id
 		  JOIN tasks task ON task.id=node.task_id
-		 WHERE run.status='running' AND node.status='matching'
+		 WHERE ((run.status='planning' AND node.status='selecting')
+		        OR (run.status='running' AND node.status='matching'))
 		   AND NOT EXISTS (
 		     SELECT 1 FROM task_assignments assignment
 		      WHERE assignment.workflow_node_id=node.id
@@ -75,14 +76,24 @@ func (r *MatchingRepository) PendingInitialWorkflowNodes(
 		        WHERE record.workflow_node_id=node.id
 		     )
 		     OR (
-		       task.assignment_mode_config->>'mode'='automatic'
-		       AND COALESCE((
-		        SELECT jsonb_array_length(record.candidates)
-		          FROM job_distribution_records record
-		         WHERE record.workflow_node_id=node.id
-		         ORDER BY record.created_at DESC,record.id DESC
-		         LIMIT 1
-		       ),0)>0
+		       run.status='running'
+		       AND (
+		         EXISTS (
+		           SELECT 1 FROM job_distribution_records selected_record
+		            WHERE selected_record.workflow_node_id=node.id
+		              AND selected_record.final_selection_agent_id IS NOT NULL
+		         )
+		         OR (
+		           task.assignment_mode_config->>'mode'='automatic'
+		           AND COALESCE((
+		             SELECT jsonb_array_length(auto_record.candidates)
+		               FROM job_distribution_records auto_record
+		              WHERE auto_record.workflow_node_id=node.id
+		              ORDER BY auto_record.created_at DESC,auto_record.id DESC
+		              LIMIT 1
+		           ),0)>0
+		         )
+		       )
 		     )
 		   )
 		 ORDER BY node.updated_at,node.position_index,node.id
@@ -154,15 +165,23 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 			&input.Task.Deadline, &input.TaskUpdatedAt, &status, &input.AssignmentMode)
 	} else {
 		err = tx.QueryRow(ctx,
-			`SELECT task.id::text,node.category_id::text,node.tags,node.budget_cap_minor,
+			`SELECT task.id::text,node.category_id::text,node.tags,
+			        COALESCE(node.price_preference_minor,0),
 			        task.currency,task.deadline,GREATEST(task.updated_at,node.updated_at),node.status,
-			        task.assignment_mode_config->>'mode'
+			        task.assignment_mode_config->>'mode',
+			        COALESCE((
+			          SELECT CASE WHEN assignment.status='cancelled' THEN assignment.id::text ELSE '' END
+			            FROM task_assignments assignment
+			           WHERE assignment.workflow_node_id=node.id
+			           ORDER BY assignment.assigned_at DESC,assignment.id DESC
+			           LIMIT 1
+			        ),'')
 			   FROM task_workflow_nodes node
 			   JOIN task_workflow_runs run ON run.id=node.workflow_run_id
 			   JOIN tasks task ON task.id=node.task_id
-			  WHERE task.id=$1 AND node.id=$2 AND run.status='running'`, taskID, workflowNodeID,
+			  WHERE task.id=$1 AND node.id=$2 AND run.status IN ('planning','running')`, taskID, workflowNodeID,
 		).Scan(&input.Task.ID, &input.Task.CategoryID, &input.Task.Tags, &input.Task.BudgetMinor, &input.Task.Currency,
-			&input.Task.Deadline, &input.TaskUpdatedAt, &status, &input.AssignmentMode)
+			&input.Task.Deadline, &input.TaskUpdatedAt, &status, &input.AssignmentMode, &input.PreviousAssignmentID)
 		input.WorkflowNodeID = workflowNodeID
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -171,9 +190,10 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 	if err != nil {
 		return matching.MatchInput{}, err
 	}
-	if status != "matching" {
+	if status != "selecting" && status != "matching" {
 		return matching.MatchInput{}, matching.ErrTaskNotMatchable
 	}
+	input.DispatchReady = status == "matching"
 
 	var ruleVersion string
 	var encodedRules []byte
@@ -203,10 +223,13 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		       COALESCE(load.count, 0)::int,
 		       COALESCE(score.sample_size, 0)::int,
 		       COALESCE((score_rule.bayesian_prior->>'priorWeight')::int, 20),
-		       COALESCE(history.probation_cap_minor, 50000000000000000)::bigint
+		       COALESCE(history.probation_cap_minor, 50000000000000000)::bigint,
+		       COALESCE(score.dimensions,'{}'::jsonb),COALESCE(score.dispute_rate,0)::float8,
+		       COALESCE(similar_stats.completed,0)::int,COALESCE(similar_stats.on_time_rate,0)::float8,
+		       COALESCE(similar_stats.rework_rate,0)::float8,COALESCE(cases.items,'[]'::jsonb)
 		  FROM agents a
 		  LEFT JOIN LATERAL (
-		    SELECT s.score, s.sample_size FROM agent_score_snapshots s
+		    SELECT s.score,s.sample_size,s.dimensions,s.dispute_rate FROM agent_score_snapshots s
 		     WHERE s.agent_id=a.id ORDER BY s.computed_at DESC, s.id DESC LIMIT 1
 		  ) score ON TRUE
 		  LEFT JOIN LATERAL (
@@ -231,6 +254,61 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		    SELECT bayesian_prior FROM scoring_rule_versions WHERE active=TRUE
 		     ORDER BY created_at DESC LIMIT 1
 		  ) score_rule ON TRUE
+		  LEFT JOIN LATERAL (
+		    SELECT count(*) FILTER (WHERE node.status='accepted') AS completed,
+		           COALESCE(avg(CASE WHEN latest_result.generated_at <= task.deadline THEN 1.0 ELSE 0.0 END)
+		             FILTER (WHERE node.status='accepted'),0) AS on_time_rate,
+		           COALESCE(avg(CASE WHEN rework.workflow_node_id IS NULL THEN 0.0 ELSE 1.0 END)
+		             FILTER (WHERE node.status='accepted'),0) AS rework_rate
+		      FROM task_assignments assignment
+		      JOIN task_workflow_nodes node ON node.id=assignment.workflow_node_id
+		      JOIN tasks task ON task.id=node.task_id
+		      LEFT JOIN LATERAL (
+		        SELECT result.generated_at FROM workflow_node_results result
+		         WHERE result.workflow_node_id=node.id ORDER BY result.batch_no DESC,result.result_index LIMIT 1
+		      ) latest_result ON TRUE
+		      LEFT JOIN LATERAL (
+		        SELECT request.workflow_node_id FROM workflow_node_rework_requests request
+		         WHERE request.workflow_node_id=node.id LIMIT 1
+		      ) rework ON TRUE
+		     WHERE assignment.agent_id=a.id AND assignment.status='accepted'
+		       AND node.category_id=a.category_id
+		  ) similar_stats ON TRUE
+		  LEFT JOIN LATERAL (
+		    SELECT jsonb_agg(limited.payload ORDER BY limited.priority,limited.created_at DESC) AS items
+		      FROM (
+		        SELECT item.payload,item.priority,item.created_at
+		          FROM (
+		        SELECT 0 AS priority,result.generated_at AS created_at,
+		               jsonb_build_object(
+		                 'source','platform_verified','title',task.title,'summary',result.summary,
+		                 'artifactKind',CASE
+		                   WHEN result.mime_type LIKE 'image/%' THEN 'image'
+		                   WHEN result.mime_type LIKE 'video/%' THEN 'video'
+		                   WHEN result.mime_type IN ('text/html','application/zip') THEN 'website'
+		                   WHEN result.mime_type LIKE 'text/%' OR result.mime_type='application/pdf' THEN 'document'
+		                   ELSE 'other' END,
+		                 'previewRef',result.body_or_file_ref
+		               ) AS payload
+		          FROM workflow_node_results result
+		          JOIN task_workflow_nodes node ON node.id=result.workflow_node_id AND node.status='accepted'
+		          JOIN task_assignments assignment ON assignment.id=result.assignment_id
+		          JOIN tasks task ON task.id=result.task_id AND task.visibility='public'
+		         WHERE assignment.agent_id=a.id AND node.category_id=a.category_id
+		        UNION ALL
+		        SELECT 1,portfolio.created_at,
+		               jsonb_build_object(
+		                 'source','agent_provided','title',portfolio.title,'summary',portfolio.summary,
+		                 'artifactKind',portfolio.artifact_kind,'previewRef',portfolio.preview_ref
+		               )
+		          FROM agent_portfolio_cases portfolio
+		         WHERE portfolio.agent_id=a.id
+		           AND (portfolio.category_id IS NULL OR portfolio.category_id=a.category_id)
+		          ) item
+		         ORDER BY item.priority,item.created_at DESC
+		         LIMIT 3
+		      ) limited
+		  ) cases ON TRUE
 		 ORDER BY a.id`)
 	if err != nil {
 		return matching.MatchInput{}, err
@@ -240,16 +318,23 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		var candidate domain.AgentCandidate
 		var statusValue, pauseReason string
 		var estimatedSeconds int64
+		var dimensionsJSON, casesJSON []byte
 		if err = rows.Scan(
 			&candidate.ID, &candidate.Name, &candidate.CategoryID, &candidate.Tags, &statusValue,
 			&pauseReason, &candidate.PriceMinor, &candidate.Currency, &candidate.Score, &candidate.Completed,
 			&estimatedSeconds, &candidate.ResponseMinutes, &candidate.CurrentLoad,
 			&candidate.RatingSampleSize, &candidate.PriorWeight, &candidate.ProbationBudgetCapMinor,
+			&dimensionsJSON, &candidate.DisputeRate, &candidate.SimilarCompleted,
+			&candidate.OnTimeRate, &candidate.ReworkRate, &casesJSON,
 		); err != nil {
 			return matching.MatchInput{}, err
 		}
 		candidate.State = domain.AgentState{Status: domain.AgentStatus(statusValue), PauseReason: domain.PauseReason(pauseReason)}
 		candidate.EstimatedDuration = time.Duration(estimatedSeconds) * time.Second
+		candidate.ScoreDimensions = append(json.RawMessage(nil), dimensionsJSON...)
+		if err = json.Unmarshal(casesJSON, &candidate.DeliveryCases); err != nil {
+			return matching.MatchInput{}, fmt.Errorf("decode agent delivery cases: %w", err)
+		}
 		input.Agents = append(input.Agents, candidate)
 	}
 	if err = rows.Err(); err != nil {

@@ -14,6 +14,7 @@ function operations(): TaskDispatchOperations {
     confirm: vi.fn(async () => ({ statusCode: 201, body: { assignment: { agentId: AGENT_ID } } })),
     latestAssignment: vi.fn(async () => ({ statusCode: 200, body: { assignment: { agentId: AGENT_ID } } })),
     retryExecution: vi.fn(async () => ({ statusCode: 202, body: { transitionEventId: "event-1" } })),
+    retryWorkflowNodeExecution: vi.fn(async () => ({ statusCode: 202, body: { transitionEventId: "event-2" } })),
     workflowNodeCandidates: vi.fn(async () => ({ statusCode: 200, body: { candidates: [] } })),
     rematchWorkflowNode: vi.fn(async () => ({ statusCode: 200, body: { candidates: [] } })),
     confirmWorkflowNode: vi.fn(async () => ({ statusCode: 201, body: { assignment: { agentId: AGENT_ID } } })),
@@ -77,6 +78,20 @@ describe("task dispatch façade handlers", () => {
     );
     expect(response.status).toBe(202);
     expect(deps.service.retryExecution).toHaveBeenCalledWith(TASK_ID, "publisher-1", "retry-execution-1");
+  });
+
+  it("forwards the exact failed node and idempotency evidence when retrying a workflow stage", async () => {
+    const deps = dependencies();
+    const response = await createTaskDispatchHandlers(deps).retryWorkflowNodeExecution(
+      new Request(`http://api.local/api/tasks/${TASK_ID}/workflow-nodes/${NODE_ID}/execution-retry`, {
+        method: "POST", headers: { "idempotency-key": "retry-node-execution-1" },
+      }),
+      { params: Promise.resolve({ id: TASK_ID, nodeId: NODE_ID }) },
+    );
+    expect(response.status).toBe(202);
+    expect(deps.service.retryWorkflowNodeExecution).toHaveBeenCalledWith(
+      TASK_ID, NODE_ID, "publisher-1", "retry-node-execution-1",
+    );
   });
 
   it("validates and forwards workflow-node candidate confirmation", async () => {

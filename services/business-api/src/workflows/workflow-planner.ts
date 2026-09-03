@@ -21,7 +21,8 @@ export type PlannedWorkflowNode = Readonly<{
   requiredCapability: string;
   inputContract: string;
   outputContract: string;
-  budgetCapMinor: bigint;
+  /** 只用于把用户的可选总预算偏好分配到各阶段，不代表冻结报价或可结算金额。 */
+  budgetWeight: number;
   positionIndex: number;
   status: WorkflowNodeStatus;
 }>;
@@ -41,7 +42,6 @@ export type WorkflowPlanningInput = Readonly<{
   taskCategoryId: string;
   taskTags: readonly string[];
   requiredCapability: string;
-  totalBudgetMinor: bigint;
 }>;
 
 const CATEGORY_REQUIREMENTS = "40000000-0000-4000-8000-000000000021";
@@ -66,18 +66,17 @@ type NodeTemplate = Readonly<{
 }>;
 
 /**
- * 当前规划器是确定性、可审计的正式基线，不把“AI 猜测”写成交易事实。未来 AI 只负责
- * 生成相同的 PlannedWorkflow 草案，仍必须经过本模块的金额、DAG 与分类校验后才能落库。
+ * 当前规划器是确定性、可审计的正式基线，不把“AI 猜测”或用户偏好写成交易事实。
+ * 节点只携带非资金性的价格偏好权重；冻结报价由用户选择候选后的独立事务产生。
  */
 export function planFormalWorkflow(input: WorkflowPlanningInput): PlannedWorkflow {
-  if (input.totalBudgetMinor <= 0n) throw new Error("workflow total budget must be positive");
   const templates = templatesFor(input);
-  const budgets = allocateBudget(input.totalBudgetMinor, templates.map((node) => node.budgetWeight));
   const nodes = templates.map((template, index): PlannedWorkflowNode => ({
     ...template,
-    budgetCapMinor: budgets[index] ?? 0n,
     positionIndex: index,
-    status: index === 0 ? "matching" : "blocked",
+    // 规划阶段所有节点都可以并行生成候选，依赖关系只约束托管后的实际执行顺序。
+    // 若沿用 blocked，下游候选必须等上游交付后才能看到，用户就无法先确认准确总价。
+    status: "selecting",
   }));
   const edges = nodes.slice(1).map((node, index): PlannedWorkflowEdge => ({
     sourceKey: nodes[index]?.key ?? "",
@@ -194,10 +193,11 @@ function requirementsTemplate(): NodeTemplate {
 }
 
 /**
- * 按整数权重拆分 USDC 最小单位。前 N-1 个向下取整，余数全部放到最后一个节点，
- * 保证节点预算之和严格等于总托管额，不产生浮点误差或凭空消失的最小单位。
+ * 按整数权重拆分用户的预算偏好。它只影响候选排序，不参与托管或结算；仍使用最小
+ * 单位整数，确保各阶段偏好之和严格等于用户填写的总上限。
  */
-function allocateBudget(total: bigint, weights: readonly number[]): readonly bigint[] {
+export function allocateWorkflowBudgetPreference(total: bigint, weights: readonly number[]): readonly bigint[] {
+  if (total <= 0n) throw new Error("workflow budget preference must be positive");
   if (weights.length === 0 || weights.some((weight) => !Number.isInteger(weight) || weight <= 0)) {
     throw new Error("workflow budget weights must be positive integers");
   }

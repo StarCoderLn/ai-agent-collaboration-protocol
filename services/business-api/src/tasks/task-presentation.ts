@@ -14,12 +14,18 @@ export class IncompleteTaskProjectionError extends Error {
 export function projectStoredTask(task: StoredTask, audience: TaskAudience): Readonly<Record<string, unknown>> {
   const complete = inspectTaskDraftCompleteness(task.draft);
   if (!complete.success) throw new IncompleteTaskProjectionError();
-  const budgetMinMinor = complete.draft.pricing.type === "fixed"
-    ? complete.draft.pricing.amountMinor
-    : complete.draft.pricing.minAmountMinor;
-  const budgetMaxMinor = complete.draft.pricing.type === "fixed"
-    ? complete.draft.pricing.amountMinor
-    : complete.draft.pricing.maxAmountMinor;
+  // planning 阶段没有报价是合法状态。公开投影必须保留 null，不能把“尚未选择 Agent”
+  // 表示成 0 USDC；全部选择完成后 selection 事务会回写准确 fixed 金额。
+  const budgetMinMinor = complete.draft.pricing === null
+    ? null
+    : complete.draft.pricing.type === "fixed"
+      ? complete.draft.pricing.amountMinor
+      : complete.draft.pricing.minAmountMinor;
+  const budgetMaxMinor = complete.draft.pricing === null
+    ? null
+    : complete.draft.pricing.type === "fixed"
+      ? complete.draft.pricing.amountMinor
+      : complete.draft.pricing.maxAmountMinor;
   const record: TaskRecordForAudience = {
     id: task.id,
     publisherId: task.publisherId,
