@@ -8,6 +8,7 @@ import {
   normalizeMatchingTags,
   validateMatchingTags,
 } from "../platform/matching-tags";
+import { loadMatchingTagTaxonomy } from "../platform/tag-taxonomy";
 
 const capabilityInputSchema = z.object({
   tags: z.array(z.string()).max(MAX_MATCHING_TAG_COUNT),
@@ -102,18 +103,7 @@ export async function updateOwnedWorkflowNodeCapabilities(
     throw new WorkflowCapabilityError(409, "WORKFLOW_CAPABILITY_LOCKED", "该阶段已冻结 Agent 报价，不能再调整能力需求");
   }
 
-  const taxonomy = await db.query<{ canonical_name: string; synonyms: string[]; forbidden: boolean }>(
-    "SELECT canonical_name,synonyms,forbidden FROM tags",
-    [],
-  );
-  const canonicalByAlias = new Map<string, string>();
-  const forbiddenTags = new Set<string>();
-  for (const tag of taxonomy.rows) {
-    const canonical = tag.canonical_name.toLocaleLowerCase();
-    canonicalByAlias.set(canonical, canonical);
-    for (const alias of tag.synonyms) canonicalByAlias.set(alias.toLocaleLowerCase(), canonical);
-    if (tag.forbidden) forbiddenTags.add(canonical);
-  }
+  const { canonicalByAlias, forbiddenTags } = await loadMatchingTagTaxonomy(db);
   const normalizedTags = normalizeMatchingTags(parsed.data.tags, canonicalByAlias);
   const issues = validateMatchingTags(normalizedTags, forbiddenTags);
   if (issues.length > 0) {

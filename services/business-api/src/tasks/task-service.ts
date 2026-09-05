@@ -396,8 +396,10 @@ export async function updateOwnedTaskModeSettings(
 }
 
 /**
- * 托管确认后的任务只允许调整不会改变资金与交付契约的匹配条件。更新与事件、审计、
- * 幂等快照在同一事务提交；实际重匹配仍由 Go 的 POST /rematch 完成，失败可安全重试。
+ * 任务只允许在候选规划期或旧版待匹配期调整不会改变资金与交付契约的匹配条件。
+ * `planning` 覆盖正式多 Agent 工作流在托管前的选人阶段；`matching` 保留旧版单 Agent
+ * 流程已托管后的恢复能力。更新与事件、审计、幂等快照在同一事务提交，实际重匹配
+ * 仍由 Go 的 POST /rematch 完成，失败可安全重试。
  */
 export async function updateOwnedTaskMatchCriteria(
 	taskId: string,
@@ -425,11 +427,11 @@ export async function updateOwnedTaskMatchCriteria(
 	const current = await deps.repository.findOwned(taskId, actorId);
 	if (current === null)
 		throw new TaskServiceError(404, "TASK_NOT_FOUND", "任务不存在或无权访问");
-	if (current.status !== "matching") {
+	if (current.status !== "matching" && current.status !== "planning") {
 		throw new TaskServiceError(
 			409,
 			"MATCH_CRITERIA_LOCKED",
-			"只有待匹配任务可以调整匹配条件",
+			"只有候选规划中或待匹配任务可以调整匹配条件",
 		);
 	}
 	const categoryId = parsed.data.categoryId ?? current.draft.categoryId;

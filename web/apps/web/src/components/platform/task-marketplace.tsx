@@ -31,7 +31,6 @@ import {
 	type TaskStatus,
 	taskStatusSchema,
 } from "@/lib/api/tasks";
-import type { MessageId } from "@/lib/i18n/messages";
 import { listSelectableCapabilityCategories } from "@/lib/platform/capability-categories";
 import { TASK_STATUS_PRESENTATION } from "@/lib/platform/contracts";
 import { formatCompactDate } from "@/lib/platform/format";
@@ -270,7 +269,7 @@ export default function TaskMarketplace() {
 								)
 								.map(([value, presentation]) => ({
 									value,
-									label: t(presentation.label as MessageId),
+									label: t(presentation.label),
 								})),
 						]}
 					/>

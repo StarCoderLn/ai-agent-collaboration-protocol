@@ -73,13 +73,29 @@ export class DispatchEngineClient implements DispatchEngineGateway {
   transitionAgent(
     agentId: string,
     actorId: string,
-    actorType: "provider" | "admin",
-	event: "manual_pause" | "manual_resume" | "provider_delist" | "admin_approve" | "admin_reject",
-	idempotencyKey: string,
-    reviewReason?: string,
+    event: "manual_pause" | "manual_resume" | "provider_delist",
+    idempotencyKey: string,
   ): Promise<TaskServiceResult> {
-	const body = reviewReason === undefined ? { event } : { event, reviewReason };
-    return this.request("POST", `/internal/agents/${agentId}/transitions`, actorId, body, idempotencyKey, actorType);
+    return this.request("POST", `/internal/agents/${agentId}/transitions`, actorId, { event }, idempotencyKey, "provider");
+  }
+
+  /**
+   * 重新验证只负责创建一个新的持久化准入轮次；真正的三次调用和 AI 评测由后台
+   * Worker 完成。操作者继续以 provider 身份传给 Go，由数据库再次校验 Agent 归属。
+   */
+  retryAgentAdmission(
+    agentId: string,
+    actorId: string,
+    idempotencyKey: string,
+  ): Promise<TaskServiceResult> {
+    return this.request(
+      "POST",
+      `/internal/agents/${agentId}/admission/retry`,
+      actorId,
+      undefined,
+      idempotencyKey,
+      "provider",
+    );
   }
 
   private async request(

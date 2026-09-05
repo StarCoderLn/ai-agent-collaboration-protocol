@@ -429,7 +429,7 @@ integration("task PostgreSQL vertical slice", () => {
 		});
 	});
 
-	it("updates only matching-safe criteria with atomic event and audit evidence", async () => {
+	it("extends planning deadline with atomic event and audit evidence", async () => {
 		const client = await pool.connect();
 		await client.query("BEGIN");
 		try {
@@ -440,10 +440,10 @@ integration("task PostgreSQL vertical slice", () => {
            category_id,category_version,tag_names,pricing_type,budget_min_minor,budget_max_minor,
            currency,deadline,required_capability,attachments,visibility,status,status_version,
            assignment_mode_config,acceptance_mode,acceptor_config
-         ) VALUES ($1,'publisher-criteria','匹配条件调整集成任务','验证托管后只能调整不会改变资金和交付契约的匹配条件。',
+         ) VALUES ($1,'publisher-criteria','匹配条件调整集成任务','验证托管前规划阶段可以显式延长截止时间并保留审计证据。',
            '更新、事件、审计和幂等快照必须原子提交。','测试证据',$2,1,ARRAY['agent'],
            'fixed',10000000,10000000,'USDC',$3,'TypeScript 与 PostgreSQL',
-           '[]'::jsonb,'private','matching',7,'{"mode":"manual"}'::jsonb,'manual','{}'::jsonb)`,
+           '[]'::jsonb,'private','planning',7,'{"mode":"manual"}'::jsonb,'manual','{}'::jsonb)`,
 				[taskId, CATEGORY_ID, new Date("2026-08-23T03:00:00.000Z")],
 			);
 
@@ -459,7 +459,7 @@ integration("task PostgreSQL vertical slice", () => {
 			);
 			expect(result.body).toMatchObject({
 				taskId,
-				status: "matching",
+				status: "planning",
 				statusVersion: "8",
 			});
 

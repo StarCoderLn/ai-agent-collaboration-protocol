@@ -79,7 +79,9 @@ export function DatePicker({
 			if (trigger === null) return;
 			const rect = trigger.getBoundingClientRect();
 			const viewportPadding = 16;
-			const width = Math.min(368, window.innerWidth - viewportPadding * 2);
+			// 桌面端适当加宽弹层，让截止时间说明和两个操作按钮保持一行；窄屏仍以
+			// 视口宽度为上限，并允许整个按钮组换到下一行，避免横向溢出。
+			const width = Math.min(420, window.innerWidth - viewportPadding * 2);
 			const left = Math.min(
 				Math.max(viewportPadding, rect.left),
 				window.innerWidth - width - viewportPadding,
@@ -255,11 +257,11 @@ export function DatePicker({
 							</div>
 						</div>
 
-						<div className="flex items-center justify-between gap-3 border-primary/15 border-t bg-background/25 px-4 py-3">
-							<p className="max-w-40 text-[11px] text-muted-foreground leading-4">
+						<div className="flex flex-wrap items-center justify-between gap-3 border-primary/15 border-t bg-background/25 px-4 py-3">
+							<p className="whitespace-nowrap text-[11px] text-muted-foreground leading-4">
 								{t("所选日期当天结束前为交付截止时间")}
 							</p>
-							<div className="flex gap-2">
+							<div className="flex shrink-0 gap-2">
 								<button
 									type="button"
 									aria-label={t("取消选择截止日期")}

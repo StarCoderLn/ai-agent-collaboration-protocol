@@ -700,6 +700,18 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
       refundable_amount_minor: "0",
       settlement_status: "executed",
     });
+
+    // 工作流详情必须把唯一原子结算哈希挂到每个已验收节点。页面依赖这条证据进入
+    // 站内交易详情；如果只返回 executed 而遗漏哈希，用户将无法核对实际分账。
+    const settledGraph = await readOwnedFormalWorkflow(client, fixture.taskId, PUBLISHER);
+    expect(settledGraph.nodes).toHaveLength(3);
+    expect(
+      settledGraph.nodes.map((node) => node.acceptance?.release),
+    ).toEqual([
+      { status: "executed", txHash: settlementTxHash },
+      { status: "executed", txHash: settlementTxHash },
+      { status: "executed", txHash: settlementTxHash },
+    ]);
   });
 });
 

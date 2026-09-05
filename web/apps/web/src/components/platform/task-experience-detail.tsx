@@ -96,6 +96,8 @@ import {
 	localDateToDeadlineIso,
 } from "@/lib/platform/deadline";
 import { formatDate, shortId } from "@/lib/platform/format";
+import { matchingFilterReasonMessageId } from "@/lib/platform/matching-filter-reason";
+import { matchingTagLabel } from "@/lib/platform/matching-tag-label";
 import { formatMinorAmount } from "@/lib/platform/money";
 import {
 	advanceLocalChainForDemo,
@@ -1739,19 +1741,7 @@ function filterReasonLabel(
 	reason: string,
 	t: ReturnType<typeof useLocale>["t"],
 ): string {
-	return t(
-		((
-			{
-				wrong_category: "任务分类不匹配",
-				inactive_agent: "未过审、已暂停或已下架",
-				over_budget: "报价超出价格上限",
-				currency_mismatch: "报价币种不一致",
-				deadline_passed: "任务截止时间已过",
-				cannot_meet_deadline: "预计无法按时交付",
-				probation_budget_exceeded: "超出新入驻 Agent 预算上限",
-			} as Readonly<Record<string, string>>
-		)[reason] ?? "未满足平台硬约束") as MessageId,
-	);
+	return t(matchingFilterReasonMessageId(reason));
 }
 
 function ExecutionPanel({
@@ -2791,7 +2781,7 @@ function TaskConfiguration({ task }: { task: TaskDisplay }) {
 }
 
 function TaskOverview({ task }: { task: TaskDisplay }) {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
 	const hasSupplement =
 		task.description.trim() !== "" &&
 		task.description.trim() !== task.title.trim();
@@ -2829,7 +2819,7 @@ function TaskOverview({ task }: { task: TaskDisplay }) {
 						key={tag}
 						className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground text-xs"
 					>
-						{tag}
+						{matchingTagLabel(tag, locale)}
 					</span>
 				))}
 			</div>

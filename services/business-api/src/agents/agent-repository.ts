@@ -15,6 +15,8 @@
  */
 
 import type { QueryExecutor } from "../db/pool";
+import { normalizeMatchingTags } from "../platform/matching-tags";
+import { loadMatchingTagTaxonomy } from "../platform/tag-taxonomy";
 import type { CreateAgentInput } from "./create-agent-input";
 import type { Agent, AgentPatch, AgentRepository as AgentProfileRepository } from "./agent";
 
@@ -79,6 +81,9 @@ export class PgAgentRepository implements AgentRepository, AgentProfileRepositor
     input: CreateAgentInput,
     encryptedSecret: string | null,
   ): Promise<CreatedAgent> {
+    // 表单允许提供者使用自己熟悉的中文、英文或历史叫法。真正落库前必须通过与任务
+    // 相同的数据库词表收敛为 canonical 标签，否则语义相同的双方仍会精确匹配失败。
+    const normalizedTags = await this.normalizeTags(input.tags);
     const agentResult = await this.db.query<AgentInsertRow>(
       `INSERT INTO agents (
          provider_wallet_address, payout_wallet_address, name, category_id, capability_desc, tags,
@@ -91,7 +96,7 @@ export class PgAgentRepository implements AgentRepository, AgentProfileRepositor
         input.name,
         input.categoryId,
         input.capabilityDesc,
-        input.tags,
+        normalizedTags,
         input.pricingType,
         input.price.amount,
         input.price.currency,
@@ -129,7 +134,7 @@ export class PgAgentRepository implements AgentRepository, AgentProfileRepositor
           portfolioCase.artifactKind,
           portfolioCase.previewRef,
           input.categoryId,
-          input.tags,
+          normalizedTags,
         ],
       );
     }
@@ -155,11 +160,14 @@ export class PgAgentRepository implements AgentRepository, AgentProfileRepositor
       throw new Error("PgAgentRepository.applyPatch: patch 不能为空（调用方应在此之前短路空补丁）");
     }
 
+    const normalizedTags = patch.tags === undefined
+      ? undefined
+      : await this.normalizeTags(patch.tags);
     const assignments: string[] = [];
     const values: unknown[] = [];
     fields.forEach((field, index) => {
       const column = PATCH_FIELD_TO_COLUMN[field];
-      const value = patch[field];
+      const value = field === "tags" ? normalizedTags : patch[field];
       // priceAmount 是 bigint，pg 驱动按字符串/数字传参均可正确绑定到 BIGINT 列；
       // 显式转字符串避免驱动对 bigint 类型的隐式处理差异。
       values.push(field === "priceAmount" ? (value as bigint).toString() : value);
@@ -179,6 +187,15 @@ export class PgAgentRepository implements AgentRepository, AgentProfileRepositor
       throw new Error(`PgAgentRepository.applyPatch: agent ${agentId} 不存在（调用方应已先 findById 校验）`);
     }
     return toAgent(row);
+  }
+
+  /**
+   * 标签词表属于持久化边界的一部分：所有创建和编辑入口最终都经过本仓储，因此即使
+   * 调用方不是当前 Web 表单，也无法绕过中英文同义词归一后写入不可匹配的数据。
+   */
+  private async normalizeTags(tags: readonly string[]): Promise<readonly string[]> {
+    const taxonomy = await loadMatchingTagTaxonomy(this.db);
+    return normalizeMatchingTags(tags, taxonomy.canonicalByAlias);
   }
 }
 

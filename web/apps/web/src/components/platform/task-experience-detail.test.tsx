@@ -1654,6 +1654,7 @@ function reselectionWorkflowFixture(): FormalWorkflow {
 				candidateRecord: {
 					id: "99999999-9999-4999-8999-999999999999",
 					ruleVersion: "ranking-v1",
+					filterReasons: {},
 					finalSelectionAgentId: agentId,
 					candidates: [
 						{

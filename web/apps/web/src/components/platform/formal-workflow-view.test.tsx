@@ -14,6 +14,7 @@ import {
 	rematchWorkflowNodeCandidates,
 	retryFailedWorkflowNodeExecution,
 	suggestTaskTags,
+	updateTaskMatchCriteria,
 	updateWorkflowBudgetPreference,
 	updateWorkflowNodeCapabilities,
 } from "@/lib/api/tasks";
@@ -52,6 +53,11 @@ vi.mock("@/lib/api/tasks", async (importOriginal) => {
 			{ canonicalName: "next.js", matchedAlias: "nextjs" },
 			{ canonicalName: "accessibility", matchedAlias: null },
 		]),
+		updateTaskMatchCriteria: vi.fn(async () => ({
+			taskId,
+			status: "planning",
+			statusVersion: "3",
+		})),
 		updateWorkflowNodeCapabilities: vi.fn(async () => ({
 			taskId,
 			nodeId: designNodeId,
@@ -115,7 +121,162 @@ describe("FormalWorkflowView", () => {
 		expect(screen.getByText("Agent 自行提供")).toBeInTheDocument();
 		expect(screen.getByText("按时交付率")).toBeInTheDocument();
 		expect(screen.getByText("平台识别的能力需求")).toBeInTheDocument();
-		expect(screen.getByText("尚未覆盖")).toBeInTheDocument();
+		expect(screen.getByText("符合")).toBeInTheDocument();
+		expect(
+			screen.getByText("黄色标签暂未命中，仅影响推荐排序"),
+		).toBeInTheDocument();
+	});
+
+
+	it("单一候选总价不伪装成区间，并直接说明报价合计来源", () => {
+		const workflow = singleNodeWorkflow();
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflow}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		expect(screen.getByText("候选总价参考")).toBeInTheDocument();
+		expect(screen.getByText("按各阶段当前候选报价合计")).toBeInTheDocument();
+		expect(screen.getAllByText("20 USDC").length).toBeGreaterThan(0);
+		expect(screen.queryByText("20 USDC – 20 USDC")).not.toBeInTheDocument();
+	});
+
+	it("多个候选价格不同时展示最低和最高合计区间", () => {
+		const workflow = singleNodeWorkflow();
+		const node = workflow.nodes[0];
+		const firstCandidate = node?.candidateRecord?.candidates[0];
+		if (
+			node?.candidateRecord === null ||
+			node?.candidateRecord === undefined ||
+			firstCandidate === undefined
+		) {
+			throw new Error("单阶段测试工作流必须包含候选");
+		}
+		const rangedWorkflow: FormalWorkflow = {
+			...workflow,
+			nodes: [
+				{
+					...node,
+					candidateRecord: {
+						...node.candidateRecord,
+						candidates: [
+							firstCandidate,
+							{
+								...firstCandidate,
+								agentId: "99999999-9999-4999-8999-999999999999",
+								name: "Premium Design Candidate",
+								quoteMinor: "30000000",
+							},
+						],
+					},
+				},
+			],
+		};
+
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={rangedWorkflow}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		expect(screen.getByText("候选总价区间")).toBeInTheDocument();
+		expect(
+			screen.getByText("按各阶段最低与最高候选报价分别合计"),
+		).toBeInTheDocument();
+		expect(screen.getByText("20 USDC – 30 USDC")).toBeInTheDocument();
+	});
+
+	it("零样本候选只展示真实匹配事实，不公开内部冷启动先验", () => {
+		const workflow = singleNodeWorkflow();
+		const node = workflow.nodes[0];
+		const candidate = node?.candidateRecord?.candidates[0];
+		if (
+			node?.candidateRecord === null ||
+			node?.candidateRecord === undefined ||
+			candidate === undefined
+		) {
+			throw new Error("单阶段测试工作流必须包含候选");
+		}
+		const coldStartWorkflow: FormalWorkflow = {
+			...workflow,
+			nodes: [
+				{
+					...node,
+					candidateRecord: {
+						...node.candidateRecord,
+						candidates: [
+							{
+								...candidate,
+								score: 3.5,
+								completed: 0,
+								sampleSize: 0,
+								similarCompleted: 0,
+								matchedTags: [],
+								unmatchedTags: ["research"],
+								scoreDimensions: {
+									completionStrength: {
+										recentValue: 3.5,
+										lifetimeValue: 3.5,
+										sampleSize: 0,
+									},
+									qualityFeedback: {
+										recentValue: 3.5,
+										lifetimeValue: 3.5,
+										sampleSize: 0,
+									},
+									communicationExperience: {
+										recentValue: 3.5,
+										lifetimeValue: 3.5,
+										sampleSize: 0,
+									},
+									disputeReliability: {
+										recentValue: 5,
+										lifetimeValue: 5,
+										sampleSize: 0,
+									},
+									completedHistory: {
+										recentValue: 0,
+										lifetimeValue: 0,
+										sampleSize: 0,
+									},
+								},
+							},
+						],
+					},
+				},
+			],
+		};
+
+		render(
+			<FormalWorkflowView
+				taskTitle="写一篇研究论文"
+				workflow={coldStartWorkflow}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		expect(screen.getByText("符合")).toBeInTheDocument();
+		expect(screen.getByText("学术研究")).toBeInTheDocument();
+		expect(screen.queryByText("research")).not.toBeInTheDocument();
+		expect(
+			screen.getByText("黄色标签暂未命中，仅影响推荐排序"),
+		).toBeInTheDocument();
+		expect(screen.getByText("暂无真实履约评分")).toBeInTheDocument();
+		expect(screen.queryByText("3.5")).not.toBeInTheDocument();
 	});
 
 	it("把预算上限保存为匹配偏好并重新生成所有未选择节点候选", async () => {
@@ -219,6 +380,199 @@ describe("FormalWorkflowView", () => {
 				designNodeId,
 				["ui", "responsive-design", "accessibility"],
 				expect.any(String),
+			),
+		);
+		expect(rematchWorkflowNodeCandidates).toHaveBeenCalledWith(
+			taskId,
+			designNodeId,
+		);
+	});
+
+	it("截止日期已保存但候选未生成时，可直接重试当前阶段匹配", async () => {
+		vi.mocked(updateTaskMatchCriteria).mockClear();
+		vi.mocked(rematchWorkflowNodeCandidates).mockClear();
+		const workflow = workflowFixture();
+		const designNode = workflow.nodes[1];
+		if (designNode === undefined || designNode.candidateRecord === null) {
+			throw new Error("测试工作流必须包含设计阶段候选快照");
+		}
+		workflow.nodes[1] = {
+			...designNode,
+			candidateRecord: {
+				...designNode.candidateRecord,
+				candidates: [],
+				filterReasons: {
+					"88888888-8888-4888-8888-888888888888": "deadline_passed",
+				},
+			},
+		};
+		const runSelection = vi.fn(
+			async (_label: string, action: () => Promise<unknown>) => {
+				await action();
+				return { ok: true } as const;
+			},
+		);
+
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				taskDeadline="2030-01-20T15:59:59.999Z"
+				workflow={workflow}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={runSelection}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "保存并重新匹配" }));
+
+		await waitFor(() =>
+			expect(rematchWorkflowNodeCandidates).toHaveBeenCalledWith(
+				taskId,
+				designNodeId,
+			),
+		);
+		expect(updateTaskMatchCriteria).not.toHaveBeenCalled();
+	});
+
+	it("日期保存成功但重匹配失败时显示错误，并在重试时跳过重复保存", async () => {
+		vi.mocked(updateTaskMatchCriteria).mockClear();
+		vi.mocked(rematchWorkflowNodeCandidates).mockClear();
+		vi.mocked(rematchWorkflowNodeCandidates).mockRejectedValueOnce(
+			new Error("分发服务暂时不可用"),
+		);
+		const workflow = workflowFixture();
+		const designNode = workflow.nodes[1];
+		if (designNode === undefined || designNode.candidateRecord === null) {
+			throw new Error("测试工作流必须包含设计阶段候选快照");
+		}
+		workflow.nodes[1] = {
+			...designNode,
+			candidateRecord: {
+				...designNode.candidateRecord,
+				candidates: [],
+				filterReasons: {
+					"88888888-8888-4888-8888-888888888888": "deadline_passed",
+				},
+			},
+		};
+		const runSelection = vi.fn(
+			async (_label: string, action: () => Promise<unknown>) => {
+				try {
+					await action();
+					return { ok: true } as const;
+				} catch {
+					return {
+						ok: false,
+						message: "重新匹配失败，请稍后重试",
+					} as const;
+				}
+			},
+		);
+
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				taskDeadline="2030-01-01T15:59:59.999Z"
+				workflow={workflow}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={runSelection}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "新的截止时间" }));
+		fireEvent.click(
+			await screen.findByRole("button", { name: /选择.*2030.*1.*20/ }),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "确认截止日期" }));
+		fireEvent.click(screen.getByRole("button", { name: "保存并重新匹配" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"重新匹配失败，请稍后重试",
+		);
+		expect(updateTaskMatchCriteria).toHaveBeenCalledTimes(1);
+		expect(rematchWorkflowNodeCandidates).toHaveBeenCalledTimes(1);
+
+		fireEvent.click(screen.getByRole("button", { name: "保存并重新匹配" }));
+
+		await waitFor(() =>
+			expect(rematchWorkflowNodeCandidates).toHaveBeenCalledTimes(2),
+		);
+		expect(updateTaskMatchCriteria).toHaveBeenCalledTimes(1);
+	});
+
+	it("把过期后的空候选解释为可恢复结果，并在延期后重新匹配当前阶段", async () => {
+		const workflow = workflowFixture();
+		const designNode = workflow.nodes[1];
+		if (designNode === undefined || designNode.candidateRecord === null) {
+			throw new Error("测试工作流必须包含设计阶段候选快照");
+		}
+		workflow.nodes[1] = {
+			...designNode,
+			candidateRecord: {
+				...designNode.candidateRecord,
+				candidates: [],
+				filterReasons: {
+					"88888888-8888-4888-8888-888888888888": "deadline_passed",
+					"99999999-9999-4999-8999-999999999999": "wrong_category",
+				},
+			},
+		};
+		const run = vi.fn(
+			async (_label: string, action: () => Promise<unknown>) => {
+				await action();
+			},
+		);
+		const runSelection = vi.fn(
+			async (_label: string, action: () => Promise<unknown>) => {
+				await action();
+				return { ok: true } as const;
+			},
+		);
+
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				taskDeadline="2030-01-01T15:59:59.999Z"
+				workflow={workflow}
+				viewMode="allocation"
+				busy={false}
+				run={run}
+				runSelection={runSelection}
+			/>,
+		);
+
+		expect(screen.getByText("任务截止时间已过")).toBeInTheDocument();
+		expect(screen.getByText("任务分类不匹配 · 1 个")).toBeInTheDocument();
+		expect(screen.getByText("暂无候选报价")).toBeInTheDocument();
+		expect(screen.queryByText("候选生成中")).not.toBeInTheDocument();
+		expect(
+			screen.queryByText("尚未生成该阶段的候选 Agent"),
+		).not.toBeInTheDocument();
+		expect(screen.getByText("新的截止时间")).toHaveClass("md:row-start-1");
+		expect(
+			screen.getByRole("button", { name: "新的截止时间" }).parentElement
+				?.parentElement,
+		).toHaveClass("md:row-start-2");
+		expect(screen.getByRole("button", { name: "保存并重新匹配" })).toHaveClass(
+			"md:row-start-2",
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "新的截止时间" }));
+		fireEvent.click(
+			await screen.findByRole("button", { name: /选择.*2030.*1.*20/ }),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "确认截止日期" }));
+		fireEvent.click(screen.getByRole("button", { name: "保存并重新匹配" }));
+
+		await waitFor(() =>
+			expect(updateTaskMatchCriteria).toHaveBeenCalledWith(
+				taskId,
+				{ deadline: expect.stringMatching(/^2030-01-20T/) },
+				expect.stringMatching(/^workflow-deadline:/),
 			),
 		);
 		expect(rematchWorkflowNodeCandidates).toHaveBeenCalledWith(
@@ -1028,6 +1382,23 @@ function failedDesignWorkflowFixture(): FormalWorkflow {
 	return workflow;
 }
 
+/**
+ * 价格展示测试只保留一个已经生成候选的阶段，使断言能够明确区分“单一总价”和
+ * “最低—最高总价”，不会被其它尚未生成候选的节点干扰。
+ */
+function singleNodeWorkflow(): FormalWorkflow {
+	const workflow = workflowFixture();
+	const candidateNode = workflow.nodes[1];
+	if (candidateNode === undefined || candidateNode.candidateRecord === null) {
+		throw new Error("测试工作流必须包含已生成候选的设计阶段");
+	}
+	return {
+		...workflow,
+		nodes: [candidateNode],
+		edges: [],
+	};
+}
+
 function workflowFixture(): FormalWorkflow {
 	const shared = {
 		description: "正式工作流阶段说明。",
@@ -1097,6 +1468,7 @@ function workflowFixture(): FormalWorkflow {
 				candidateRecord: {
 					id: "77777777-7777-4777-8777-777777777777",
 					ruleVersion: "ranking-v1",
+					filterReasons: {},
 					finalSelectionAgentId: null,
 					candidates: [
 						{

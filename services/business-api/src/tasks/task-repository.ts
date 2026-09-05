@@ -12,6 +12,7 @@ import type {
 	TaskPricing,
 } from "../platform/task-validation";
 import type { TaskStatus } from "../platform/task-state";
+import { loadMatchingTagTaxonomy } from "../platform/tag-taxonomy";
 
 export type StoredTask = Readonly<{
 	id: string;
@@ -178,12 +179,6 @@ interface ContextRow {
 	gas_fallback_minor: string;
 }
 
-interface TagRow {
-	canonical_name: string;
-	synonyms: string[];
-	forbidden: boolean;
-}
-
 interface TaskRow {
 	id: string;
 	publisher_id: string;
@@ -250,19 +245,8 @@ export class PgTaskRepository
 		);
 		const row = context.rows[0];
 		if (row === undefined) return null;
-		const tags = await this.db.query<TagRow>(
-			`SELECT canonical_name, synonyms, forbidden FROM tags`,
-			[],
-		);
-		const canonicalByAlias = new Map<string, string>();
-		const forbiddenTags = new Set<string>();
-		for (const tag of tags.rows) {
-			const canonical = tag.canonical_name.toLocaleLowerCase();
-			canonicalByAlias.set(canonical, canonical);
-			for (const alias of tag.synonyms)
-				canonicalByAlias.set(alias.toLocaleLowerCase(), canonical);
-			if (tag.forbidden) forbiddenTags.add(canonical);
-		}
+		const { canonicalByAlias, forbiddenTags } =
+			await loadMatchingTagTaxonomy(this.db);
 		const attachmentLimit =
 			row.max_file_size_bytes === null ||
 			row.allowed_mime_types === null ||
@@ -480,11 +464,13 @@ export class PgTaskRepository
 		}>,
 	): Promise<StoredTask | null> {
 		const result = await this.db.query<TaskRow>(
-			`UPDATE tasks
+		`UPDATE tasks
           SET category_id=$4, category_version=$5, tag_names=$6, deadline=$7,
               status_version=status_version + 1
         WHERE id=$1 AND lower(publisher_id)=lower($2)
-          AND status='matching' AND status_version=$3
+          -- 正式工作流在 planning 阶段完成选人；旧版单 Agent 流程仍在 matching 阶段
+          -- 提供恢复入口。仓储重复状态约束，避免服务层检查后发生并发状态迁移。
+          AND status IN ('planning','matching') AND status_version=$3
       RETURNING *`,
 			[
 				taskId,

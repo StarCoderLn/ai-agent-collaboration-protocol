@@ -18,6 +18,7 @@ import {
 	submitWorkflowNodeFeedback,
 	subscribeTaskEvents,
 	TaskApiRequestError,
+	updateTaskMatchCriteria,
 } from "./tasks";
 
 const taskId = "11111111-1111-4111-8111-111111111111";
@@ -91,6 +92,20 @@ describe("formal task API client", () => {
 		expect(new Headers(init?.headers).get("idempotency-key")).toBe(
 			"create-task-idempotency-1",
 		);
+	});
+
+	it("接受正式工作流在更新匹配条件后返回 planning 状态", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			Response.json({ taskId, status: "planning", statusVersion: "3" }),
+		);
+
+		await expect(
+			updateTaskMatchCriteria(
+				taskId,
+				{ deadline: "2030-01-20T15:59:59.999Z" },
+				"update-match-criteria-idempotency-1",
+			),
+		).resolves.toEqual({ taskId, status: "planning", statusVersion: "3" });
 	});
 
 	it("deletes a pre-funding task through the authenticated soft-archive endpoint", async () => {
@@ -207,7 +222,7 @@ describe("formal task API client", () => {
 		});
 	});
 
-	it("validates the persisted multi-Agent workflow before exposing it to the page", async () => {
+	it("validates the persisted workflow and recovers historic null tag evidence", async () => {
 		const workflowNodeId = "66666666-6666-4666-8666-666666666666";
 		vi.mocked(fetch).mockResolvedValueOnce(
 			Response.json({
@@ -248,7 +263,28 @@ describe("formal task API client", () => {
 						selection: null,
 						assignment: null,
 						execution: null,
-						candidateRecord: null,
+						candidateRecord: {
+							id: distributionId,
+							ruleVersion: "ranking-v1",
+							filterReasons: {},
+							candidates: [
+								{
+									agentId,
+									name: "论文写作 Agent",
+									matchedTags: null,
+									unmatchedTags: ["论文写作"],
+									quoteMinor: "25000000",
+									estimatedDurationSeconds: 600,
+									score: 0,
+									completed: 0,
+									responseMinutes: 1,
+									isNew: true,
+									rankScore: "0",
+									deliveryCases: [],
+								},
+							],
+							finalSelectionAgentId: null,
+						},
 						latestResultBatch: null,
 						acceptance: null,
 						latestRework: null,
@@ -260,7 +296,15 @@ describe("formal task API client", () => {
 
 		await expect(getTaskWorkflow(taskId)).resolves.toMatchObject({
 			run: { currency: "USDC", releasedAmountMinor: "20000000" },
-			nodes: [{ id: workflowNodeId, status: "accepted" }],
+			nodes: [
+				{
+					id: workflowNodeId,
+					status: "accepted",
+					candidateRecord: {
+						candidates: [{ matchedTags: [] }],
+					},
+				},
+			],
 		});
 		expect(fetch).toHaveBeenCalledWith(
 			`https://business-api.test/api/tasks/${taskId}/workflow`,

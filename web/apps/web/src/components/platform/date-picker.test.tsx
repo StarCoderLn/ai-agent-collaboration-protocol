@@ -22,6 +22,9 @@ describe("DatePicker", () => {
 		fireEvent.click(trigger);
 
 		expect(screen.getByRole("dialog", { name: "选择截止日期" })).toBeInTheDocument();
+		expect(screen.getByText("所选日期当天结束前为交付截止时间")).toHaveClass(
+			"whitespace-nowrap",
+		);
 		fireEvent.click(screen.getByRole("button", { name: "选择 2030年1月20日" }));
 		fireEvent.click(screen.getByRole("button", { name: "确认截止日期" }));
 

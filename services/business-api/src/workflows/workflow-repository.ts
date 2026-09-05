@@ -61,6 +61,7 @@ type NodeRow = {
   candidate_record_id: string | null;
   candidate_rule_version: string | null;
   candidates: unknown;
+  filter_reasons: unknown;
   final_selection_agent_id: string | null;
 };
 
@@ -167,6 +168,7 @@ export type FormalWorkflowGraph = Readonly<{
       id: string;
       ruleVersion: string;
       candidates: unknown;
+      filterReasons: unknown;
       finalSelectionAgentId: string | null;
     }>;
     latestResultBatch: null | Readonly<{
@@ -385,6 +387,7 @@ async function findFormalWorkflow(db: QueryExecutor, taskId: string): Promise<Fo
 			execution.failure_stage,execution.attention_message,
             distribution.id::text AS candidate_record_id,
             distribution.rule_version AS candidate_rule_version,distribution.candidates,
+            distribution.filter_reasons,
             distribution.final_selection_agent_id::text
        FROM task_workflow_nodes node
        LEFT JOIN LATERAL (
@@ -524,6 +527,9 @@ async function findFormalWorkflow(db: QueryExecutor, taskId: string): Promise<Fo
               id: node.candidate_record_id,
               ruleVersion: node.candidate_rule_version,
               candidates: node.candidates,
+              // 空候选同样是一次完整、可审计的匹配结果。必须把硬条件过滤原因返回给
+              // 页面，否则“全部被过滤”会被误解成“尚未生成候选记录”。
+              filterReasons: node.filter_reasons,
               finalSelectionAgentId: node.final_selection_agent_id,
             },
         latestResultBatch: firstResult === undefined

@@ -138,7 +138,9 @@ const taskArchivedSchema = z.object({
 });
 const matchCriteriaUpdatedSchema = z.object({
 	taskId: uuidSchema,
-	status: z.literal("matching"),
+	// 普通任务更新条件后回到 matching；正式多阶段工作流仍处于 planning，随后只重建
+	// 当前节点的候选快照。两者都是服务端状态机的合法成功结果，客户端不能误判失败。
+	status: z.enum(["matching", "planning"]),
 	statusVersion: integerStringSchema,
 });
 const categoryListSchema = z.object({ categories: z.array(categorySchema) });
@@ -315,7 +317,12 @@ const deliveryCaseSchema = z.object({
 const candidateSchema = z.object({
 	agentId: uuidSchema,
 	name: z.string(),
-	matchedTags: z.array(z.string()),
+	// 修复前已冻结的候选快照可能把合法空集合保存为 null。这里只兼容该历史编码并
+	// 立即归一化为 []；字段缺失或其它错误类型仍会被拒绝，不能掩盖新的协议损坏。
+	matchedTags: z
+		.array(z.string())
+		.nullable()
+		.transform((tags) => tags ?? []),
 	/** 任务需要但该 Agent 标签中尚未覆盖的能力，由冻结匹配快照返回。 */
 	unmatchedTags: z.array(z.string()).optional(),
 	quoteMinor: integerStringSchema,
@@ -726,6 +733,9 @@ const workflowNodeSchema = z.object({
 			ruleVersion: z.string(),
 			// 候选来自 Go 分发引擎，但仍在浏览器边界逐项校验，不能让 unknown 渗入关系图。
 			candidates: z.array(candidateSchema),
+			// 空对象表示没有 Agent 被硬条件排除；非空对象用于解释“已匹配但无候选”，
+			// 不能与 candidateRecord=null（从未生成匹配快照）混为一谈。
+			filterReasons: z.record(z.string(), z.string()),
 			finalSelectionAgentId: uuidSchema.nullable(),
 		})
 		.nullable(),

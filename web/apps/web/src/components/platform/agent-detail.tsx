@@ -28,6 +28,7 @@ import {
 	type PublicDirectoryAgent,
 } from "@/lib/api/agent-directory";
 import { formatDate } from "@/lib/platform/format";
+import { matchingTagLabel } from "@/lib/platform/matching-tag-label";
 import { formatMinorAmount } from "@/lib/platform/money";
 
 type LoadState =
@@ -166,7 +167,7 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 									className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-muted-foreground text-xs"
 								>
 									<Tags className="size-3" />
-									{tag}
+									{matchingTagLabel(tag, locale)}
 								</span>
 							))}
 						</div>

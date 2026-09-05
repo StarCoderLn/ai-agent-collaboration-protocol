@@ -19,22 +19,22 @@ describe("DispatchEngineClient", () => {
       .resolves.toMatchObject({ statusCode: 201, body: { assignment: { id: "assignment-1" } } });
   });
 
-  it("forwards lifecycle actor type, review evidence and idempotency to the Go authority", async () => {
+  it("forwards only provider lifecycle events and idempotency to the Go authority", async () => {
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
       const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
       const headers = new Headers(init?.headers);
       expect(url.pathname).toBe("/internal/agents/agent-1/transitions");
       expect(headers.get("authorization")).toBe("Bearer internal-secret");
-      expect(headers.get("x-actor-id")).toBe("reviewer-1");
-      expect(headers.get("x-actor-type")).toBe("admin");
-      expect(headers.get("idempotency-key")).toBe("approve:agent:request-1");
-      expect(init?.body).toBe(JSON.stringify({ event: "admin_approve", reviewReason: "资料核验通过" }));
-      return Response.json({ agentId: "agent-1", status: "active" });
+      expect(headers.get("x-actor-id")).toBe("provider-1");
+      expect(headers.get("x-actor-type")).toBe("provider");
+      expect(headers.get("idempotency-key")).toBe("pause:agent:request-1");
+      expect(init?.body).toBe(JSON.stringify({ event: "manual_pause" }));
+      return Response.json({ agentId: "agent-1", status: "paused" });
     });
     const client = new DispatchEngineClient("http://dispatch.local", "internal-secret", fetcher);
     await expect(client.transitionAgent(
-      "agent-1", "reviewer-1", "admin", "admin_approve", "approve:agent:request-1", "资料核验通过",
-    )).resolves.toMatchObject({ statusCode: 200, body: { status: "active" } });
+      "agent-1", "provider-1", "manual_pause", "pause:agent:request-1",
+    )).resolves.toMatchObject({ statusCode: 200, body: { status: "paused" } });
   });
 
   it("forwards execution retry without inventing a second task or escrow", async () => {

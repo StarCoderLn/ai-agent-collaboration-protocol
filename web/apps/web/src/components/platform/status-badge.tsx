@@ -1,9 +1,18 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, CircleDashed, Clock3, Cpu, ShieldCheck } from "lucide-react";
-import { TASK_STATUS_PRESENTATION, type TaskStatus } from "@/lib/platform/contracts";
+import {
+	AlertTriangle,
+	CheckCircle2,
+	CircleDashed,
+	Clock3,
+	Cpu,
+	ShieldCheck,
+} from "lucide-react";
 import { useLocale } from "@/components/i18n/locale-provider";
-import type { MessageId } from "@/lib/i18n/messages";
+import {
+	TASK_STATUS_PRESENTATION,
+	type TaskStatus,
+} from "@/lib/platform/contracts";
 
 const TONES = {
 	neutral: "bg-muted text-muted-foreground",
@@ -30,14 +39,21 @@ export function StatusBadge({ status }: { status: TaskStatus }) {
 	const presentation = TASK_STATUS_PRESENTATION[status];
 	const Icon = ICONS[presentation.tone];
 	return (
-		<span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium text-xs ${TONES[presentation.tone]}`}>
+		<span
+			className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium text-xs ${TONES[presentation.tone]}`}
+		>
 			<Icon className="size-3.5" strokeWidth={1.5} aria-hidden />
-			{t(presentation.label as MessageId)}
+			{t(presentation.label)}
 		</span>
 	);
 }
 
 export function SandboxBadge() {
 	const { t } = useLocale();
-	return <span className="inline-flex items-center gap-1.5 rounded-full border border-tertiary/20 bg-tertiary-container px-2.5 py-1 font-medium text-tertiary-container-foreground text-xs"><ShieldCheck className="size-3.5" strokeWidth={1.5} aria-hidden />{t("平台保障")}</span>;
+	return (
+		<span className="inline-flex items-center gap-1.5 rounded-full border border-tertiary/20 bg-tertiary-container px-2.5 py-1 font-medium text-tertiary-container-foreground text-xs">
+			<ShieldCheck className="size-3.5" strokeWidth={1.5} aria-hidden />
+			{t("平台保障")}
+		</span>
+	);
 }

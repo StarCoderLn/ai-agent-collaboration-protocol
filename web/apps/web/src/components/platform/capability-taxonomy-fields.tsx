@@ -203,7 +203,9 @@ export function CapabilityTaxonomyFields({
 				<TaxonomyField
 					label={t("技能标签")}
 					htmlFor={tagsInputId}
-					hint={t("填写最能代表需求或 Agent 能力的技术、风格或专业标签")}
+					hint={t(
+						"输入你熟悉的能力名称即可，平台会统一识别常见同义表达，无需与任务文案完全一致",
+					)}
 					error={tagsError}
 				>
 					<fieldset className="space-y-3 rounded-xl border border-primary/20 bg-card/70 p-3">

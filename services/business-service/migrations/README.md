@@ -75,4 +75,5 @@ migrate -path services/business-service/migrations \
 - `0036_quick_agent_integration`：新增默认快速 HTTP JSON 接入模式和可恢复的同步结果暂存；历史 Agent 继续使用 AICP HMAC，不改变既有认证与回调语义。
 - `0037_automatic_agent_admission`：新增可恢复自动准入轮次、三道标准测试题和 AI 评测字段；技术门禁通过后由固定阈值自动上架，失败支持提供者幂等重试。
 - `0038_agent_cold_start_threshold`：将冷启动报价限制改为完成 3 个真实结算任务后解除；20 份评分先验仅保留为评分置信度依据，不再控制“新 Agent”标识或资金风险门禁。
+- `0039_canonical_matching_tags`：扩充论文研究能力的中英文同义词，并将 Agent 档案与提供者案例中的历史同义标签回填为 canonical 值；历史候选快照保持不可变。
 - `0040_admission_cost_limits`：增加跨重启保留的准入 Worker 恢复次数，新增请求小型示例的 v3 通用模板。提供者限流复用轮次时间戳；回滚保留列、模板与历史证据，再升级可幂等执行。必须先迁移至 40，再重启分发服务。

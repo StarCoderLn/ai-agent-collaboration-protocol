@@ -158,7 +158,7 @@ class MemoryTaskRepository implements TaskRepository {
 		const task = await this.findOwned(taskId, publisherId);
 		if (
 			task === null ||
-			task.status !== "matching" ||
+			(task.status !== "matching" && task.status !== "planning") ||
 			task.statusVersion !== expectedVersion
 		)
 			return null;
@@ -604,6 +604,38 @@ describe("task command service", () => {
 			statusVersion: 5n,
 			eventType: "task.match_criteria_updated",
 		});
+	});
+
+	it("允许正式工作流在托管前延长过期截止时间，以便重新生成候选", async () => {
+		const { deps, repository } = makeDeps();
+		await createTaskDraft(validInput(), "publisher", "create-planning-rematch", deps);
+		const stored = repository.tasks.get("task-1");
+		if (stored === undefined) throw new Error("TASK_FIXTURE_REQUIRED");
+		repository.tasks.set("task-1", {
+			...stored,
+			status: "planning",
+			statusVersion: 3n,
+			draft: {
+				...stored.draft,
+				deadline: new Date("2026-08-22T23:00:00.000Z"),
+			},
+		});
+
+		const result = await updateOwnedTaskMatchCriteria(
+			"task-1",
+			{ deadline: "2026-08-23T03:00:00.000Z" },
+			"publisher",
+			"extend-planning-deadline",
+			deps,
+		);
+
+		expect(result.body).toMatchObject({
+			status: "planning",
+			statusVersion: "4",
+		});
+		expect(repository.tasks.get("task-1")?.draft.deadline?.toISOString()).toBe(
+			"2026-08-23T03:00:00.000Z",
+		);
 	});
 
 	it("rejects unsafe fields, non-matching states, and another publisher without leaking existence", async () => {

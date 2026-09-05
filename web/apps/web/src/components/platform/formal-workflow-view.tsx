@@ -19,6 +19,7 @@ import {
 } from "@xyflow/react";
 import {
 	Bot,
+	CalendarClock,
 	CheckCircle2,
 	CircleDashed,
 	CircleX,
@@ -39,11 +40,14 @@ import {
 	WalletCards,
 	X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import type { Route } from "next";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import ResultDeliverableWorkspace from "@/components/deliverables/result-deliverable-workspace";
 import { useFullscreenTarget } from "@/components/fullscreen/use-fullscreen-target";
 import { useLocale } from "@/components/i18n/locale-provider";
+import { DatePicker } from "@/components/platform/date-picker";
 import {
 	acceptWorkflowNodeResult,
 	confirmWorkflowNodeCandidate,
@@ -56,11 +60,18 @@ import {
 	retryFailedWorkflowNodeExecution,
 	suggestTaskTags,
 	type TaskCandidate,
+	updateTaskMatchCriteria,
 	updateWorkflowBudgetPreference,
 	updateWorkflowNodeCapabilities,
 	type WorkflowAcceptancePreview,
 	type WorkflowArtifact,
 } from "@/lib/api/tasks";
+import {
+	deadlineIsoToLocalDate,
+	localDateToDeadlineIso,
+} from "@/lib/platform/deadline";
+import { matchingFilterReasonMessageId } from "@/lib/platform/matching-filter-reason";
+import { matchingTagLabel } from "@/lib/platform/matching-tag-label";
 import {
 	isMatchingTagSyntaxValid,
 	MAX_MATCHING_TAG_COUNT,
@@ -138,6 +149,7 @@ const NODE_TYPES = {
  * 通过带发布者会话的正式命令接口提交，成功后由父页面重新读取整张工作流。
  */
 export default function FormalWorkflowView({
+	taskDeadline = null,
 	taskTitle,
 	workflow,
 	viewMode,
@@ -148,6 +160,7 @@ export default function FormalWorkflowView({
 	runSelection,
 }: {
 	taskTitle: string;
+	taskDeadline?: string | null;
 	workflow: FormalWorkflow;
 	viewMode: FormalWorkflowViewMode;
 	selectionEditable?: boolean;
@@ -397,6 +410,7 @@ export default function FormalWorkflowView({
 			{selectedNode !== null && (
 				<WorkflowNodeWorkspace
 					taskId={workflow.run.taskId}
+					taskDeadline={taskDeadline}
 					node={selectedNode}
 					currency={workflow.run.currency}
 					viewMode={viewMode}
@@ -659,6 +673,7 @@ function WorkflowStageNavigator({
 
 function WorkflowNodeWorkspace({
 	taskId,
+	taskDeadline,
 	node,
 	currency,
 	viewMode,
@@ -679,6 +694,7 @@ function WorkflowNodeWorkspace({
 	runSelection,
 }: {
 	taskId: string;
+	taskDeadline: string | null;
 	node: FormalWorkflowNode;
 	currency: string;
 	viewMode: FormalWorkflowViewMode;
@@ -788,6 +804,7 @@ function WorkflowNodeWorkspace({
 				(node.status === "selecting" || reselecting) && (
 					<WorkflowCandidateSelection
 						taskId={taskId}
+						taskDeadline={taskDeadline}
 						node={node}
 						currency={currency}
 						busy={busy}
@@ -1525,6 +1542,14 @@ function WorkflowBudgetPreferencePanel({
 	).length;
 	const locked = selectedCount > 0;
 	const quoteRange = workflowQuoteRange(workflow.nodes);
+	const hasCompletedEmptyMatch = workflow.nodes.some(
+		(node) =>
+			node.selection === null &&
+			node.candidateRecord !== null &&
+			node.candidateRecord.candidates.length === 0,
+	);
+	const quoteRangeIsSinglePrice =
+		quoteRange !== null && quoteRange.minimumMinor === quoteRange.maximumMinor;
 	const parsed = input.trim() === "" ? null : parseUsdcToMinor(input);
 	const belowCurrentRange =
 		parsed !== null &&
@@ -1576,7 +1601,7 @@ function WorkflowBudgetPreferencePanel({
 						{t("匹配偏好")}
 					</p>
 					<h2 className="mt-2 font-semibold text-xl">
-						{t("先看价格区间，再决定预算上限")}
+						{t("先看候选报价，再决定预算上限")}
 					</h2>
 					<p className="mt-1.5 text-muted-foreground text-sm leading-6">
 						{t(
@@ -1584,15 +1609,31 @@ function WorkflowBudgetPreferencePanel({
 						)}
 					</p>
 				</div>
-				<div className="rounded-xl border border-secondary/20 bg-secondary-container/25 px-4 py-3 text-right">
+				<div className="min-w-56 rounded-xl border border-secondary/20 bg-secondary-container/25 px-4 py-3 text-center">
 					<p className="text-[10px] text-muted-foreground">
-						{t("当前候选组合区间")}
+						{quoteRange === null || quoteRangeIsSinglePrice
+							? t("候选总价参考")
+							: t("候选总价区间")}
 					</p>
 					<p className="mt-1 font-semibold text-secondary">
 						{quoteRange === null
-							? t("候选生成中")
-							: `${formatMinorAmount(quoteRange.minimumMinor, workflow.run.currency)} – ${formatMinorAmount(quoteRange.maximumMinor, workflow.run.currency)}`}
+							? hasCompletedEmptyMatch
+								? t("暂无候选报价")
+								: t("候选生成中")
+							: quoteRangeIsSinglePrice
+								? formatMinorAmount(
+										quoteRange.minimumMinor,
+										workflow.run.currency,
+									)
+								: `${formatMinorAmount(quoteRange.minimumMinor, workflow.run.currency)} – ${formatMinorAmount(quoteRange.maximumMinor, workflow.run.currency)}`}
 					</p>
+					{quoteRange !== null && (
+						<p className="mt-1 text-[10px] text-muted-foreground leading-4">
+							{quoteRangeIsSinglePrice
+								? t("按各阶段当前候选报价合计")
+								: t("按各阶段最低与最高候选报价分别合计")}
+						</p>
+					)}
 				</div>
 			</div>
 			<div className="mt-5 grid gap-x-3 gap-y-2 md:grid-cols-[minmax(0,1fr)_auto] md:grid-rows-[auto_auto_auto]">
@@ -1656,6 +1697,7 @@ function WorkflowBudgetPreferencePanel({
 
 function WorkflowCandidateSelection({
 	taskId,
+	taskDeadline,
 	node,
 	currency,
 	busy,
@@ -1665,6 +1707,7 @@ function WorkflowCandidateSelection({
 	onCancel,
 }: {
 	taskId: string;
+	taskDeadline: string | null;
 	node: FormalWorkflowNode;
 	currency: string;
 	busy: boolean;
@@ -1675,6 +1718,9 @@ function WorkflowCandidateSelection({
 }) {
 	const { t } = useLocale();
 	const candidates = node.candidateRecord?.candidates ?? [];
+	const filterReasons = node.candidateRecord?.filterReasons ?? {};
+	const deadlineBlocked =
+		Object.values(filterReasons).includes("deadline_passed");
 	const [preference, setPreference] = useState<"overall" | "quality" | "value">(
 		"overall",
 	);
@@ -1694,6 +1740,21 @@ function WorkflowCandidateSelection({
 			}),
 		[candidates, preference],
 	);
+
+	function handleRematch() {
+		if (deadlineBlocked) {
+			// 已知截止时间过期时继续请求只会制造另一条空快照。把用户带到恢复输入框，
+			// 由其明确选择新日期，避免平台静默改写任务合同。
+			document
+				.getElementById(`workflow-deadline-${node.id}`)
+				?.scrollIntoView({ behavior: "smooth", block: "center" });
+			document.getElementById(`workflow-deadline-${node.id}`)?.focus();
+			return;
+		}
+		void run("workflow-rematch", () =>
+			rematchWorkflowNodeCandidates(taskId, node.id),
+		);
+	}
 
 	async function selectCandidate(candidate: TaskCandidate) {
 		setSelectionError(null);
@@ -1743,14 +1804,14 @@ function WorkflowCandidateSelection({
 						type="button"
 						variant="outline"
 						disabled={busy}
-						onClick={() =>
-							run("workflow-rematch", () =>
-								rematchWorkflowNodeCandidates(taskId, node.id),
-							)
-						}
+						onClick={handleRematch}
 					>
-						<RefreshCw className="size-4" />
-						{t("重新匹配该阶段")}
+						{deadlineBlocked ? (
+							<CalendarClock className="size-4" />
+						) : (
+							<RefreshCw className="size-4" />
+						)}
+						{deadlineBlocked ? t("调整截止时间") : t("重新匹配该阶段")}
 					</Button>
 				)}
 			</div>
@@ -1787,10 +1848,19 @@ function WorkflowCandidateSelection({
 					{selectionError}
 				</p>
 			)}
-			{candidates.length === 0 ? (
+			{node.candidateRecord === null ? (
 				<p className="mt-5 rounded-xl border border-dashed p-5 text-center text-muted-foreground text-sm">
 					{t("尚未生成该阶段的候选 Agent")}
 				</p>
+			) : candidates.length === 0 ? (
+				<WorkflowEmptyCandidates
+					taskId={taskId}
+					taskDeadline={taskDeadline}
+					node={node}
+					filterReasons={filterReasons}
+					busy={busy}
+					runSelection={runSelection}
+				/>
 			) : (
 				<div className="mt-5 grid gap-4 xl:grid-cols-3">
 					{orderedCandidates.map((candidate, index) => {
@@ -1828,19 +1898,10 @@ function WorkflowCandidateSelection({
 										</span>
 									))}
 								</div>
-								<div className="mt-4 grid gap-2 rounded-xl border border-primary/10 bg-accent/30 p-3 text-[10px]">
-									<CapabilityEvidence
-										label={t("已匹配能力")}
-										tags={candidate.matchedTags}
-										emptyLabel={t("暂无标签证据")}
-										matched
-									/>
-									<CapabilityEvidence
-										label={t("尚未覆盖")}
-										tags={candidate.unmatchedTags ?? []}
-										emptyLabel={t("当前能力均有标签证据")}
-									/>
-								</div>
+								<CapabilityMatchSummary
+									matchedTags={candidate.matchedTags}
+									unmatchedTags={candidate.unmatchedTags ?? []}
+								/>
 								<div className="mt-4 grid grid-cols-2 gap-2 text-xs">
 									<EvidenceValue
 										label={t("任务匹配度")}
@@ -1984,6 +2045,168 @@ function WorkflowCandidateSelection({
 }
 
 /**
+ * 空候选不等于尚未匹配：只要 candidateRecord 存在，这里就展示该次快照记录的真实
+ * 过滤原因。截止时间过期属于可恢复硬条件，因此额外提供显式延期入口；保存后先更新
+ * 任务合同，再只重匹配当前可选节点，旧快照继续留在服务端作为审计证据。
+ */
+function WorkflowEmptyCandidates({
+	taskId,
+	taskDeadline,
+	node,
+	filterReasons,
+	busy,
+	runSelection,
+}: {
+	taskId: string;
+	taskDeadline: string | null;
+	node: FormalWorkflowNode;
+	filterReasons: Readonly<Record<string, string>>;
+	busy: boolean;
+	runSelection: RunSelectionAction;
+}) {
+	const { t } = useLocale();
+	const originalLocalDeadline = deadlineIsoToLocalDate(taskDeadline);
+	const [deadline, setDeadline] = useState(originalLocalDeadline);
+	// 更新任务条件与节点重匹配是两个独立请求。若第一步成功、第二步失败，必须记住已经
+	// 持久化的日期，使用户重试时只执行重匹配，避免被“日期没有变化”的校验锁死。
+	const [persistedDeadline, setPersistedDeadline] = useState(
+		originalLocalDeadline,
+	);
+	const [error, setError] = useState<string | null>(null);
+	const counts = new Map<string, number>();
+	for (const reason of Object.values(filterReasons))
+		counts.set(reason, (counts.get(reason) ?? 0) + 1);
+	const deadlineBlocked = counts.has("deadline_passed");
+
+	useEffect(() => {
+		const nextDeadline = deadlineIsoToLocalDate(taskDeadline);
+		setDeadline(nextDeadline);
+		setPersistedDeadline(nextDeadline);
+		setError(null);
+	}, [taskDeadline]);
+
+	function saveDeadlineAndRematch() {
+		if (deadline.length === 0) {
+			setError(t("请选择新的截止日期"));
+			return;
+		}
+		let deadlineIso: string;
+		try {
+			deadlineIso = localDateToDeadlineIso(deadline);
+		} catch {
+			setError(t("请选择新的截止日期"));
+			return;
+		}
+		if (Date.parse(deadlineIso) <= Date.now()) {
+			setError(t("新的截止日期必须晚于当前时间"));
+			return;
+		}
+		setError(null);
+		void (async () => {
+			const result = await runSelection(
+				"workflow-deadline-rematch",
+				async () => {
+					if (deadline !== persistedDeadline) {
+						await updateTaskMatchCriteria(
+							taskId,
+							{ deadline: deadlineIso },
+							key("workflow-deadline"),
+						);
+						// 只在服务端确认成功后更新本地恢复点。后续重匹配失败时，用户可直接
+						// 重试第二步，不会重复提交已保存的任务合同。
+						setPersistedDeadline(deadline);
+					}
+					await rematchWorkflowNodeCandidates(taskId, node.id);
+				},
+			);
+			if (!result.ok) setError(result.message);
+		})();
+	}
+
+	return (
+		<div className="mt-5 rounded-2xl border border-warning/30 bg-warning/6 p-5">
+			<div className="flex items-start gap-3">
+				<span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-warning/12 text-warning">
+					<CalendarClock className="size-5" aria-hidden />
+				</span>
+				<div>
+					<h4 className="font-semibold">
+						{deadlineBlocked
+							? t("任务截止时间已过")
+							: t("暂无满足全部硬约束的 Agent")}
+					</h4>
+					<p className="mt-1 text-muted-foreground text-sm leading-6">
+						{deadlineBlocked
+							? t("请选择新的截止日期，保存后平台会生成新的匹配记录。")
+							: t("该阶段已完成匹配，但所有 Agent 均被硬条件排除。")}
+					</p>
+				</div>
+			</div>
+
+			{counts.size > 0 && (
+				<ul
+					className="mt-4 flex flex-wrap gap-2"
+					aria-label={t("候选过滤原因")}
+				>
+					{[...counts].map(([reason, count]) => (
+						<li
+							key={reason}
+							className="rounded-full border border-warning/20 bg-background/55 px-3 py-1.5 text-muted-foreground text-xs"
+						>
+							{t(matchingFilterReasonMessageId(reason))} ·{" "}
+							{t("{count} 个", { count })}
+						</li>
+					))}
+				</ul>
+			)}
+
+			{deadlineBlocked && taskDeadline !== null && (
+				<div className="mt-5 grid gap-x-3 gap-y-2 border-warning/20 border-t pt-5 md:grid-cols-[minmax(0,1fr)_auto] md:grid-rows-[auto_auto_auto]">
+					<p className="font-medium text-sm md:col-start-1 md:row-start-1">
+						{t("新的截止时间")}
+					</p>
+					<div className="md:col-start-1 md:row-start-2">
+						<DatePicker
+							id={`workflow-deadline-${node.id}`}
+							label={t("新的截止时间")}
+							value={deadline}
+							onChange={(value) => {
+								setDeadline(value);
+								setError(null);
+							}}
+							disabled={busy}
+							invalid={error !== null}
+							aria-describedby={`workflow-deadline-error-${node.id}`}
+						/>
+					</div>
+					<p
+						id={`workflow-deadline-error-${node.id}`}
+						className={`text-xs md:col-start-1 md:row-start-3 ${error === null ? "text-muted-foreground" : "text-destructive"}`}
+						role={error === null ? undefined : "alert"}
+					>
+						{error ?? t("历史匹配记录不会被覆盖。")}
+					</p>
+					<Button
+						type="button"
+						size="lg"
+						className="h-11 md:col-start-2 md:row-start-2 md:self-stretch"
+						disabled={busy}
+						onClick={saveDeadlineAndRematch}
+					>
+						{busy ? (
+							<Loader2 className="size-4 animate-spin" />
+						) : (
+							<RefreshCw className="size-4" />
+						)}
+						{t("保存并重新匹配")}
+					</Button>
+				</div>
+			)}
+		</div>
+	);
+}
+
+/**
  * 平台先从自然语言识别能力，用户只在识别不准时进行轻量修正。编辑器同时提供平台
  * 词表建议和自由输入，但最终仍由服务端归一与校验，避免浏览器承担匹配协议权威。
  */
@@ -1998,7 +2221,7 @@ function WorkflowCapabilityEditor({
 	busy: boolean;
 	run: RunAction;
 }) {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
 	const [editing, setEditing] = useState(false);
 	const [draftTags, setDraftTags] = useState<readonly string[]>(node.tags);
 	const [input, setInput] = useState("");
@@ -2120,7 +2343,7 @@ function WorkflowCapabilityEditor({
 							key={tag}
 							className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary-container px-2.5 py-1 font-medium text-primary text-xs"
 						>
-							{tag}
+							{matchingTagLabel(tag, locale)}
 							{editing && (
 								<button
 									type="button"
@@ -2187,7 +2410,7 @@ function WorkflowCapabilityEditor({
 									onClick={() => addTag(tag)}
 								>
 									<Plus className="size-3" aria-hidden />
-									{tag}
+									{matchingTagLabel(tag, locale)}
 								</button>
 							))}
 						</div>
@@ -2523,38 +2746,58 @@ function EvidenceValue({ label, value }: { label: string; value: string }) {
 	);
 }
 
-function CapabilityEvidence({
-	label,
-	tags,
-	emptyLabel,
-	matched = false,
+/**
+ * 候选已经通过严格的服务分类过滤，因此分类符合是确定事实；标签只参与排序解释。
+ * 将两者拆开表达，避免“未命中标签”被用户误解为 Agent 无法完成该阶段。
+ */
+function CapabilityMatchSummary({
+	matchedTags,
+	unmatchedTags,
 }: {
-	label: string;
-	tags: readonly string[];
-	emptyLabel: string;
-	matched?: boolean;
+	matchedTags: readonly string[];
+	unmatchedTags: readonly string[];
 }) {
+	const { locale, t } = useLocale();
 	return (
-		<div className="flex items-start gap-2">
-			<span className="w-18 shrink-0 pt-1 text-muted-foreground">{label}</span>
-			<div className="flex flex-wrap gap-1.5">
-				{tags.length === 0 ? (
-					<span className="pt-1 text-muted-foreground">{emptyLabel}</span>
-				) : (
-					tags.map((tag) => (
-						<span
-							key={tag}
-							className={
-								matched
-									? "rounded-full border border-success/25 bg-success/10 px-2 py-1 text-success"
-									: "rounded-full border border-warning/25 bg-warning/10 px-2 py-1 text-warning"
-							}
-						>
-							{tag}
-						</span>
-					))
-				)}
+		<div className="mt-4 space-y-2 rounded-xl border border-primary/10 bg-accent/30 p-3 text-[10px]">
+			<div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2">
+				<span className="text-muted-foreground">{t("服务分类")}</span>
+				<span className="inline-flex w-fit items-center gap-1 font-medium text-success">
+					<CheckCircle2 className="size-3.5" aria-hidden />
+					{t("符合")}
+				</span>
 			</div>
+			<div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-start gap-2">
+				<span className="pt-1 text-muted-foreground">{t("能力标签")}</span>
+				<div className="flex flex-wrap items-center gap-1.5">
+					{matchedTags.map((tag) => (
+						<span
+							key={`matched:${tag}`}
+							className="rounded-full border border-success/25 bg-success/10 px-2 py-1 text-success"
+						>
+							{matchingTagLabel(tag, locale)}
+						</span>
+					))}
+					{unmatchedTags.map((tag) => (
+						<span
+							key={`unmatched:${tag}`}
+							className="rounded-full border border-warning/25 bg-warning/10 px-2 py-1 text-warning"
+						>
+							{matchingTagLabel(tag, locale)}
+						</span>
+					))}
+					{matchedTags.length === 0 && unmatchedTags.length === 0 && (
+						<span className="pt-1 text-muted-foreground">
+							{t("暂无标签要求")}
+						</span>
+					)}
+				</div>
+			</div>
+			{unmatchedTags.length > 0 && (
+				<p className="pl-20 text-muted-foreground leading-4">
+					{t("黄色标签暂未命中，仅影响推荐排序")}
+				</p>
+			)}
 		</div>
 	);
 }

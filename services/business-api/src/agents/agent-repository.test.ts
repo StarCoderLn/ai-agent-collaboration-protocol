@@ -49,7 +49,11 @@ describe("PgAgentRepository payout wallet", () => {
 
     await new PgAgentRepository(db).createAgentWithCredential(input, "encrypted-secret");
 
-    const [, params] = query.mock.calls[0] as unknown as [string, unknown[]];
+    const insertCall = query.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO agents"),
+    );
+    if (insertCall === undefined) throw new Error("测试必须执行 Agent 档案写入");
+    const [, params] = insertCall as unknown as [string, unknown[]];
     // email 是 Agent 档案 INSERT 的最后一个参数；缺失值必须显式落为 NULL。
     expect(params.at(-1)).toBeNull();
   });
@@ -63,7 +67,11 @@ describe("PgAgentRepository payout wallet", () => {
 
     await new PgAgentRepository(db).createAgentWithCredential(createInput(), "encrypted-secret");
 
-    const [insertSql, params] = query.mock.calls[0] as unknown as [string, unknown[]];
+    const insertCall = query.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO agents"),
+    );
+    if (insertCall === undefined) throw new Error("测试必须执行 Agent 档案写入");
+    const [insertSql, params] = insertCall as unknown as [string, unknown[]];
     expect(insertSql).toContain("provider_wallet_address, payout_wallet_address");
     expect(insertSql).toContain("integration_mode");
     expect(params[0]).toBe(OWNER_WALLET);
@@ -104,5 +112,92 @@ describe("PgAgentRepository payout wallet", () => {
       input.categoryId,
       input.tags,
     ]);
+  });
+
+  it("使用与任务一致的词表将 Agent 同义标签收敛为标准能力", async () => {
+    const query = vi.fn(async (sql: string, _params?: readonly unknown[]) => {
+      if (sql.includes("SELECT canonical_name,synonyms,forbidden FROM tags")) {
+        return {
+          rows: [{
+            canonical_name: "research",
+            synonyms: ["学术研究", "文献检索", "论文写作"],
+            forbidden: false,
+          }],
+          rowCount: 1,
+        };
+      }
+      return sql.includes("RETURNING id, status")
+        ? { rows: [{ id: "22222222-2222-4222-8222-222222222222", status: "pending_review" }], rowCount: 1 }
+        : { rows: [], rowCount: 1 };
+    });
+    const db: QueryExecutor = { query: query as unknown as QueryExecutor["query"] };
+    const input = {
+      ...createInput(),
+      tags: ["学术研究", "文献检索", "openalex"],
+    };
+
+    await new PgAgentRepository(db).createAgentWithCredential(input, null);
+
+    const insertCall = query.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO agents"),
+    );
+    if (insertCall === undefined) throw new Error("测试必须执行 Agent 档案写入");
+    const [, params] = insertCall as unknown as [string, unknown[]];
+    expect(params[5]).toEqual(["openalex", "research"]);
+  });
+
+  it("编辑 Agent 时同样归一化同义标签，避免旧入口重新写入分叉语义", async () => {
+    const now = new Date("2026-09-05T00:00:00.000Z");
+    const query = vi.fn(async (sql: string, params?: readonly unknown[]) => {
+      if (sql.includes("SELECT canonical_name,synonyms,forbidden FROM tags")) {
+        return {
+          rows: [{
+            canonical_name: "research",
+            synonyms: ["学术研究", "文献检索", "论文写作"],
+            forbidden: false,
+          }],
+          rowCount: 1,
+        };
+      }
+      if (sql.startsWith("UPDATE agents SET")) {
+        return {
+          rows: [{
+            id: "22222222-2222-4222-8222-222222222222",
+            provider_wallet_address: OWNER_WALLET,
+            payout_wallet_address: PAYOUT_WALLET,
+            name: "Paper Agent",
+            category_id: "11111111-1111-4111-8111-111111111111",
+            capability_desc: "撰写学术论文",
+            tags: params?.[0],
+            pricing_type: "fixed",
+            price_amount: "1000000",
+            price_currency: "USDC",
+            service_endpoint: "https://agent.example.com/run",
+            email: null,
+            status: "active",
+            pause_reason: null,
+            created_at: now,
+            updated_at: now,
+          }],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const db: QueryExecutor = { query: query as unknown as QueryExecutor["query"] };
+
+    const updated = await new PgAgentRepository(db).applyPatch(
+      "22222222-2222-4222-8222-222222222222",
+      { tags: ["论文写作", "OPENALEX", "学术研究"] },
+    );
+
+    const updateCall = query.mock.calls.find(([sql]) =>
+      String(sql).startsWith("UPDATE agents SET"),
+    );
+    expect(updateCall?.[1]).toEqual([
+      ["openalex", "research"],
+      "22222222-2222-4222-8222-222222222222",
+    ]);
+    expect(updated.tags).toEqual(["openalex", "research"]);
   });
 });

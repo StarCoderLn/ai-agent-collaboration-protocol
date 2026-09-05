@@ -2,6 +2,8 @@
  * 本地产品体验与正式 API 共用的前端领域契约。
  * 金额统一使用最小货币单位整数，避免浮点数在预览、结算和评分页面产生不同结果。
  */
+import type { MessageId } from "@/lib/i18n/messages";
+
 export type TaskId = string & { readonly __brand: "TaskId" };
 export type AgentId = string & { readonly __brand: "AgentId" };
 
@@ -150,7 +152,9 @@ export type FlowAction =
 export const TASK_STATUS_PRESENTATION: Record<
 	TaskStatus,
 	{
-		label: string;
+		// 状态名称必须在英文目录中存在；使用 MessageId 让漏翻译在编译期失败，而不是
+		// 等用户切换语言后才由运行时暴露。
+		label: MessageId;
 		tone:
 			| "neutral"
 			| "primary"

@@ -62,8 +62,9 @@ export const createAgentInputSchema = z.object({
   name: z.string().trim().min(1, { message: "name 不能为空" }),
   categoryId: categoryIdSchema,
   capabilityDesc: z.string().trim().min(1, { message: "capabilityDesc 不能为空" }),
-  // Agent 和任务使用同一组数量、长度与字符边界。平台内置同义词由选择器直接提交
-  // canonical 值；自定义标签在这里再次规范化，防止绕过前端写入大小写不同的重复值。
+  // Agent 和任务使用同一组数量、长度与字符边界。本层先完成无 I/O 的基础规范化；
+  // 数据库同义词到 canonical 值的收敛统一在 Agent 仓储的可信持久化边界完成，避免
+  // Web 表单、API 调用方或旧客户端各自维护一份可能过期的词表。
   tags: z.array(
     z.string().trim().min(1).max(MAX_MATCHING_TAG_LENGTH)
       .refine(isMatchingTagSyntaxValid, { message: "标签包含不支持的字符" }),
