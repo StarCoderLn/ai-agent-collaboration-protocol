@@ -2,6 +2,7 @@
 
 import {
 	AlertCircle,
+	Download,
 	FileText,
 	ImageIcon,
 	MonitorPlay,
@@ -29,6 +30,7 @@ type NativePreview =
 	| Readonly<{ kind: "image"; source: string }>
 	| Readonly<{ kind: "video"; source: string }>
 	| Readonly<{ kind: "pdf"; source: string }>
+	| Readonly<{ kind: "download"; source: string }>
 	| Readonly<{ kind: "unsupported" }>;
 
 /**
@@ -79,7 +81,10 @@ function NativeDeliverableWorkspace({
 }) {
 	const { t } = useLocale();
 	const shellRef = useRef<HTMLDivElement>(null);
-	const immediatelyReadable = preview.kind === "document";
+	// 文件下载入口本身已经可用时允许用户继续验收；平台不宣称浏览器已经读取了 PPTX，
+	// 页面会明确要求用户下载检查，避免把“可获取”误写成“已预览”。
+	const immediatelyReadable =
+		preview.kind === "document" || preview.kind === "download";
 	useEffect(
 		() => onReadinessChange(immediatelyReadable),
 		[immediatelyReadable, onReadinessChange],
@@ -88,9 +93,10 @@ function NativeDeliverableWorkspace({
 	return (
 		<div
 			ref={shellRef}
-			className="fullscreen:overflow-auto overflow-hidden rounded-2xl border border-primary/20 bg-background shadow-[0_22px_70px_rgb(0_0_0/18%)]"
+			data-testid="native-deliverable-shell"
+			className="deliverable-fullscreen-shell overflow-hidden rounded-2xl border border-primary/20 bg-background shadow-[0_22px_70px_rgb(0_0_0/18%)]"
 		>
-			<header className="flex flex-wrap items-center justify-between gap-4 border-primary/15 border-b bg-card/95 px-4 py-4 sm:px-5">
+			<header className="deliverable-fullscreen-fixed flex flex-wrap items-center justify-between gap-4 border-primary/15 border-b bg-card/95 px-4 py-4 sm:px-5">
 				<div className="min-w-0">
 					<div className="flex items-center gap-3">
 						<NativePreviewIcon kind={preview.kind} />
@@ -106,7 +112,15 @@ function NativeDeliverableWorkspace({
 				</div>
 				<FullscreenToggleButton targetRef={shellRef} />
 			</header>
-			<div className="min-h-[70vh] bg-accent/45 p-3 sm:p-5">
+			{/*
+			 * 全屏外壳固定为一个视口高后，正文必须以 min-h-0 参与 Flex 收缩，才能形成
+			 * 真正的内部滚动区域。若继续让整个外壳滚动，浏览器全屏状态下会因内容高度
+			 * 撑开根节点而没有可滚动的溢出空间，长论文便无法使用滚轮继续阅读。
+			 */}
+			<div
+				data-testid="native-deliverable-scroll-region"
+				className="deliverable-fullscreen-scroll min-h-[70vh] bg-accent/45 p-3 sm:p-5"
+			>
 				<NativePreviewBody
 					preview={preview}
 					title={result.summary}
@@ -198,6 +212,35 @@ function NativePreviewBody({
 				src={preview.source}
 				onLoad={() => onReadinessChange(true)}
 			/>
+		);
+	}
+	if (preview.kind === "download") {
+		return (
+			<div className="flex min-h-[66vh] items-center justify-center rounded-xl border bg-card p-8 text-center">
+				<div className="max-w-xl">
+					<span className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-primary-container text-primary">
+						<Download className="size-6" />
+					</span>
+					<h4 className="mt-5 font-semibold text-xl">
+						{t("文件已准备好，可下载检查")}
+					</h4>
+					<p className="mt-3 text-muted-foreground text-sm leading-7">
+						{t(
+							"当前浏览器无法在页面内完整预览该格式，请下载并使用对应应用检查交付内容。",
+						)}
+					</p>
+					<a
+						href={preview.source}
+						target="_blank"
+						rel="noreferrer"
+						aria-label={t("下载{title}", { title })}
+						className="mt-6 inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-5 font-semibold text-primary-foreground text-sm transition hover:bg-primary/90"
+					>
+						<Download className="size-4" />
+						{t("下载文件")}
+					</a>
+				</div>
+			</div>
 		);
 	}
 	return (
@@ -299,6 +342,7 @@ function resolveNativePreview(result: ResultDeliverable): NativePreview {
 	if (mimeType?.startsWith("image/")) return { kind: "image", source };
 	if (mimeType?.startsWith("video/")) return { kind: "video", source };
 	if (mimeType === "application/pdf") return { kind: "pdf", source };
+	if (result.kind === "file") return { kind: "download", source };
 	return { kind: "unsupported" };
 }
 

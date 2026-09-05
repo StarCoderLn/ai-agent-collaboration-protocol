@@ -1,9 +1,42 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import ResultDeliverableWorkspace from "./result-deliverable-workspace";
 
+afterEach(cleanup);
+
 describe("ResultDeliverableWorkspace", () => {
+	it("让原生交付物在全屏时由正文区域独立滚动", () => {
+		render(
+			<ResultDeliverableWorkspace
+				result={{
+					summary: "长篇论文",
+					kind: "inline",
+					content: "论文正文\n".repeat(200),
+					mimeType: "text/plain",
+					sizeBytes: "3600",
+					note: null,
+				}}
+				onReadinessChange={vi.fn()}
+			/>,
+		);
+
+		// jsdom 不会执行浏览器的 :fullscreen 布局，因此这里固定全屏滚动契约：
+		// 外壳占满视口并禁止自身滚动，正文占用剩余高度且负责纵向滚动。
+		expect(screen.getByTestId("native-deliverable-shell")).toHaveClass(
+			"deliverable-fullscreen-shell",
+		);
+		expect(screen.getByTestId("native-deliverable-scroll-region")).toHaveClass(
+			"deliverable-fullscreen-scroll",
+		);
+	});
+
 	it("根据浏览器真实状态切换全屏按钮，并在 Esc 退出后恢复", async () => {
 		let fullscreenElement: Element | null = null;
 		const requestFullscreen = vi.fn(function request(this: Element) {
@@ -148,6 +181,33 @@ describe("ResultDeliverableWorkspace", () => {
 		expect(onReadinessChange).not.toHaveBeenCalledWith(true);
 	});
 
+	it("为无法原生预览的 PPTX 文件提供明确下载入口", async () => {
+		const onReadinessChange = vi.fn();
+		render(
+			<ResultDeliverableWorkspace
+				result={{
+					summary: "增长方案演示文稿",
+					kind: "file",
+					content: "https://agent.example/artifacts/growth-deck.pptx",
+					mimeType:
+						"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+					sizeBytes: "4096",
+					note: null,
+				}}
+				onReadinessChange={onReadinessChange}
+			/>,
+		);
+
+		const download = screen.getByRole("link", { name: "下载增长方案演示文稿" });
+		expect(download).toHaveAttribute(
+			"href",
+			"https://agent.example/artifacts/growth-deck.pptx",
+		);
+		await waitFor(() =>
+			expect(onReadinessChange).toHaveBeenLastCalledWith(true),
+		);
+	});
+
 	it("用大画布切换桌面与移动设计稿，并在 Schema 通过后开放验收", async () => {
 		const onReadinessChange = vi.fn();
 		render(
@@ -167,6 +227,12 @@ describe("ResultDeliverableWorkspace", () => {
 		expect(
 			screen.getByRole("img", { name: "电商增长工作台设计 的桌面端设计稿" }),
 		).toBeInTheDocument();
+		expect(screen.getByTestId("structured-deliverable-shell")).toHaveClass(
+			"deliverable-fullscreen-shell",
+		);
+		expect(
+			screen.getByTestId("structured-deliverable-scroll-region"),
+		).toHaveClass("deliverable-fullscreen-scroll");
 		fireEvent.click(screen.getByRole("tab", { name: "移动端" }));
 		expect(
 			screen.getByRole("img", { name: "电商增长工作台设计 的移动端设计稿" }),

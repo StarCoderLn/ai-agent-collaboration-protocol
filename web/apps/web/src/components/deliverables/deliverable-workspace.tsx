@@ -123,9 +123,10 @@ export default function DeliverableWorkspace({
 	return (
 		<div
 			ref={shellRef}
-			className="fullscreen:overflow-auto overflow-hidden rounded-2xl border border-primary/20 bg-background shadow-[0_22px_70px_rgb(0_0_0/18%)]"
+			data-testid="structured-deliverable-shell"
+			className="deliverable-fullscreen-shell overflow-hidden rounded-2xl border border-primary/20 bg-background shadow-[0_22px_70px_rgb(0_0_0/18%)]"
 		>
-			<header className="flex flex-wrap items-center justify-between gap-4 border-primary/15 border-b bg-card/95 px-4 py-4 sm:px-5">
+			<header className="deliverable-fullscreen-fixed flex flex-wrap items-center justify-between gap-4 border-primary/15 border-b bg-card/95 px-4 py-4 sm:px-5">
 				<div className="min-w-0">
 					<div className="flex flex-wrap items-center gap-2">
 						<DeliverableIcon artifact={artifact} />
@@ -153,7 +154,7 @@ export default function DeliverableWorkspace({
 			</header>
 
 			<div
-				className="flex gap-1 overflow-x-auto border-primary/10 border-b bg-card/70 px-3 pt-2"
+				className="deliverable-fullscreen-fixed flex gap-1 overflow-x-auto border-primary/10 border-b bg-card/70 px-3 pt-2"
 				role="tablist"
 				aria-label={t("交付物查看方式")}
 			>
@@ -172,7 +173,10 @@ export default function DeliverableWorkspace({
 				))}
 			</div>
 
-			<div className="min-h-[70vh] bg-accent/45 p-3 sm:p-5">
+			<div
+				data-testid="structured-deliverable-scroll-region"
+				className="deliverable-fullscreen-scroll min-h-[70vh] bg-accent/45 p-3 sm:p-5"
+			>
 				{tab === "preview" && (
 					<ArtifactPreview
 						artifact={artifact}

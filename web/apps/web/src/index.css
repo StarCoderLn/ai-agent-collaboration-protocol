@@ -148,6 +148,37 @@
 	background: var(--canvas);
 }
 
+/*
+ * 交付物存在“普通文件预览”和“结构化工作流制品”两条渲染路径，但全屏滚动规则必须
+ * 保持一致。这里直接使用浏览器原生 :fullscreen 选择器作为唯一权威实现，避免依赖当前
+ * Tailwind 构建不会生成的 fullscreen 变体，导致 DOM 有类名但页面实际上没有对应样式。
+ */
+.deliverable-fullscreen-shell:fullscreen {
+	display: flex;
+	width: 100vw;
+	height: 100vh;
+	min-height: 0;
+	flex-direction: column;
+	overflow: hidden;
+	background: var(--background);
+}
+
+.deliverable-fullscreen-shell:fullscreen > .deliverable-fullscreen-fixed {
+	flex: 0 0 auto;
+}
+
+/*
+ * min-height: 0 允许正文在纵向 Flex 中收缩到视口剩余空间；只有发生收缩后，auto 才会
+ * 产生真实的滚动范围。触控惯性与 overscroll 限制同时保证鼠标滚轮和触控板体验稳定。
+ */
+.deliverable-fullscreen-shell:fullscreen > .deliverable-fullscreen-scroll {
+	min-height: 0;
+	flex: 1 1 0%;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
+}
+
 .allocation-task-node {
 	border-color: rgb(6 182 212 / 35%);
 	background:

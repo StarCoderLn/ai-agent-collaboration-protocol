@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	confirmWorkflowNodeCandidate,
 	type FormalWorkflow,
+	getWorkflowNodeAcceptancePreview,
 	rematchWorkflowNodeCandidates,
 	retryFailedWorkflowNodeExecution,
 	suggestTaskTags,
@@ -63,6 +64,21 @@ vi.mock("@/lib/api/tasks", async (importOriginal) => {
 			nodeId: designNodeId,
 			tags: ["ui", "accessibility"],
 		})),
+		getWorkflowNodeAcceptancePreview: vi.fn(
+			async (currentTaskId: string, nodeId: string, resultId: string) => ({
+				taskId: currentTaskId,
+				workflowNodeId: nodeId,
+				resultId,
+				nodeStatus: "awaiting_review" as const,
+				nodeVersion: "4",
+				settlement: {
+					grossAmountMinor: "25000000",
+					platformFeeMinor: "50000",
+					agentAmountMinor: "24950000",
+					feeRuleVersion: "fee-v3-usdc",
+				},
+			}),
+		),
 	};
 });
 
@@ -1308,6 +1324,51 @@ describe("FormalWorkflowView", () => {
 		expect(screen.getByText("该阶段已通过质量验收")).toBeInTheDocument();
 	});
 
+	it("长篇 Markdown 打开后允许最终验收，换批次时不会沿用旧产物就绪状态", async () => {
+		const workflow = awaitingReviewPaperWorkflowFixture();
+		const view = render(
+			<FormalWorkflowView
+				taskTitle="全球滑坡风险研究"
+				workflow={workflow}
+				viewMode="review"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		const settlementButton = await screen.findByRole("button", {
+			name: "验收全部阶段并结算 25 USDC",
+		});
+		await waitFor(() => expect(settlementButton).toBeEnabled());
+		expect(getWorkflowNodeAcceptancePreview).toHaveBeenCalled();
+
+		view.rerender(
+			<FormalWorkflowView
+				taskTitle="全球滑坡风险研究"
+				workflow={awaitingReviewPaperWorkflowFixture({
+					batchId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+					resultId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
+					mimeType: "image/png",
+					content: "https://agent.example/new-result.png",
+				})}
+				viewMode="review"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		// 新图片尚未触发 load 时必须重新禁用，不能沿用上一批 Markdown 的就绪状态。
+		await waitFor(() =>
+			expect(
+				screen.getByRole("button", {
+					name: "验收全部阶段并结算 25 USDC",
+				}),
+			).toBeDisabled(),
+		);
+	});
+
 	it("统一结算阶段展示权威金额与资金状态且不重复分配图", () => {
 		const workflow = completedWorkflowFixture();
 		render(
@@ -1330,6 +1391,67 @@ describe("FormalWorkflowView", () => {
 		expect(screen.getAllByText("confirmed").length).toBeGreaterThan(0);
 	});
 });
+
+/** 构造与真实论文任务一致的单节点待验收工作流，专门验证最终统一结算门禁。 */
+function awaitingReviewPaperWorkflowFixture(
+	overrides: Readonly<{
+		batchId?: string;
+		resultId?: string;
+		mimeType?: string;
+		content?: string;
+	}> = {},
+): FormalWorkflow {
+	const workflow = workflowFixture();
+	const node = workflow.nodes[0];
+	if (node === undefined) throw new Error("测试工作流必须包含论文节点");
+	return {
+		...workflow,
+		run: {
+			...workflow.run,
+			status: "awaiting_review",
+			totalBudgetMinor: "25000000",
+			quotedTotalMinor: "25000000",
+			refundableAmountMinor: "25000000",
+		},
+		nodes: [
+			{
+				...node,
+				key: "research",
+				kind: "research",
+				title: "论文写作",
+				status: "awaiting_review",
+				version: "4",
+				execution: {
+					progress: 100,
+					state: "completed",
+					failureCode: null,
+					failureStage: null,
+					attentionMessage: null,
+				},
+				latestResultBatch: {
+					id: overrides.batchId ?? "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+					batchNo: 1,
+					submittedAt: "2026-09-05T07:30:00.000Z",
+					artifacts: [
+						{
+							id: overrides.resultId ?? "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+							index: 1,
+							summary: "全球滑坡风险研究论文",
+							kind: "inline",
+							contentOrFileRef:
+								overrides.content ?? "# 全球滑坡风险研究\n\n论文正文。",
+							mimeType: overrides.mimeType ?? "text/markdown",
+							sizeBytes: "8458",
+							generatedAt: "2026-09-05T07:30:00.000Z",
+							note: null,
+						},
+					],
+				},
+			},
+		],
+		edges: [],
+	};
+}
 
 /** 构造已交付、已验收并产生释放记录的节点，供验收与结算两个视图共享同一事实基线。 */
 function completedWorkflowFixture(): FormalWorkflow {

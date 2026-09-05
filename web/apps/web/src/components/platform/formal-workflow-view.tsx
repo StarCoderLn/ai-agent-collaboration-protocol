@@ -748,7 +748,9 @@ function WorkflowNodeWorkspace({
 	const { t } = useLocale();
 	const artifacts = node.latestResultBatch?.artifacts ?? [];
 	const [artifactId, setArtifactId] = useState(artifacts[0]?.id ?? "");
-	const [previewReady, setPreviewReady] = useState(false);
+	const [previewReadiness, setPreviewReadiness] = useState<
+		Readonly<{ artifactKey: string | null; ready: boolean }>
+	>({ artifactKey: null, ready: false });
 	const [acceptancePreview, setAcceptancePreview] =
 		useState<WorkflowAcceptancePreview | null>(null);
 	const [reworkReason, setReworkReason] = useState("");
@@ -760,6 +762,28 @@ function WorkflowNodeWorkspace({
 	const initialArtifactId = artifacts[0]?.id ?? "";
 	const artifactResetKey = `${node.id}:${node.latestResultBatch?.id ?? "none"}`;
 	const selectedArtifactId = selectedArtifact?.id ?? null;
+	// 就绪状态必须绑定“结果批次 + 产物”，不能只保存一个布尔值。这样切换产物时旧的
+	// true 会立即失效，同时也不需要父组件在 useEffect 中写回 false，与子组件上报的
+	// true 竞争。Markdown 等同步可读产物因此不会再被错误地永久锁住验收按钮。
+	const selectedArtifactKey =
+		selectedArtifact === null
+			? null
+			: `${artifactResetKey}:${selectedArtifact.id}`;
+	const previewReady =
+		selectedArtifactKey !== null &&
+		previewReadiness.artifactKey === selectedArtifactKey &&
+		previewReadiness.ready;
+	const handlePreviewReadinessChange = useCallback(
+		(ready: boolean) => {
+			if (selectedArtifactKey === null) return;
+			setPreviewReadiness((current) =>
+				current.artifactKey === selectedArtifactKey && current.ready === ready
+					? current
+					: { artifactKey: selectedArtifactKey, ready },
+			);
+		},
+		[selectedArtifactKey],
+	);
 	const producingArtifact = [
 		"awaiting_agent_acceptance",
 		"executing",
@@ -771,7 +795,6 @@ function WorkflowNodeWorkspace({
 		// 结果批次变化时即使首个制品 ID 恰好相同，也必须清空上一轮预览与返工表单。
 		void artifactResetKey;
 		setArtifactId(initialArtifactId);
-		setPreviewReady(false);
 		setAcceptancePreview(null);
 		setReworkReason("");
 		setShowDispute(false);
@@ -933,7 +956,7 @@ function WorkflowNodeWorkspace({
 						{selectedArtifact !== null && (
 							<ResultDeliverableWorkspace
 								result={artifactAsResult(selectedArtifact)}
-								onReadinessChange={setPreviewReady}
+								onReadinessChange={handlePreviewReadinessChange}
 							/>
 						)}
 					</div>
