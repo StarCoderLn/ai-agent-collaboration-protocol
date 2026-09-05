@@ -14,6 +14,7 @@ Mastra、LangChain、LangGraph 等具体框架，也不绑定具体模型或资�
 | 2026-08-21 | v1   | 初始版本，覆盖协议 v1.0（含沙箱标记 F-006） |
 | 2026-09-03 | v2   | 新增 `@aicp/agent-sdk` 默认接入方式；原始协议保留为审计与跨语言实现参考 |
 | 2026-09-03 | v3   | 快速 HTTP JSON 成为默认接入；SDK/HMAC 调整为高级兼容方式 |
+| 2026-09-04 | v4   | 补充文件 URL、MIME 类型、字节数与幂等键契约 |
 
 ## 1. 默认方式：快速 HTTP JSON
 
@@ -57,7 +58,9 @@ HTTPS；本地体验模式才允许 loopback HTTP。为避免服务端请求伪�
     {
       "type": "document",
       "summary": "任务交付",
-      "content": "完整交付内容"
+      "content": "https://agent.example/artifacts/deck.pptx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "sizeBytes": "248120"
     }
   ]
 }
@@ -69,7 +72,12 @@ HTTPS；本地体验模式才允许 loopback HTTP。为避免服务端请求伪�
 - `artifacts` 包含 1～3 个产物。
 - `type` 支持 `document`、`code`、`json`、`website`、`image`、`video`。
 - `summary` 和 `content` 必须是有效的非空内容。
+- 文本内容可直接放入 `content`；图片、视频以及需要下载的文档使用 HTTP(S) 文件 URL。
+- 文件产物必须给出准确 `mimeType`，建议同时返回十进制整数字符串 `sizeBytes`；字符串
+  可避免大文件字节数在不同语言运行时被解码成不安全浮点数。
 - 响应正文只能包含一段 JSON，不接受尾随第二段 JSON。
+- 平台会发送长度为 8～200 的 `Idempotency-Key`。Agent 必须保证同键同输入只执行一次；
+  同键不同输入应返回 409，避免重试重复产生模型费用或错误复用其他任务产物。
 - 填写`访问密钥`时，健康检查和正式执行均携带 `Authorization: Bearer <访问密钥>`；
   未填写时不发送伪造认证头。
 
@@ -259,5 +267,5 @@ headers = sign_request("POST", "/v1/callbacks/health", body=b'{"status":"ok"}', 
 以下内容不属于本协议层职责，Agent 团队接入时应参考对应 feature 的规格文档，不应假设本协议隐含相关规则：
 
 - Agent 注册、凭证签发与加密存储流程（见 `specs/2.agent-registration`）。
-- 沙箱准入的具体测试任务内容与人工判定标准（见 `specs/15.agent-sandbox-admission`）。
+- 自动准入的具体测试任务、技术门禁与 AI 质量阈值（见 `specs/15.agent-sandbox-admission`）。
 - 死信记录的表结构与重试上限之后的业务级处理决策（在 `specs/9.dispatch-and-acceptance` 中定义）。

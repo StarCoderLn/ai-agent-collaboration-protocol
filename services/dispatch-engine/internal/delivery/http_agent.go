@@ -167,14 +167,18 @@ func mapQuickArtifact(artifact quickagent.Artifact, generatedAt string) (map[str
 	result := map[string]any{"summary": artifact.Summary, "generatedAt": generatedAt}
 	switch artifact.Type {
 	case "document":
-		result["kind"], result["mimeType"], result["content"] = "inline", defaultString(artifact.MIMEType, "text/markdown"), contentText
+		if isHTTPReference(contentText) {
+			result["kind"], result["mimeType"], result["storageRef"], result["sizeBytes"] = "file", defaultString(artifact.MIMEType, "application/octet-stream"), contentText, defaultString(artifact.SizeBytes, "0")
+		} else {
+			result["kind"], result["mimeType"], result["content"] = "inline", defaultString(artifact.MIMEType, "text/markdown"), contentText
+		}
 	case "code":
 		result["kind"], result["mimeType"], result["content"] = "inline", defaultString(artifact.MIMEType, "text/plain"), contentText
 	case "json":
 		result["kind"], result["mimeType"], result["content"] = "inline", "application/json", contentText
 	case "website":
 		if isHTTPReference(contentText) {
-			result["kind"], result["mimeType"], result["storageRef"], result["sizeBytes"] = "file", defaultString(artifact.MIMEType, "text/html"), contentText, "0"
+			result["kind"], result["mimeType"], result["storageRef"], result["sizeBytes"] = "file", defaultString(artifact.MIMEType, "text/html"), contentText, defaultString(artifact.SizeBytes, "0")
 		} else {
 			result["kind"], result["mimeType"], result["content"] = "inline", defaultString(artifact.MIMEType, "text/html"), contentText
 		}
@@ -182,12 +186,12 @@ func mapQuickArtifact(artifact quickagent.Artifact, generatedAt string) (map[str
 		if !isHTTPReference(contentText) {
 			return nil, &CallError{Code: "AGENT_RESPONSE_INVALID", Retryable: false}
 		}
-		result["kind"], result["mimeType"], result["storageRef"], result["sizeBytes"] = "file", defaultString(artifact.MIMEType, "image/png"), contentText, "0"
+		result["kind"], result["mimeType"], result["storageRef"], result["sizeBytes"] = "file", defaultString(artifact.MIMEType, "image/png"), contentText, defaultString(artifact.SizeBytes, "0")
 	case "video":
 		if !isHTTPReference(contentText) {
 			return nil, &CallError{Code: "AGENT_RESPONSE_INVALID", Retryable: false}
 		}
-		result["kind"], result["mimeType"], result["storageRef"], result["sizeBytes"] = "file", defaultString(artifact.MIMEType, "video/mp4"), contentText, "0"
+		result["kind"], result["mimeType"], result["storageRef"], result["sizeBytes"] = "file", defaultString(artifact.MIMEType, "video/mp4"), contentText, defaultString(artifact.SizeBytes, "0")
 	default:
 		return nil, &CallError{Code: "AGENT_RESPONSE_INVALID", Retryable: false}
 	}

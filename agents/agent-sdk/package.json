@@ -1,7 +1,7 @@
 {
   "name": "@aicp/agent-sdk",
   "version": "0.1.0",
-  "description": "AICP Agent provider SDK for authenticated task dispatch and result callbacks",
+  "description": "AICP Agent provider SDK for quick HTTP integration and authenticated task callbacks",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

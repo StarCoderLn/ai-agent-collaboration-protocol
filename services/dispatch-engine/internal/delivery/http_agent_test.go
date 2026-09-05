@@ -144,3 +144,36 @@ func TestHTTPAgentCallerUsesOptionalBearerTokenForQuickAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestHTTPAgentCallerMapsRemoteDocumentToDownloadableFile(t *testing.T) {
+	client := &http.Client{Transport: agentRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{
+				"status":"completed",
+				"artifacts":[{
+					"type":"document",
+					"summary":"可编辑演示文稿",
+					"content":"https://agent.example/artifacts/growth-deck.pptx",
+					"mimeType":"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+					"sizeBytes":"4096"
+				}]
+			}`)),
+			Request: request,
+		}, nil
+	})}
+	result, err := (&HTTPAgentCaller{Client: client}).Call(context.Background(), dispatch.DispatchMessage{
+		AgentID: "11111111-1111-4111-8111-111111111111", AssignmentID: "22222222-2222-4222-8222-222222222222",
+		TaskID: "33333333-3333-4333-8333-333333333333", ProtocolRequestID: "request-ppt",
+	}, Target{Endpoint: "https://agent.example/run", IntegrationMode: "http_json", Body: []byte(`{"task":{}}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := string(result.QuickResultPayload)
+	if !strings.Contains(payload, `"kind":"file"`) ||
+		!strings.Contains(payload, `"storageRef":"https://agent.example/artifacts/growth-deck.pptx"`) ||
+		!strings.Contains(payload, `"sizeBytes":"4096"`) {
+		t.Fatalf("remote document was not mapped to a downloadable file: %s", payload)
+	}
+}

@@ -19,6 +19,7 @@ func TestParseResponseRejectsUnsupportedOrAmbiguousPayload(t *testing.T) {
 		`{"status":"completed","artifacts":[{"type":"binary","summary":"交付","content":"ok"}]}`,
 		`{"status":"completed","artifacts":[]}`,
 		`{"status":"completed","artifacts":[{"type":"document","summary":"","content":"ok"}]}`,
+		`{"status":"completed","artifacts":[{"type":"document","summary":"交付","content":"https://example.com/file","sizeBytes":"4kb"}]}`,
 		`{"status":"completed","artifacts":[{"type":"document","summary":"交付","content":"ok"}]} {}`,
 	} {
 		if _, err := ParseResponse([]byte(body)); err == nil {

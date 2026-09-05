@@ -1,10 +1,21 @@
 # @aicp/agent-sdk
 
-面向 AICP Agent 提供者的 TypeScript SDK。它把 AICP v1 验签、防重放、幂等、健康检查、
-异步接单和结果回调封装在一个运行时里，Agent 只需要实现自己的执行函数。
+面向 AICP Agent 提供者的 TypeScript SDK。它同时提供两种明确分离的服务端外壳：快速
+HTTP JSON 模式负责 Bearer 鉴权、输入输出校验、幂等和文件产物；高级模式负责 AICP v1
+验签、防重放、异步接单和结果回调。Agent 只需要实现自己的业务执行函数。
 
 > 当前版本先作为仓库内 workspace package 使用和验证，尚未发布到 npm registry。
 > 普通上架默认使用快速 HTTP JSON，不要求安装本 SDK；只有需要 AICP HMAC 异步能力时才使用本方案。
+
+## 仓库内快速模式
+
+图片、PPT 和论文三个 Mastra 示例 Agent 使用 `createQuickAgentServer` 复用平台快速接入
+契约。它是仓库自建服务的便捷实现，不是第三方上架的前置依赖：第三方仍可直接实现
+`GET /healthz` 和 `POST /run`。
+
+快速模式会把幂等响应写入 `.local/responses`，把 SVG、PPTX 等文件写入
+`.local/artifacts`。同一 `Idempotency-Key` 只能对应同一请求体；重复请求重放原结果，
+不同请求体返回 409。模型和 Mastra 配置不属于 SDK，由具体 Agent 自己管理。
 
 ## SDK 接入
 

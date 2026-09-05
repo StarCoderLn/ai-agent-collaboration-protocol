@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"regexp"
 	"strings"
 )
 
@@ -17,7 +18,12 @@ type Artifact struct {
 	Summary  string          `json:"summary"`
 	Content  json.RawMessage `json:"content"`
 	MIMEType string          `json:"mimeType,omitempty"`
+	// SizeBytes 只在 content 是可下载文件 URL 时使用。字符串避免不同语言运行时把
+	// 大文件字节数解码成不安全浮点数；旧 Agent 不发送时保持向后兼容。
+	SizeBytes string `json:"sizeBytes,omitempty"`
 }
+
+var integerString = regexp.MustCompile(`^(0|[1-9][0-9]{0,18})$`)
 
 // ParseResponse 接受提供者最小响应，同时忽略未知扩展字段以保持向前兼容。状态、产物
 // 数量、类型及必填内容仍严格校验；尾随第二段 JSON 会被拒绝，防止歧义解析。
@@ -43,6 +49,9 @@ func ParseResponse(body []byte) ([]Artifact, error) {
 		}
 		var content any
 		if json.Unmarshal(artifact.Content, &content) != nil || content == nil {
+			return nil, ErrInvalidResponse
+		}
+		if artifact.SizeBytes != "" && !integerString.MatchString(artifact.SizeBytes) {
 			return nil, ErrInvalidResponse
 		}
 	}
