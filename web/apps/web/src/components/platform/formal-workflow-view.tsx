@@ -33,6 +33,7 @@ import {
 	Minimize2,
 	Pencil,
 	Plus,
+	ReceiptText,
 	RefreshCw,
 	Scale,
 	Star,
@@ -1117,14 +1118,29 @@ function WorkflowNodeWorkspace({
 							<CheckCircle2 className="size-4" />
 							{t("该阶段已通过质量验收")}
 						</span>
-						<span className="inline-flex items-center gap-2 text-muted-foreground">
-							<WalletCards className="size-4" />
-							{node.acceptance.release === null
-								? t("资金仍在托管，等待全部阶段完成")
-								: t("资金释放状态：{status}", {
-										status: node.acceptance.release.status,
-									})}
-						</span>
+						<div className="flex flex-wrap items-center justify-end gap-3">
+							<span className="inline-flex items-center gap-2 text-muted-foreground">
+								<WalletCards className="size-4" />
+								{node.acceptance.release === null
+									? t("资金仍在托管，等待全部阶段完成")
+									: t("资金释放状态：{status}", {
+											status: node.acceptance.release.status,
+										})}
+							</span>
+							{node.acceptance.release?.txHash && (
+								<Link
+									// taskId 与 txHash 都已通过业务 API 的运行时 Schema；断言只补足
+									// typedRoutes 无法推导的动态路径，不允许未校验值进入 href。
+									href={
+										`/transactions/${node.acceptance.release.txHash}?taskId=${taskId}` as Route
+									}
+									className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-lg font-medium text-primary text-xs hover:underline"
+								>
+									<ReceiptText className="size-3.5" aria-hidden />
+									{t("查看链上记录")}
+								</Link>
+							)}
+						</div>
 					</div>
 				)}
 		</section>

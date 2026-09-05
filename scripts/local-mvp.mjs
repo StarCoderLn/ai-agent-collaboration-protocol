@@ -212,7 +212,12 @@ async function main() {
       NEXT_PUBLIC_SERVER_URL: URLS.web,
       NEXT_PUBLIC_BUSINESS_API_URL: `${URLS.business}/api`,
       NEXT_PUBLIC_ETHEREUM_RPC_URL: URLS.anvil,
+	  // 交易详情只解析当前启动实例的已知合约日志；把公开地址显式传给 Web，避免
+	  // 仅凭事件签名把其他合约误标成平台资金或 DAO 操作。
+	  NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS: escrowAddress,
+	  NEXT_PUBLIC_ESCROW_PAYMENT_TOKEN_ADDRESS: paymentTokenAddress,
       NEXT_PUBLIC_ARBITRATION_DAO_ADDRESS: arbitrationDaoAddress,
+	  NEXT_PUBLIC_ARBITRATION_DAO_YD_TOKEN_ADDRESS: ydTokenAddress,
       NEXT_PUBLIC_ARBITRATION_DAO_MINIMUM_STAKE_MINOR: daoMinimumStakeMinor,
       NEXT_PUBLIC_AICP_LOCAL_DEMO_MODE: "true",
       AICP_LOCAL_DEMO_MODE: "true",

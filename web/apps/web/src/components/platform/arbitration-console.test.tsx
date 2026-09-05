@@ -104,6 +104,10 @@ describe("arbitration console", () => {
 		expect(
 			await screen.findByText("执行状态：处理中（等待链上确认）"),
 		).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "查看链上记录" })).toHaveAttribute(
+			"href",
+			`/transactions/0x${"44".repeat(32)}?disputeId=a1000000-0000-4000-8000-000000000011`,
+		);
 		expect(screen.queryByText(/已完成（链上已确认）/)).not.toBeInTheDocument();
 	});
 

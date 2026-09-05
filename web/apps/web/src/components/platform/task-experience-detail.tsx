@@ -16,6 +16,7 @@ import {
 	GitBranch,
 	Loader2,
 	LockKeyhole,
+	ReceiptText,
 	RefreshCw,
 	Scale,
 	ShieldCheck,
@@ -26,6 +27,7 @@ import {
 	WalletCards,
 	XCircle,
 } from "lucide-react";
+import type { Route } from "next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -776,6 +778,7 @@ export default function TaskExperienceDetail({
 										<ExecutionRecordPanel status={data.execution} />
 									)}
 									<EventTimeline
+										taskId={task.id}
 										events={events}
 										statusVersion={task.statusVersion}
 										syncMode={eventSyncMode}
@@ -832,6 +835,7 @@ export default function TaskExperienceDetail({
 										escrowError={escrowError}
 									/>
 									<EventTimeline
+										taskId={task.id}
 										events={events}
 										statusVersion={task.statusVersion}
 										syncMode={eventSyncMode}
@@ -2896,10 +2900,12 @@ function ResultsHistory({ results }: { results: readonly TaskResult[] }) {
 }
 
 function EventTimeline({
+	taskId,
 	events,
 	statusVersion,
 	syncMode,
 }: {
+	taskId: string;
 	events: readonly TaskEventData[];
 	statusVersion: string | null;
 	syncMode: EventSyncMode;
@@ -2948,6 +2954,7 @@ function EventTimeline({
 								<p className="mt-1 text-muted-foreground text-sm">
 									{eventDetail(event, t)}
 								</p>
+								<EventTransactionLink event={event} taskId={taskId} />
 								<time className="mt-1 block text-[11px] text-muted-foreground">
 									{formatDate(event.createdAt, locale)}
 								</time>
@@ -2958,6 +2965,34 @@ function EventTimeline({
 			)}
 		</section>
 	);
+}
+
+/** 审计事件只在 payload 中含有完整交易哈希时提供入口，其他状态事件不制造空链接。 */
+function EventTransactionLink({
+	event,
+	taskId,
+}: Readonly<{ event: TaskEventData; taskId: string }>) {
+	const { t } = useLocale();
+	const txHash = transactionHashFromEvent(event);
+	if (txHash === null) return null;
+	return (
+		<Link
+			href={`/transactions/${txHash}?taskId=${taskId}` as Route}
+			className="mt-2 inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-lg font-mono text-primary text-xs hover:underline"
+			title={txHash}
+		>
+			{shortId(txHash)}
+			<ReceiptText className="size-3.5" aria-hidden />
+			<span className="font-sans">{t("查看链上记录")}</span>
+		</Link>
+	);
+}
+
+function transactionHashFromEvent(event: TaskEventData): string | null {
+	const value = event.payload.txHash;
+	return typeof value === "string" && /^0x[0-9a-fA-F]{64}$/.test(value)
+		? value.toLowerCase()
+		: null;
 }
 
 function EscrowCard({
@@ -3007,12 +3042,14 @@ function EscrowCard({
 				<span>{escrow === null ? "Ethereum" : `Chain ${escrow.chainId}`}</span>
 			</div>
 			{escrow?.txHash && (
-				<p
-					className="mt-3 rounded-lg bg-accent p-2 font-mono text-muted-foreground text-xs"
+				<Link
+					href={`/transactions/${escrow.txHash}?taskId=${task.id}` as Route}
+					className="mt-3 flex min-h-10 cursor-pointer items-center justify-between gap-2 rounded-lg bg-accent p-2 font-mono text-muted-foreground text-xs transition-colors hover:bg-primary-container/45 hover:text-primary"
 					title={escrow.txHash}
 				>
-					{shortId(escrow.txHash)}
-				</p>
+					<span>{shortId(escrow.txHash)}</span>
+					<ReceiptText className="size-4 shrink-0" aria-hidden />
+				</Link>
 			)}
 			{escrow?.failureReason && (
 				<p className="mt-3 text-destructive text-xs">{escrow.failureReason}</p>

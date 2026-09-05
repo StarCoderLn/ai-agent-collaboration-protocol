@@ -9,11 +9,13 @@ import {
 	CheckCircle2,
 	Loader2,
 	LockKeyhole,
+	ReceiptText,
 	RefreshCw,
 	Scale,
 	ShieldCheck,
 	Wallet,
 } from "lucide-react";
+import type { Route } from "next";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useWalletSession } from "@/components/auth/wallet-session-provider";
@@ -320,6 +322,18 @@ export default function ArbitrationConsole({
 									{t("执行状态：")}
 									{executionStatusLabel(dispute.decision.executionStatus, t)}
 								</p>
+								{dispute.decision.executionTxHash !== null && (
+									<Link
+										href={
+											`/transactions/${dispute.decision.executionTxHash}?disputeId=${dispute.id}` as Route
+										}
+										className="mt-3 inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg font-medium text-primary text-sm transition-colors hover:text-primary/80"
+										title={dispute.decision.executionTxHash}
+									>
+										<ReceiptText className="size-4" aria-hidden />
+										{t("查看链上记录")}
+									</Link>
+								)}
 							</div>
 						) : (
 							<>

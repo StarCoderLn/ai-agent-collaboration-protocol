@@ -12,6 +12,7 @@ import {
 	Clock3,
 	Coins,
 	Loader2,
+	ReceiptText,
 	RefreshCw,
 	Scale,
 	ShieldCheck,
@@ -19,6 +20,7 @@ import {
 	Vote,
 	Wallet,
 } from "lucide-react";
+import type { Route } from "next";
 import Link from "next/link";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { formatUnits } from "viem";
@@ -377,6 +379,18 @@ function MembershipCard({
 					<p className="mt-5 break-all font-mono text-[10px] text-muted-foreground">
 						{t("DAO 合约")} · {data.contractAddress}
 					</p>
+					{membership !== null && (
+						<Link
+							href={
+								`/transactions/${membership.syncTxHash}?source=dao` as Route
+							}
+							className="mt-3 inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg font-medium text-primary text-sm transition-colors hover:text-primary/80"
+							title={membership.syncTxHash}
+						>
+							<ReceiptText className="size-4" aria-hidden />
+							{t("查看链上记录")}
+						</Link>
+					)}
 				</div>
 			</div>
 		</section>

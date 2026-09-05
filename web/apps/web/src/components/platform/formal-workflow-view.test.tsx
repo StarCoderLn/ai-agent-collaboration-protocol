@@ -1389,6 +1389,11 @@ describe("FormalWorkflowView", () => {
 		expect(screen.getByText("0.05 USDC")).toBeInTheDocument();
 		expect(screen.getByText("17.95 USDC")).toBeInTheDocument();
 		expect(screen.getAllByText("confirmed").length).toBeGreaterThan(0);
+		// 统一结算终态不能只显示内部状态字符串；用户必须能进入对应的链上回执核对。
+		expect(screen.getByRole("link", { name: "查看链上记录" })).toHaveAttribute(
+			"href",
+			`/transactions/0x${"ab".repeat(32)}?taskId=${workflow.run.taskId}`,
+		);
 	});
 });
 
