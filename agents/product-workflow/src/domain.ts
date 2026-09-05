@@ -54,6 +54,21 @@ export const RequirementsArtifactSchema = RequirementsDraftSchema.extend({
 }).strict();
 export type RequirementsArtifact = z.infer<typeof RequirementsArtifactSchema>;
 
+/**
+ * 无 PRD 的新链路直接使用任务合同，不为填满旧结构而生成虚构用户故事、目标或验收记录。
+ * 该输入与 Agent 生成的 RequirementsArtifact 保持不同版本标识，供提示词明确说明来源；
+ * 它只存在于执行输入中，不属于可交付、可计费或“已验收”的上游制品。
+ */
+export const TaskRequirementsSchema = z.object({
+  schemaVersion: z.literal("task.requirements.v1"),
+  taskId: z.string().min(1).max(128),
+  title: NonEmptyText.max(200),
+  description: NonEmptyText.max(20_000),
+  acceptanceCriteria: NonEmptyText.max(10_000),
+  deliverableFormat: NonEmptyText.max(2_000),
+}).strict();
+const ExecutionRequirementsSchema = z.union([RequirementsArtifactSchema, TaskRequirementsSchema]);
+
 const DesignTokenSchema = z
   .object({
     primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
@@ -450,11 +465,11 @@ export const WorkflowExecutionInputSchema = z
     }).strict(),
     ExecutionBaseSchema.extend({
       step: z.literal("design"),
-      requirements: RequirementsArtifactSchema,
+      requirements: ExecutionRequirementsSchema,
     }).strict(),
     ExecutionBaseSchema.extend({
       step: z.literal("code"),
-      requirements: RequirementsArtifactSchema,
+      requirements: ExecutionRequirementsSchema,
       design: DesignArtifactSchema,
     }).strict(),
   ])
@@ -513,7 +528,7 @@ export function finalizeArtifact(
 	const codeScaffold = buildCodeScaffold(input.design);
   return CodeArtifactSchema.parse({
 		title: `${input.design.title} · 可运行前端原型`,
-		implementationSummary: `${agentName} 根据已验收的 PRD 与设计制品生成核心交互页面；平台负责装配固定 Next.js 脚手架。`,
+		implementationSummary: `${agentName} 根据任务需求与上游设计制品生成核心交互页面；平台负责装配固定 Next.js 脚手架。`,
 		fileTree: codeScaffold.map((file) => file.path),
 		files: codeScaffold.map((file) => ({
 			...file,

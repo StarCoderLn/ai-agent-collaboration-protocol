@@ -99,6 +99,30 @@ class FailingExecutor implements WorkflowExecutor {
 }
 
 describe("formal dispatch", () => {
+  // 三种实现共用输入边界；逐一验证，避免只修好其中一个候选 Agent。
+  it("无 PRD 的新契约继承原始需求与完整设计，旧契约缺少 PRD 仍拒绝", () => {
+    const ids: WorkflowAgentId[] = ["design-direct", "design-mastra", "design-state-machine", "code-direct", "code-mastra", "code-state-machine"];
+    for (const agentId of ids) {
+      const dispatch = dispatchInputFor(agentId);
+      const coding = agentId.startsWith("code-");
+      if (!dispatch.workflow) throw new Error("测试必须包含正式工作流节点");
+      dispatch.workflow.inputContract = coding ? "TaskContract+DesignArtifact" : "TaskContract";
+      dispatch.upstreamArtifacts = dispatch.upstreamArtifacts.filter((artifact) => artifact.outputContract !== "RequirementsArtifact");
+      const input = adaptFormalTask({ agentId, callType: "production", dispatch }, NOW);
+      if (input.step === "requirements") throw new Error("不应创建隐式 PRD 执行");
+      expect(input.requirements).toMatchObject({ schemaVersion: "task.requirements.v1", description: dispatch.task.description, acceptanceCriteria: dispatch.task.acceptanceCriteria });
+      expect(input.requirements).not.toHaveProperty("generatedBy");
+      if (input.step === "code") expect(input.design).toEqual(designArtifactFor(dispatch.task.id));
+      dispatch.workflow.inputContract = coding ? "RequirementsArtifact+DesignArtifact" : "RequirementsArtifact";
+      expect(() => adaptFormalTask({ agentId, callType: "production", dispatch }, NOW)).toThrow(FormalDispatchError);
+      if (coding) {
+        dispatch.workflow.inputContract = "TaskContract+DesignArtifact";
+        dispatch.upstreamArtifacts = [];
+        expect(() => adaptFormalTask({ agentId, callType: "production", dispatch }, NOW)).toThrow(FormalDispatchError);
+      }
+    }
+  });
+
   it("accepts the BIGSERIAL event id used by the platform task-event envelope", () => {
     expect(TaskEventWebhookSchema.parse({
       schemaVersion: "task-event.v1",
@@ -121,9 +145,10 @@ describe("formal dispatch", () => {
       const input = adaptFormalTask({ agentId, callType: "production", dispatch: dispatchInputFor(agentId) }, NOW);
       expect(input.agentId).toBe(agentId);
       expect(input.taskId).toBe(dispatchInput().task.id);
-      if (input.step === "design") expect(input.requirements.generatedBy.agentId).toBe("prd-direct");
+      if (input.step !== "requirements" && input.requirements.schemaVersion !== "requirements.artifact.v0.1") throw new Error("旧契约必须保留真实 PRD 制品");
+      if (input.step === "design") expect(input.requirements).toMatchObject({ generatedBy: { agentId: "prd-direct" } });
       if (input.step === "code") {
-        expect(input.requirements.generatedBy.agentId).toBe("prd-direct");
+        expect(input.requirements).toMatchObject({ generatedBy: { agentId: "prd-direct" } });
         expect(input.design.generatedBy.agentId).toBe("design-direct");
       }
     }
@@ -160,6 +185,7 @@ describe("formal dispatch", () => {
 
     expect(input.step).toBe("code");
     if (input.step !== "code") throw new Error("expected a coding execution input");
+    if (input.requirements.schemaVersion !== "requirements.artifact.v0.1") throw new Error("旧节点必须消费已验收 PRD");
 
     // 所需能力描述的是谁适合接单，不是用户最终要使用的产品功能。这里锁定两者的
     // 领域边界，避免 Coding Agent 再把“会 React”之类的能力误画成页面需求。

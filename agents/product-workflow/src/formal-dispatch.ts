@@ -7,6 +7,7 @@ import {
 import {
   DesignArtifactSchema,
   RequirementsArtifactSchema,
+  TaskRequirementsSchema,
   WorkflowExecutionInputSchema,
   type WorkflowArtifact,
   type WorkflowExecutionInput,
@@ -449,7 +450,11 @@ function isMastraFailure(error: unknown): error is Readonly<{ id: string; domain
 		&& (candidate.domain === "LLM" || candidate.id.startsWith("STRUCTURED_OUTPUT_"));
 }
 
-/** 正式节点只消费数据库中已验收的上游制品；缺失或损坏时明确失败，禁止合成假制品。 */
+/**
+ * 输入契约决定需求来源：新链路显式声明 TaskContract；旧链路仍必须读取已验收 PRD。
+ * 禁止以“找不到 PRD”为条件降级，否则旧任务的上游丢失会被掩盖。设计制品在两种链路
+ * 中都必须继承，不能因为取消收费 PRD 就让 Coding 重新设计。
+ */
 export function adaptFormalTask(context: ExecutionContext, _generatedAt: Date, reworkFeedback?: string): WorkflowExecutionInput {
   const { dispatch, agentId } = context;
   const manifest = findWorkflowAgent(agentId);
@@ -469,7 +474,18 @@ export function adaptFormalTask(context: ExecutionContext, _generatedAt: Date, r
     userRequest: request,
   };
   if (manifest.step === "requirements") return WorkflowExecutionInputSchema.parse({ ...base, step: "requirements" });
-  const requirements = readUpstreamArtifact(dispatch, RequirementsArtifactSchema, "RequirementsArtifact");
+  const usesTaskContract = dispatch.workflow?.inputContract === "TaskContract"
+    || dispatch.workflow?.inputContract === "TaskContract+DesignArtifact";
+  const requirements = usesTaskContract
+    ? TaskRequirementsSchema.parse({
+        schemaVersion: "task.requirements.v1",
+        taskId: dispatch.task.id,
+        title: dispatch.task.title,
+        description: dispatch.task.description,
+        acceptanceCriteria: dispatch.task.acceptanceCriteria,
+        deliverableFormat: dispatch.task.deliverableFormat,
+      })
+    : readUpstreamArtifact(dispatch, RequirementsArtifactSchema, "RequirementsArtifact");
   if (manifest.step === "design") return WorkflowExecutionInputSchema.parse({ ...base, step: "design", requirements });
   const design = readUpstreamArtifact(dispatch, DesignArtifactSchema, "DesignArtifact");
   return WorkflowExecutionInputSchema.parse({ ...base, step: "code", requirements, design });

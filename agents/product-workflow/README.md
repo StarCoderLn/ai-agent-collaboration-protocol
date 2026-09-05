@@ -29,10 +29,11 @@
 - `src/formal-dispatch.ts`：正式任务的 202 接单、ack、进度、结果与返工回调。
 - `src/domain.ts`：PRD、设计和代码制品的 Zod Schema 与可信元数据装配。
 
-正式任务不会让三个节点各自重新理解原始需求。PRD 节点输出经机器门禁验收后，完整
-`RequirementsArtifact` 会进入设计节点；设计节点输出经门禁验收后，完整 DesignSpec 和
-需求制品会一起进入 Coding 节点。任何新 Agent 实现都必须用任务特异性测试证明这条继承
-链路，不能只传标题、摘要或通用提示词。
+2026-09-06 起，新软件任务默认只执行设计与 Coding，独立 PRD 服务仍可正常接单，
+但不作为普通任务的收费前置。设计节点读取 `TaskContract`，Coding 读取原始任务与完整
+DesignSpec；内部 `task.requirements.v1` 明确表示原始任务，不伪造已验收 PRD。
+旧任务继续强制继承 `RequirementsArtifact`，不能因找不到上游就静默降级。所有实现共用
+`formal-dispatch.ts` 的输入边界，并由新旧契约、缺少设计制品和返工回归测试保护继承链路。
 
 三个设计 Agent 只生成结构化 DesignSpec，不再生成或执行任意 TSX、CSS、HTML 与 SVG。
 可信平台渲染器根据同一份规范确定性生成 1440 桌面端和 390 移动端 SVG，作为用户主要验收

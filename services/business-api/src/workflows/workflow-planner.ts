@@ -87,36 +87,44 @@ export function planFormalWorkflow(input: WorkflowPlanningInput): PlannedWorkflo
 }
 
 function templatesFor(input: WorkflowPlanningInput): readonly NodeTemplate[] {
+  // 显式购买 PRD 是独立服务；普通任务的规划不生成收费 PRD，也不伪造已验收需求。
+  // 此函数仅用于创建新工作流，已有节点与冻结报价必须继续使用持久化快照。
+  if (input.taskCategoryId === CATEGORY_REQUIREMENTS) return [requirementsTemplate()];
+  // 独立购买界面设计时也从原始任务开始，不附带开发或需求收费节点。
+  if (input.taskCategoryId === CATEGORY_DESIGN) {
+    return softwareTemplates().filter((node) => node.kind === "design")
+      .map((node) => ({ ...node, budgetWeight: 100 }));
+  }
   const tags = new Set(input.taskTags.map((tag) => tag.toLocaleLowerCase()));
   const software = input.taskCategoryId === CATEGORY_CODING
     || ["next.js", "typescript", "frontend", "backend", "coding", "smart-contract"].some((tag) => tags.has(tag));
   if (software) return softwareTemplates();
   if (input.taskCategoryId === CATEGORY_IMAGE || tags.has("image-generation")) {
-    return [requirementsTemplate(), {
+    return [{
       key: "image",
       kind: "image",
       title: "图片设计与生成",
-      description: "读取已验收需求，生成可直接预览和下载的图片制品。",
+      description: "根据用户任务需求，生成可直接预览和下载的图片制品。",
       categoryId: CATEGORY_IMAGE,
       tags: ["image-generation", "design-system"],
       requiredCapability: "根据结构化需求生成符合尺寸、风格和内容约束的图片制品",
-      inputContract: "RequirementsArtifact",
+      inputContract: "TaskContract",
       outputContract: "ImageArtifact",
-      budgetWeight: 75,
+      budgetWeight: 100,
     }];
   }
   if (input.taskCategoryId === CATEGORY_VIDEO || tags.has("video-generation")) {
-    return [requirementsTemplate(), {
+    return [{
       key: "video",
       kind: "video",
       title: "视频策划与生成",
-      description: "读取已验收需求，完成分镜、生成和可播放视频交付。",
+      description: "根据用户任务需求，完成分镜、生成和可播放视频交付。",
       categoryId: CATEGORY_VIDEO,
       tags: ["video-generation", "content-creation"],
       requiredCapability: "根据结构化需求生成可播放并符合时长与画面约束的视频制品",
-      inputContract: "RequirementsArtifact",
+      inputContract: "TaskContract",
       outputContract: "VideoArtifact",
-      budgetWeight: 75,
+      budgetWeight: 100,
     }];
   }
   if (input.taskCategoryId === CATEGORY_RESEARCH || input.taskCategoryId === CATEGORY_DOCUMENT || tags.has("research")) {
@@ -149,16 +157,15 @@ function templatesFor(input: WorkflowPlanningInput): readonly NodeTemplate[] {
 
 function softwareTemplates(): readonly NodeTemplate[] {
   return [
-    { ...requirementsTemplate(), budgetWeight: 20 },
     {
       key: "design",
       kind: "design",
       title: "产品与界面设计",
-      description: "把已验收 PRD 转换为页面结构、交互规则和可预览设计制品。",
+      description: "根据用户任务需求确定页面结构、交互规则和可预览设计制品。",
       categoryId: CATEGORY_DESIGN,
       tags: ["ui/ux", "design-system", "responsive-design"],
-      requiredCapability: "根据结构化 PRD 生成可验收的产品界面设计",
-      inputContract: "RequirementsArtifact",
+      requiredCapability: "根据用户任务需求生成可验收的产品界面设计",
+      inputContract: "TaskContract",
       outputContract: "DesignArtifact",
       budgetWeight: 30,
     },
@@ -166,11 +173,11 @@ function softwareTemplates(): readonly NodeTemplate[] {
       key: "coding",
       kind: "coding",
       title: "Coding 开发实现",
-      description: "读取已验收 PRD 和设计制品，生成可运行代码、预览与测试依据。",
+      description: "继承用户任务需求与上游设计制品，生成可运行代码、预览与测试依据。",
       categoryId: CATEGORY_CODING,
       tags: ["next.js", "typescript", "testing"],
       requiredCapability: "根据需求与设计制品完成可运行的软件实现",
-      inputContract: "RequirementsArtifact+DesignArtifact",
+      inputContract: "TaskContract+DesignArtifact",
       outputContract: "CodeArtifact",
       budgetWeight: 50,
     },
@@ -188,7 +195,7 @@ function requirementsTemplate(): NodeTemplate {
     requiredCapability: "将原始需求整理为结构化 PRD 与可执行任务",
     inputContract: "TaskContract",
     outputContract: "RequirementsArtifact",
-    budgetWeight: 25,
+    budgetWeight: 100,
   };
 }
 

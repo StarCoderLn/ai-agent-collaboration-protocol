@@ -1191,6 +1191,24 @@ function EscrowAction({
 			)}
 			tone="escrow"
 		>
+			{/* 托管前直接展示持久化的原始范围，而不是编造一份 PRD 或将模型假设包装成
+			    用户要求。长需求按需展开，既能复核全文，也不抢占报价和付款动作的空间。 */}
+			<details className="mb-5 rounded-xl border border-primary/15 p-4">
+				<summary className="cursor-pointer font-medium text-sm">
+					{t("本次执行范围")} · {task.title}
+				</summary>
+				<p className="mt-3 text-muted-foreground text-xs leading-5">
+					{t("按以下任务需求及已选执行方案交付；未明确的内容不代表你已确认。")}
+				</p>
+				<p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6">
+					{task.description}
+				</p>
+				{task.acceptanceCriteria && (
+					<p className="mt-3 whitespace-pre-wrap break-words text-muted-foreground text-sm leading-6">
+						{task.acceptanceCriteria}
+					</p>
+				)}
+			</details>
 			{visibleError !== null && (
 				<div
 					role="alert"

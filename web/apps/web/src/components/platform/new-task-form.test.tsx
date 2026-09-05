@@ -115,7 +115,7 @@ describe("New task assignment mode", () => {
 		expect(
 			await screen.findByRole("combobox", { name: "服务分类" }),
 		).toBeInTheDocument();
-		expect(screen.getByText("发布后自动拆分")).toBeInTheDocument();
+		expect(screen.getByText("发布后推荐执行方案")).toBeInTheDocument();
 		expect(screen.queryByText("平台推荐")).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("radio", { name: /平台自动分配/ }),
@@ -212,9 +212,14 @@ describe("New task assignment mode", () => {
 		);
 	}, 10_000);
 
-	it("无需填写补充说明，标题仍可作为需求整理阶段的最小原始输入", async () => {
+	it("具体标题可直接作为执行输入，不展示额外的自由发挥选项", async () => {
 		render(<NewTaskForm />);
 		const title = "开发一个内容网站";
+		expect(
+			screen.queryByRole("checkbox", {
+				name: "未指定的风格与呈现细节，交给 Agent 发挥",
+			}),
+		).not.toBeInTheDocument();
 		fireEvent.change(screen.getByLabelText("任务标题"), {
 			target: { value: title },
 		});
@@ -232,6 +237,30 @@ describe("New task assignment mode", () => {
 			tags: [],
 			requiredCapability: "软件开发",
 		});
+	});
+
+	// 只拦截明确没有执行对象的请求，不把“详细需求选填”偷偷改成长篇必填。
+	it("缺少主题时就近提示，补充主题后仅提交用户填写的说明", async () => {
+		render(<NewTaskForm />);
+		fireEvent.change(screen.getByLabelText("任务标题"), {
+			target: { value: "设计一个海报" },
+		});
+		selectFutureDeadline();
+		await selectProductCategory();
+		fireEvent.click(screen.getByRole("button", { name: /发布并选择 Agent/ }));
+		expect(mocks.createTaskDraft).not.toHaveBeenCalled();
+		expect(screen.getByLabelText("补充说明（可选）")).toHaveAttribute(
+			"aria-invalid",
+			"true",
+		);
+		fireEvent.change(screen.getByLabelText("补充说明（可选）"), {
+			target: { value: "为夏季促销设计" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: /发布并选择 Agent/ }));
+		await waitFor(() => expect(mocks.createTaskDraft).toHaveBeenCalledOnce());
+		expect(mocks.createTaskDraft.mock.calls[0]?.[0].description).toBe(
+			"为夏季促销设计",
+		);
 	});
 
 	it("不要求用户填写预算或技能标签也可以发布需求", async () => {
@@ -261,7 +290,7 @@ describe("New task assignment mode", () => {
 	it("用简短信息说明发布后的自动执行流程", async () => {
 		render(<NewTaskForm />);
 		expect(screen.getByText("执行流程")).toBeInTheDocument();
-		expect(screen.getByText("发布后自动拆分")).toBeInTheDocument();
+		expect(screen.getByText("发布后推荐执行方案")).toBeInTheDocument();
 		expect(screen.queryByText("发布保障")).not.toBeInTheDocument();
 		expect(
 			screen.queryByText(

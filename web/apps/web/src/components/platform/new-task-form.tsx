@@ -129,7 +129,22 @@ export default function NewTaskForm() {
 			return;
 		}
 		// 数据库中的正式任务说明仍是非空字段。用户未填写可选说明时，直接复用其标题，
-		// 不虚构功能细节；后续需求整理阶段会把这份最小原始需求澄清为结构化制品。
+		// 不虚构功能细节，也不承诺后面有一个收费 PRD 阶段替用户补齐。
+		// 只识别明确缺少执行对象的短指令，不用长度门槛拦截具体、简短但可执行的需求。
+		if (
+			!description.trim() &&
+			/^(?:(?:请|帮我)?(?:设计|生成|制作|做|写|开发)(?:一[个张篇份])?(?:海报|图片|视频|论文|网站|任务)|(?:please\s+)?(?:create|make|design|write|build)\s+(?:an?\s+)?(?:poster|image|video|paper|website|task))[。.!！\s]*$/i.test(
+				normalizedTitle,
+			)
+		) {
+			rejectSubmit(
+				submittedForm,
+				"description",
+				t("请补充主题或用途，例如：为夏季促销设计海报。"),
+			);
+			return;
+		}
+		// 下游接收用户原始说明；未补充时使用标题，不替用户追加授权或虚构已确认需求。
 		const taskDescription = description.trim() || normalizedTitle;
 		if (taxonomy.kind !== "loaded") {
 			rejectSubmit(submittedForm, "categoryId", t("任务分类尚未加载完成"));
@@ -290,7 +305,7 @@ export default function NewTaskForm() {
 						<Field
 							label={t("补充说明（可选）")}
 							htmlFor="task-description"
-							hint={t("可以补充使用场景、偏好或限制，帮助平台更准确地整理需求")}
+							hint={t("补充用途、风格或参考示例，有助于 Agent 更准确地交付。")}
 							error={
 								validationError?.field === "description"
 									? validationError.message
@@ -409,7 +424,7 @@ export default function NewTaskForm() {
 							</p>
 							<p className="mt-2 line-clamp-3 text-muted-foreground text-sm leading-5">
 								{description.trim() ||
-									t("未填写补充说明，平台将根据任务标题继续整理需求")}
+									t("未填写补充说明，将按任务标题匹配与执行")}
 							</p>
 						</div>
 						{/* 预览侧栏只保留发布前真正影响用户决策的流程信息。服务费、幂等和
@@ -417,7 +432,7 @@ export default function NewTaskForm() {
 						<dl className="mt-5 space-y-3 text-sm">
 							<PreviewRow
 								label={t("执行流程")}
-								value={t("发布后自动拆分")}
+								value={t("发布后推荐执行方案")}
 								strong
 							/>
 							<PreviewRow label={t("最终验收")} value={t("最终交付由你确认")} />

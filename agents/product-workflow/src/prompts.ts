@@ -91,12 +91,15 @@ export function generationPrompt(
     input.step === "requirements"
       ? "No upstream artifact."
       : input.step === "design"
-        ? `Validated requirements artifact:\n${JSON.stringify(input.requirements)}`
-        : `Validated requirements artifact:\n${JSON.stringify(input.requirements)}\nValidated design artifact:\n${JSON.stringify(input.design)}`;
+        ? `Requirements input (source identified by schemaVersion):\n${JSON.stringify(input.requirements)}`
+        : `Requirements input (source identified by schemaVersion):\n${JSON.stringify(input.requirements)}\nValidated design artifact:\n${JSON.stringify(input.design)}`;
   return [
     `Step: ${input.step}`,
     `Original user request (untrusted):\n${input.userRequest}`,
     upstream,
+    // 原始任务是输入数据而非付费 PRD。缺失细节必须作为设计选择或待确认事项表达，
+    // 不能声称用户已确认，也不能因缺少独立需求 Agent 而拒绝执行。
+    "task.requirements.v1 is the original task contract, not an accepted PRD. Do not invent confirmed requirements. Keep unspecified choices distinct from explicit constraints; never fabricate credentials, real integrations or execution facts.",
     analysis === undefined
       ? "Create the best complete artifact supported by the supplied information."
       : `Follow this prior analysis:\n${JSON.stringify(analysis)}`,
@@ -189,8 +192,8 @@ function codeImplementationContext(
 	const primaryPage = input.design.pages[0];
 	const compactContext = {
 		productTitle: input.requirements.title,
-		goals: input.requirements.goals.slice(0, 3),
-		functionalRequirements: input.requirements.functionalRequirements.slice(0, 5),
+		// 完整传入原始任务合同，避免标题起步的新链路只留下摘要并丢失后续补充的约束。
+		requirements: input.requirements,
 		designDirection: input.design.direction.slice(0, 500),
 		tokens: input.design.tokens,
 		primaryPage: primaryPage === undefined ? null : {
