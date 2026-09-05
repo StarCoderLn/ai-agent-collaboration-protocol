@@ -62,10 +62,10 @@ func TestWebhookRepositoryLeaseRetryAndDeadLetter(t *testing.T) {
 	}
 	_, err = transaction.Exec(ctx, `
 		INSERT INTO agents(
-		  id,provider_wallet_address,name,category_id,capability_desc,tags,pricing_type,
+		  id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,pricing_type,
 		  price_amount,price_currency,service_endpoint,email,status
 		) VALUES (
-		  $1,'0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','Webhook 测试 Agent',
+		  $1,'0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','Webhook 测试 Agent',
 		  '40000000-0000-4000-8000-000000000001','Go',ARRAY['agent'],'fixed',7000000,
 		  'USDC','https://agent.example/v1','webhook@example.com','active'
 		)`, agentID)

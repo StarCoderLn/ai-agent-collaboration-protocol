@@ -12,11 +12,13 @@
 | 2026-08-23 | v6   | 对齐 PLAN：Feature 15 延后期间使用有角色校验、理由必填和审计留痕的 MVP 人工审核入口，并补驳回终态 |
 | 2026-08-31 | v7   | 受控上线期门禁改为 Agent 单次报价上限，与用户规划预算候选过滤解耦 |
 | 2026-09-03 | v8   | 健康探测读取 `integration_mode`，支持默认快速 HTTP JSON 与历史 HMAC |
+| 2026-09-04 | v9   | 移除临时人工审核 API 与页面，准入只接受 Feature 15 的自动评测证据 |
+| 2026-09-04 | v10  | 冷启动门禁改读真实结算任务数；“新 Agent”与评分低样本不再复用同一状态 |
 
 ## 项目架构
 
 - 架构类型: 多服务架构
-- 涉及层: 分发引擎（Go，健康检查定时任务与状态机权威实现）、交易/业务服务（Next.js + AWS Lambda，运营审核 API 与提供者操作 API）、PostgreSQL、前端
+- 涉及层: 分发引擎（Go，健康检查定时任务与状态机权威实现）、业务服务（提供者操作 API）、PostgreSQL、前端
 
 ## 功能模块设计
 
@@ -25,7 +27,7 @@
 **涉及层及关键设计:**
 
 - 状态机权威实现放在 Go 分发引擎（而非业务服务），因为派发链路（feature 9）需要在同一进程内以强一致的方式读取最新状态做候选过滤，跨服务查询会引入不必要的网络往返和时序竞争。
-- 显式状态：`pending_review`（待审核/试运行）→ `active`（可接单）→ `paused`（暂停，可人工或自动触发）→ `delisted`（下架，终态）。
+- 显式状态：`pending_review`（自动验证中）→ `active`（可接单）→ `paused`（暂停，可人工或自动触发）→ `delisted`（下架，终态）。数据库枚举名称为兼容已发布迁移而保留，产品界面不展示“待审核”。
 - 用可辨识联合表达状态转移事件（`ManualPause` / `AutoPauseHealthCheck` / `AdminApprove` / `ProviderDelist` / `AutoResumeHealthCheck` `[v4 新增]` / `ManualResume` `[v4 新增]`），非法转移在类型层面即不可表达，而不是靠 if 分支兜底。
 - `[v4]` `paused` 状态携带 `pause_reason`（`health_check` / `manual`），记录在 `agents.pause_reason` 列（与 `agents.status` 同表，物理定义随 [[2.agent-registration]] 的 `agents` 表，语义归属本 feature）。这个字段是自动恢复能否触发、以及手动恢复接口是否放行的唯一依据：`AutoResumeHealthCheck` 只对 `pause_reason = health_check` 生效；`ManualResume` 只对 `pause_reason = manual` 生效，互不跨越，防止提供者绕过健康检查直接强行恢复一个还不健康的 Agent（对应 requirements.md AC-007）。
 
@@ -57,50 +59,49 @@
 成功 → 失败 → 成功           → 不触发（失败后计数器归零，之后重新计数=1）
 ```
 
-### 模块 3: 运营审核与生命周期操作
+### 模块 3: 自动准入与生命周期操作
 
 **涉及层及关键设计:**
 
-- 审核 API 部署在业务服务（Next.js + AWS Lambda），审核通过后通过内部调用（非公开 API）通知 Go 分发引擎更新状态缓存，状态权威数据仍在 Go 侧管理的表中，业务服务只是发起状态迁移请求。
-- `[v6]` `specs/PLAN.md` 已将 [[15.agent-sandbox-admission]] 延后至 P5。当前 MVP 审核入口仅对 `agent_reviewer` 角色开放，审核理由必填；通过执行 `AdminApprove`，驳回执行 `AdminReject` 并进入 `delisted` 终态，两者都在状态事务中记录审核员与理由。Feature 15 启用后只把通过事件的证据源替换为沙箱判定 ID，不让本 feature 反向依赖其内部表。
+- [[15.agent-sandbox-admission]] 的 Worker 在三次试运行和自动评测通过后，直接通过内部调用提交 `AdminApprove{AdmissionDecisionID}`。`AdminApprove` 名称作为已发布领域事件兼容保留，但调用者固定是系统自动准入 Worker，不代表人工管理员审批。
+- 状态机校验结构化准入决策 ID 并在同一事务写入 Agent 状态和审计日志。原 `/api/admin/agents` 审核队列、通过与驳回公网接口均已删除，避免形成绕过自动门禁的第二条路径。
 - 提供者的暂停/下架操作同样走“发起迁移请求 → 状态机校验合法性 → 落库 → 审计”的统一路径，不区分“谁发起”对状态机内部逻辑的影响，只影响审计记录里的 `actor_type`。
 - `[v4 新增]` 提供者恢复接口同样走这条统一路径，但 `TransitionAgentStatus` 在处理 `ManualResume` 事件时会额外校验 `pause_reason`：`pause_reason = manual` 才允许迁移到 `active`；`pause_reason = health_check` 时返回 `RESUME_REQUIRES_HEALTH_RECOVERY` 错误码，而不是把这条校验散落到 API 层——校验逻辑集中在状态机内部，任何未来新增的恢复入口（例如运营后台的强制恢复）都会自动受到同一条规则约束。
 
 ## 接口契约
 
 - 内部接口（Go 分发引擎）：`TransitionAgentStatus(agentId, event, actor) (newStatus, error)`，非法迁移返回 `INVALID_STATE_TRANSITION` 错误码。
-- `POST /api/admin/agents/:id/approve` / `reject`：MVP 运营审核通过或驳回，请求体含 `reviewReason`。
+- 自动准入内部调用由 [[15.agent-sandbox-admission]] 持有，不提供公网人工通过或驳回接口。
 - `POST /api/agents/:id/pause` / `POST /api/agents/:id/delist`：提供者操作。
 - `POST /api/agents/:id/resume` `[v4 新增]`：提供者恢复操作，仅 `pause_reason = manual` 时成功；`pause_reason = health_check` 时返回 `RESUME_REQUIRES_HEALTH_RECOVERY`（提示"等待自动恢复或联系运营"）。
 
-### 模块 4: 受控上线期风险上限 `[v5 新增，替换此前的"试运行风险上限"提法]`
+### 模块 4: 冷启动风险上限与新 Agent 标识 `[v10 修订]`
 
 **涉及层及关键设计:**
 
-- 本模块描述的是业务规则本身（受控上线期是什么、怎么判定、上限怎么算），**不在本 feature 单独实现一个 `IsInProbation()` 服务**——它的代码实现并入 [[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()`（那里已经是五项硬约束的统一校验入口，两个函数都在 Go 分发引擎同进程执行，拆成两个跨服务调用没有必要）。这里只是规则的权威文档位置，不是代码的物理位置。
-- `IsInProbation(agentId) bool`：只读查询逻辑，比较 [[12.scoring-system]] 的 `agent_score_snapshots.sample_size`（该 Agent 当前评分样本量）与 `scoring_rule_versions.bayesian_prior.prior_weight`（当前生效规则版本的先验权重）——`sample_size < prior_weight` 即判定为受控上线期。若该 Agent 尚无任何 `agent_score_snapshots` 记录（刚转正、一单未完成），视为 `sample_size = 0`，天然满足受控上线期条件，不需要为"从未有过快照"这种边界单独写分支。
-- 这是运行时判定，不在 `agents` 表存储一个需要手动维护的"是否受控中"布尔字段——避免引入一份需要和评分快照保持同步的冗余状态（同步遗漏本身就是一类常见 bug 来源）。
-- 受控上线期内的报价上限 = 平台历史成交金额分布的第 30 百分位数（可配置分位数，存于 `agent_status_config.probation_budget_cap_percentile`）。[[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()` 在资格过滤时比较 `candidate.price` 与该上限；发布者预算偏好不参与比较。这样预算偏好不隐藏普通候选时，新入驻 Agent 的单次成交风险仍受控制。
-- 候选列表展示的"新入驻"标识直接复用 `IsInProbation()` 的结果，不重新定义一套判断逻辑。
-- `[2026-08-31 修改]` 候选列表查询只返回 `status = active` 的 Agent；受控上线期的单次报价风险上限由 [[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()` 执行，状态查询只提供样本和额度事实，不混入匹配判断。
+- 本模块描述两种不同事实：`isNew = settledTaskCount == 0` 只控制用户看到的“新 Agent”标识；`isColdStartRiskLimited = settledTaskCount < probationCompletedTaskThreshold` 控制单次报价风险。首个成功结算移除标识，默认第 3 个成功结算解除风控。
+- `settledTaskCount` 只统计 `task_assignments.status = accepted` 且任务最终为 `settled` 的记录。沙箱准入、仅接单、执行失败、退款、超时和未完成结算均不计入，保证“成功”对应完整资金闭环。
+- 两个状态均在查询时由历史事实派生，不在 `agents` 表保存易失真的布尔字段。解除阈值存于 `agent_status_config.probation_completed_task_threshold`（默认 3），目录 API 与 Go 匹配引擎读取同一权威配置。
+- 冷启动期间的报价上限仍为平台历史成交金额分布第 30 百分位数，由 `probation_budget_cap_percentile` 配置。[[7.task-visibility-and-mode]] 的 `ValidateHardConstraints()` 比较 Agent 自身报价，不比较发布者预算偏好。
+- [[12.scoring-system]] 的评分样本量和 `priorWeight` 继续决定评分置信度，但不再决定“新 Agent”或冷启动报价限制。这样用户未评分不会阻止已经稳定交付的 Agent 结束冷启动。
 
 ## 数据模型
 
 - `agents.status`（枚举，权威字段，位于 [[2.agent-registration]] 定义的 `agents` 表）
 - `agents.pause_reason` `[v4 新增]`（枚举 `health_check` / `manual` / 空，仅 `status = paused` 时有意义，同表同物理位置）
 - `agent_health_checks(id PK, agent_id FK, result_code, counted_toward_failure BOOL, checked_at)`（`[v3]` 新增 `counted_toward_failure`：即使 `AGENT_INTERNAL_ERROR` 不计入连续失败计数，仍要落库以便运营排查趋势，只是不参与熔断判断，这个字段让"记录了什么"和"算不算失败"这两件事在数据层面就分开，不用每次查询都重新推导）
-- `agent_status_config(agent_id FK 可为空表示全局默认, consecutive_failure_threshold, resume_success_threshold, health_check_interval_seconds, probation_budget_cap_percentile)`（`[v4]` 新增 `resume_success_threshold`、`health_check_interval_seconds` 两列；`[v5]` 将 `trial_risk_cap_amount`（固定金额）替换为 `probation_budget_cap_percentile`（分位数，默认 30）——固定金额不会随平台任务预算规模变化而自适应，分位数更合理，命名也从"试运行"改为"受控上线期"以消除歧义）
+- `agent_status_config(agent_id FK, consecutive_failure_threshold, resume_success_threshold, health_check_interval_seconds, probation_budget_cap_percentile, probation_completed_task_threshold)`；两个冷启动配置分别决定报价上限分位数和解除所需真实结算任务数（默认 3）。
 - 状态迁移统一写入 [[2.agent-registration]] 定义的共享 `audit_logs` 表。
 
 ## 安全考虑
 
-- 审核 API 需要运营角色的权限校验（依赖平台统一鉴权，具体鉴权机制在 [[13.ops-backend-and-metrics]] 中统一设计，本 feature 只声明需要该权限点）。
+- 自动准入状态迁移只接受内部服务认证，并要求结构化 `AdmissionDecisionID`；不能用客户端自报身份或自由文本理由替代。
 - 自动暂停事件的触发者记录为系统账户，与人工操作在审计日志中可区分，避免运营误以为是人工操作。
 - `[v4]` 提供者无法通过任何接口把一个 `pause_reason = health_check` 的 Agent 强行恢复为 `active`——这条校验在状态机内部而非 API 层实现（见模块 3），保证即使未来新增别的恢复入口也不会绕过。
 
 ## 前端视觉规范
 
-前端实现遵循 `docs/DESIGN.md`（Amethyst Intelligence 视觉系统）：Inter 字体、8px 间距系统、12px 卡片圆角。状态语义色：`可接单` 用 success（绿）、`待审核`（沙箱测试中，不进入候选列表，无需候选列表标识）、`暂停` 用 warning、`下架` 用中性色（`on-surface-variant`）、健康检查失败用 error（红）。`[v5]` 受控上线期的"新入驻"标识用 warning（琥珀）+ 标识图标，语义是"数据尚不充分"而非"有问题"，与暂停状态视觉上要能区分（暂停用同色但配不同图标和文案，避免用户误以为新入驻等同于暂停）。所有状态一律搭配文字和图标，不单独用颜色区分。`[v4]` 提供者控制台里，`pause_reason = manual` 的 Agent 展示"恢复接单"按钮；`pause_reason = health_check` 的 Agent 不展示该按钮，改为展示"平台正在自动探测恢复中"的说明文字，避免提供者以为按钮不存在是 bug 而不是设计如此。
+前端实现遵循 `docs/DESIGN.md`（Amethyst Intelligence 视觉系统）：`可接单` 用 success（绿）、`自动验证中` 用紫色动态进度、`验证未通过`/`暂停` 用 warning、`下架` 用中性色、健康失败用 error。“新 Agent”仅在零真实结算时使用轻量琥珀徽标；公开详情不展示“受控上线”、先验权重或分位数等内部术语。提供者控制台以弱提示展示 `已完成数/解除阈值`，不使用醒目的风险警告卡。
 
 ## 技术决策
 
@@ -111,5 +112,5 @@
 | `[v3]` 连续失败计入范围 | 排除 `AGENT_INTERNAL_ERROR`（选中）vs 四类错误一视同仁 | 认证失败/协议不兼容/连接超时反映"平台联系不上或 Agent 不遵守协议"，是客观的连通性问题；`Agent 内部错误`反映的是业务逻辑质量问题，应由评分和试运行机制治理，混入同一熔断计数会让阈值失去明确含义，也可能因为 Agent 处理某类任务时偶发报错而被错误地整体停摆 |
 | `[v4]` 恢复阈值与失败阈值是否对称 | 不对称，恢复阈值（2）高于失败阈值（3）不是直接相等，且恢复本身走独立计数器（选中）vs 恢复用与失败相同的单次成功即触发 | 单次成功即恢复会在 Agent 处于故障边缘时造成暂停/恢复快速交替（flapping），候选列表和已生成的匹配结果会跟着抖动；多一次确认的成本很低，换来的稳定性收益更高 |
 | `[v4]` 提供者能否强制恢复健康检查暂停的 Agent | 不能，状态机内部拒绝（选中）vs 允许提供者强制恢复但风险自担 | 健康检查暂停的意义就是"平台联系不上/协议不合规"，允许绕过等于让这道防线形同虚设；提供者真正想恢复的路径是修好 Agent 让健康检查通过，而不是在没修好的情况下继续接单 |
-| `[v5]` 受控上线期的解除条件 | 对齐评分样本量阈值（选中）vs 固定时长（如"转正后 7 天"）vs 固定任务数（如"前 5 单"） | 固定时长/固定任务数都是任意数字，且与"这个 Agent 到底有没有被验证过"无关（可能 7 天内一单没接，也可能 5 单全部超预期完成却仍被卡住）；对齐评分样本量直接绑定"是否已积累足够真实反馈"这个真正关心的问题，且复用 [[12.scoring-system]] 已有的贝叶斯先验参数，不需要另外定义一套解除规则 |
-| `[v5]` 是否额外设总任务数上限 | 不设（选中）vs 单独设一个"受控期最多 N 单"上限 | 受控期本身就被"需要攒够 `prior_weight` 个评分样本"这个条件限制了时长和任务数量上界，额外加一个独立的任务数上限是重复约束同一件事，徒增一个需要维护和解释的配置项 |
+| `[v10]` 新标识与风控是否共用条件 | 拆分（选中）vs 继续复用评分样本阈值 | “是否有过成功交付”“资金风险是否已有足够样本”“评分是否稳定”是三类事实；继续复用 `priorWeight=20` 会让展示、资金和评分互相泄漏业务知识 |
+| `[v10]` 冷启动解除条件 | 3 个真实结算任务（选中）vs 首次成功即全部解除 vs 20 份评分 | 首次成功足以去掉“新”标识，但不足以完全证明稳定性；3 个完整资金闭环兼顾进入门槛和风控，20 份评分则会显著延长冷启动且受用户是否评分影响 |

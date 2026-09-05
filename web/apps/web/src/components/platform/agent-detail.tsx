@@ -85,7 +85,7 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 			<DetailState
 				icon={Bot}
 				title={t("没有找到这个 Agent")}
-				description={t("它可能尚未通过审核、已经下架，或者链接无效。")}
+				description={t("它可能尚未通过自动验证、已经下架，或者链接无效。")}
 			/>
 		);
 	if (state.kind === "error")
@@ -126,7 +126,7 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 								<h1 className="font-bold text-2xl sm:text-3xl">{agent.name}</h1>
 								<span className="inline-flex items-center gap-1 rounded-full bg-primary-container px-2.5 py-1 font-medium text-primary text-xs">
 									<ShieldCheck className="size-3.5" />
-									{t("平台审核通过")}
+									{t("自动验证通过")}
 								</span>
 								{agent.isNew && (
 									<span className="rounded-full bg-warning/10 px-2.5 py-1 font-medium text-warning text-xs">
@@ -220,13 +220,13 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 					</section>
 
 					<section className="rounded-xl border bg-card p-5">
-						<h2 className="font-semibold">{t("平台审核与服务保障")}</h2>
+						<h2 className="font-semibold">{t("自动验证与服务保障")}</h2>
 						<div className="mt-4 space-y-3">
 							<Evidence
 								icon={ShieldCheck}
-								title={t("平台审核已通过")}
+								title={t("三次自动验证已通过")}
 								detail={t(
-									"只有审核通过且可接单的 Agent 才会出现在市场，服务地址和提供者敏感信息不会公开。",
+									"只有完成三次试运行并通过自动评测的 Agent 才会出现在市场，服务地址和提供者敏感信息不会公开。",
 								)}
 							/>
 							<Evidence

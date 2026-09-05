@@ -49,7 +49,7 @@ migrate -path services/business-service/migrations \
 - `0011_scoring_system`：五维评分、规则版本和 Agent 得分快照。
 - `0012_dispute_arbitration`：争议证据、仲裁决定与链上执行状态。
 - `0013_agent_health_probe_schedule`：健康检查的持久化调度时间与 worker 租约。
-- `0014_agent_reviewer_role`：在统一平台角色表中增加 Agent 审核员角色。
+- `0014_agent_reviewer_role`：历史迁移；曾在统一平台角色表中增加 Agent 审核员角色。0037 启用自动准入后不再有人工审核入口，为兼容旧审计数据保留枚举值。
 - `0015_product_workflow_categories`：PRD、产品界面设计、软件开发三类稳定工作流分类。
 - `0016_native_eth_money_contract`：历史迁移；曾统一原生 ETH/wei 契约。不得删除或改写，当前新业务金额语义已由 `0024` 迁移为 USDC。
 - `0017_execution_failure_state`：记录 Agent 脱敏失败回调，并把任务转入可争议、资金仍托管的失败状态。
@@ -73,3 +73,5 @@ migrate -path services/business-service/migrations \
 - `0034_dao_arbitration`：增加 YD 成员镜像、DAO 仲裁轮次/小组/投票，以及带裁决摘要的专用争议退款和平台/DAO 共用的多 Agent 资金 outbox。
 - `0035_optional_agent_email`：联系邮箱改为历史兼容的可空字段；新 Agent 不再因缺少邮箱而无法上架，已有非空数据保持不变。
 - `0036_quick_agent_integration`：新增默认快速 HTTP JSON 接入模式和可恢复的同步结果暂存；历史 Agent 继续使用 AICP HMAC，不改变既有认证与回调语义。
+- `0037_automatic_agent_admission`：新增可恢复自动准入轮次、三道标准测试题和 AI 评测字段；技术门禁通过后由固定阈值自动上架，失败支持提供者幂等重试。
+- `0040_admission_cost_limits`：增加跨重启保留的准入 Worker 恢复次数，新增请求小型示例的 v3 通用模板。提供者限流复用轮次时间戳；回滚保留列、模板与历史证据，再升级可幂等执行。必须先迁移至 40，再重启分发服务。

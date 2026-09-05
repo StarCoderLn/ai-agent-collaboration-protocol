@@ -2,6 +2,7 @@ package sandboxadmission
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -183,5 +184,29 @@ func TestRunSandboxTestRejectsMissingStableRoundIdentity(t *testing.T) {
 	service := Service{Repository: newMemoryRepository(), Decryptor: decryptorStub{}, Caller: &callerStub{}}
 	if _, err := service.RunSandboxTest(context.Background(), Command{AgentID: testAgentID}); err == nil {
 		t.Fatal("round ID is required to distinguish retries from deliberate retests")
+	}
+}
+
+func TestInputForRunAnchorsGenericTitleToAgentCapability(t *testing.T) {
+	plan := RoundPlan{
+		RoundID:    testRoundID,
+		AgentName:  "学术论文写作 Agent",
+		Capability: "生成带可追溯引用的论文初稿",
+		Tags:       []string{"论文写作", "引用校验"},
+		TestInput:  []byte(`{"cases":[{"title":"核心能力演示"},{"title":"约束遵循测试"},{"title":"信息不完整场景测试"}]}`),
+	}
+	encoded, err := testInputForRun(plan, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var task map[string]any
+	if err := json.Unmarshal(encoded, &task); err != nil {
+		t.Fatal(err)
+	}
+	if task["title"] != "学术论文写作 Agent · 约束遵循测试" {
+		t.Fatalf("通用验证维度必须绑定到 Agent 类型，实际标题：%v", task["title"])
+	}
+	if task["requiredCapability"] != plan.Capability {
+		t.Fatalf("能力约束必须继续作为结构化字段传递：%v", task["requiredCapability"])
 	}
 }

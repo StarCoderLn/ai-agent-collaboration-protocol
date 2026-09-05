@@ -20,6 +20,7 @@ import (
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matching"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/protocol"
 	queueadapter "github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/queue"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/sandboxadmission"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/store"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/tasktransition"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/webhook"
@@ -55,6 +56,17 @@ func run(ctx context.Context) error {
 	publicDispatchURL, err := requiredEnv("DISPATCH_PUBLIC_URL")
 	if err != nil {
 		return err
+	}
+	admissionEnabled, err := booleanEnvOrDefault("AGENT_ADMISSION_ENABLED", true)
+	if err != nil {
+		return err
+	}
+	evaluatorAPIKey := ""
+	if admissionEnabled {
+		evaluatorAPIKey, err = requiredEnv("DEEPSEEK_API_KEY")
+		if err != nil {
+			return err
+		}
 	}
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -120,6 +132,26 @@ func run(ctx context.Context) error {
 		Prober:     &agenthealth.HTTPProber{Client: &http.Client{Timeout: 10 * time.Second}},
 		Lease:      30 * time.Second,
 	}
+	automaticAdmissionRepository := &store.AutomaticAdmissionRepository{Pool: pool}
+	automaticAdmissionWorker := &sandboxadmission.Worker{
+		Repository: automaticAdmissionRepository,
+		Sandbox: &sandboxadmission.Service{
+			Repository: &store.SandboxAdmissionRepository{Pool: pool},
+			Decryptor:  transport.decryptor,
+			// 生成类 Agent 可能需要完成真实图片、PPT 或论文产物，不能复用健康探测的
+			// 10 秒超时；每个测试任务仍由轮次总租约限制，避免无限占用 Worker。
+			Caller: &sandboxadmission.HTTPCaller{Client: &http.Client{Timeout: 3 * time.Minute}},
+			Lease:  4 * time.Minute,
+		},
+		Evaluator: &sandboxadmission.OpenAICompatibleEvaluator{
+			Client:  &http.Client{Timeout: 2 * time.Minute},
+			BaseURL: envOrDefault("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+			APIKey:  evaluatorAPIKey,
+			Model:   envOrDefault("AGENT_ADMISSION_EVALUATOR_MODEL", "deepseek-chat"),
+		},
+		Lifecycle: &store.AgentLifecycleRepository{Pool: pool},
+		Lease:     15 * time.Minute,
+	}
 	verifier := &protocol.Verifier{
 		Keys:   store.CredentialKeyResolver{Pool: pool, Decryptor: transport.decryptor},
 		Nonces: store.NonceRepository{Pool: pool},
@@ -127,7 +159,7 @@ func run(ctx context.Context) error {
 	api := &httpapi.Server{
 		InternalToken: internalToken, Matcher: matcher, Dispatcher: dispatcher,
 		AssignmentReader: assignmentRepository, AgentLifecycle: &store.AgentLifecycleRepository{Pool: pool}, Verifier: verifier,
-		ExecutionProxy: executionClient,
+		ExecutionProxy: executionClient, AdmissionRetry: automaticAdmissionRepository,
 	}
 	address := envOrDefault("DISPATCH_HTTP_ADDRESS", "127.0.0.1:3200")
 	server := &http.Server{
@@ -245,6 +277,36 @@ func run(ctx context.Context) error {
 		}
 	}()
 
+	// 新 Agent 无需等待人工审核：Worker 自动补建初始轮次，并串行完成三次隔离调用和
+	// 一次批量质量评测。所有运行状态都在数据库中，进程退出后下一实例会从租约恢复。
+	admissionDone := make(chan struct{})
+	if admissionEnabled {
+		go func() {
+			defer close(admissionDone)
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+			for {
+				result, admissionErr := automaticAdmissionWorker.RunOnce(ctx, 50)
+				if admissionErr != nil && !errors.Is(admissionErr, context.Canceled) {
+					// 不记录测试任务、Agent 产物或评测响应，防止不可信内容进入基础日志。
+					log.Printf("automatic agent admission had a recoverable failure")
+				}
+				if result.Processed {
+					log.Printf("automatic agent admission completed: passed=%t", result.Passed)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	} else {
+		// 仅供不允许产生外部 Agent/模型费用的本地页面检查使用。生产默认开启；关闭时
+		// 不创建或推进任何轮次，因此重新开启后仍会从数据库中的真实状态继续。
+		close(admissionDone)
+	}
+
 	// Escrow 确认后 Business API 只推进权威任务状态；首轮候选由本 worker 持久化生成。
 	// 失败不会丢任务：没有候选记录的 matching 任务会在下一秒再次被扫描。
 	initialMatchingDone := make(chan struct{})
@@ -286,6 +348,7 @@ func run(ctx context.Context) error {
 		<-deliveryDone
 		<-webhookDone
 		<-healthDone
+		<-admissionDone
 		<-initialMatchingDone
 		return nil
 	case err = <-serverError:
@@ -355,4 +418,18 @@ func envOrDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func booleanEnvOrDefault(name string, fallback bool) (bool, error) {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	if value == "" {
+		return fallback, nil
+	}
+	if value == "true" {
+		return true, nil
+	}
+	if value == "false" {
+		return false, nil
+	}
+	return false, errors.New(name + " must be true or false")
 }

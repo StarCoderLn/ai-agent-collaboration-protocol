@@ -151,8 +151,6 @@ func lifecycleAuditAction(event domain.AgentEvent) string {
 	switch event.(type) {
 	case domain.AdminApprove:
 		return "agent.lifecycle.approve"
-	case domain.AdminReject:
-		return "agent.lifecycle.reject"
 	case domain.ManualPause:
 		return "agent.lifecycle.pause"
 	case domain.ManualResume:
@@ -166,13 +164,7 @@ func lifecycleAuditAction(event domain.AgentEvent) string {
 
 func lifecycleTrigger(event domain.AgentEvent) any {
 	if approval, ok := event.(domain.AdminApprove); ok {
-		if approval.AdmissionDecisionID != "" {
-			return map[string]string{"event": "admin_approve", "evidenceType": "sandbox_evaluation", "admissionDecisionId": approval.AdmissionDecisionID}
-		}
-		return map[string]string{"event": "admin_approve", "evidenceType": "mvp_manual_review", "reviewReason": approval.ReviewReason}
-	}
-	if rejection, ok := event.(domain.AdminReject); ok {
-		return map[string]string{"event": "admin_reject", "evidenceType": "mvp_manual_review", "reviewReason": rejection.ReviewReason}
+		return map[string]string{"event": "admin_approve", "evidenceType": "sandbox_evaluation", "admissionDecisionId": approval.AdmissionDecisionID}
 	}
 	return map[string]string{"event": lifecycleAuditAction(event)}
 }

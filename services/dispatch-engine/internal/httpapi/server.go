@@ -16,6 +16,7 @@ import (
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/executionproxy"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matching"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/protocol"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/sandboxadmission"
 )
 
 const (
@@ -49,8 +50,11 @@ type Server struct {
 	Dispatcher       Dispatcher
 	AssignmentReader AssignmentReader
 	AgentLifecycle   agentlifecycle.Transitioner
-	Verifier         *protocol.Verifier
-	ExecutionProxy   interface {
+	AdmissionRetry   interface {
+		RetryRound(ctx context.Context, agentID, actorID, idempotencyKey string, now time.Time) (sandboxadmission.RoundClaim, error)
+	}
+	Verifier       *protocol.Verifier
+	ExecutionProxy interface {
 		Forward(ctx context.Context, taskID, workflowNodeID, operation, idempotencyKey string, body []byte) (executionproxy.Response, error)
 	}
 }
@@ -68,6 +72,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/tasks/{id}/execution-retry", s.internal(s.retryFailedExecution))
 	mux.HandleFunc("POST /internal/tasks/{id}/workflow-nodes/{nodeId}/execution-retry", s.internal(s.retryFailedWorkflowNodeExecution))
 	mux.HandleFunc("POST /internal/agents/{id}/transitions", s.internal(s.transitionAgentLifecycle))
+	mux.HandleFunc("POST /internal/agents/{id}/admission/retry", s.internal(s.retryAgentAdmission))
 	mux.HandleFunc("POST /agent-callback/assignments/{id}/ack", s.acknowledgeAssignment)
 	mux.HandleFunc("POST /agent-callback/tasks/{id}/status", s.forwardExecutionStatus)
 	mux.HandleFunc("POST /agent-callback/tasks/{id}/results", s.forwardExecutionResults)
@@ -77,6 +82,45 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	return mux
+}
+
+func (s *Server) retryAgentAdmission(writer http.ResponseWriter, request *http.Request) {
+	if s.AdmissionRetry == nil {
+		writeError(writer, http.StatusServiceUnavailable, "AGENT_ADMISSION_UNAVAILABLE", "Agent 自动验证暂不可用", true)
+		return
+	}
+	actorID := request.Header.Get(headerInternalActor)
+	if actorID == "" || agentlifecycle.ActorType(request.Header.Get(headerInternalActorType)) != agentlifecycle.ActorProvider {
+		writeError(writer, http.StatusForbidden, "AGENT_ADMISSION_FORBIDDEN", "只有 Agent 提供者可以重新验证", false)
+		return
+	}
+	idempotencyKey := request.Header.Get("Idempotency-Key")
+	if len(idempotencyKey) < 8 || len(idempotencyKey) > 200 {
+		writeError(writer, http.StatusBadRequest, "IDEMPOTENCY_KEY_MISSING", "请求缺少合法 Idempotency-Key", false)
+		return
+	}
+	claim, err := s.AdmissionRetry.RetryRound(
+		request.Context(), request.PathValue("id"), actorID, idempotencyKey, time.Now().UTC(),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, sandboxadmission.ErrAgentNotFound):
+			writeError(writer, http.StatusNotFound, "AGENT_NOT_FOUND", "Agent 不存在或无权访问", false)
+		case errors.Is(err, sandboxadmission.ErrAdmissionForbidden):
+			writeError(writer, http.StatusForbidden, "AGENT_ADMISSION_FORBIDDEN", "只有 Agent 提供者可以重新验证", false)
+		case errors.Is(err, sandboxadmission.ErrAdmissionNotRetryable):
+			writeError(writer, http.StatusConflict, "AGENT_ADMISSION_NOT_RETRYABLE", "当前自动验证状态不允许重新开始", false)
+		case errors.Is(err, sandboxadmission.ErrAdmissionRateLimited):
+			writeError(writer, http.StatusTooManyRequests, "AGENT_ADMISSION_RATE_LIMITED", "重新验证至少间隔 10 分钟，每个 Agent 在 24 小时内最多 3 轮。请稍后重试。", false)
+		default:
+			writeError(writer, http.StatusInternalServerError, "AGENT_ADMISSION_RETRY_FAILED", "重新验证请求提交失败", true)
+		}
+		return
+	}
+	writeJSON(writer, http.StatusAccepted, map[string]any{
+		"agentId": claim.AgentID, "roundId": claim.RoundID,
+		"attemptNo": claim.AttemptNo, "status": "queued",
+	})
 }
 
 func (s *Server) retryFailedExecution(writer http.ResponseWriter, request *http.Request) {
@@ -125,16 +169,14 @@ func (s *Server) transitionAgentLifecycle(writer http.ResponseWriter, request *h
 		return
 	}
 	var input struct {
-		Event               string `json:"event"`
-		ReviewReason        string `json:"reviewReason,omitempty"`
-		AdmissionDecisionID string `json:"admissionDecisionId,omitempty"`
+		Event string `json:"event"`
 	}
 	if err := decodeStrictJSON(request, &input); err != nil {
 		writeError(writer, http.StatusUnprocessableEntity, "VALIDATION_FAILED", "Agent 生命周期请求格式不正确", false)
 		return
 	}
 	actorType := agentlifecycle.ActorType(request.Header.Get(headerInternalActorType))
-	event, err := lifecycleEvent(input.Event, input.ReviewReason, input.AdmissionDecisionID, actorType)
+	event, err := lifecycleEvent(input.Event, actorType)
 	if err != nil {
 		writeError(writer, http.StatusForbidden, "AGENT_LIFECYCLE_FORBIDDEN", "当前身份不能执行该生命周期操作", false)
 		return
@@ -150,16 +192,8 @@ func (s *Server) transitionAgentLifecycle(writer http.ResponseWriter, request *h
 	writeJSON(writer, http.StatusOK, snapshot)
 }
 
-func lifecycleEvent(name, reviewReason, admissionDecisionID string, actorType agentlifecycle.ActorType) (domain.AgentEvent, error) {
+func lifecycleEvent(name string, actorType agentlifecycle.ActorType) (domain.AgentEvent, error) {
 	switch name {
-	case "admin_approve":
-		if actorType == agentlifecycle.ActorAdmin && (reviewReason != "" || admissionDecisionID != "") {
-			return domain.AdminApprove{ReviewReason: reviewReason, AdmissionDecisionID: admissionDecisionID}, nil
-		}
-	case "admin_reject":
-		if actorType == agentlifecycle.ActorAdmin && reviewReason != "" {
-			return domain.AdminReject{ReviewReason: reviewReason}, nil
-		}
 	case "manual_pause":
 		if actorType == agentlifecycle.ActorProvider {
 			return domain.ManualPause{}, nil

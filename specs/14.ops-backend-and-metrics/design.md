@@ -6,6 +6,7 @@
 | ---------- | ---- | -------- |
 | 2026-08-20 | v1   | 初始设计 |
 | 2026-08-30 | v2   | 权限模型改为扩展现有 `platform_actor_roles`，避免第二套角色事实源 |
+| 2026-09-04 | v3   | Agent 正常准入改为自动验证，运营后台不再承担人工审核职责 |
 
 ## 项目架构
 
@@ -18,8 +19,8 @@
 
 **涉及层及关键设计:**
 
-- `platform_actor_roles` 是后台角色的唯一事实源；Feature 3/13 已使用其中的
-  `agent_reviewer` 与 `arbitrator`。本 feature 只在已确认的运营角色无法表达时扩展枚举，
+- `platform_actor_roles` 是后台角色的唯一事实源；Feature 13 使用其中的 `arbitrator`。
+  历史迁移中的 `agent_reviewer` 仅为兼容旧审计数据保留，不再有人工准入入口。本 feature 只在已确认的运营角色无法表达时扩展枚举，
   不再创建 `roles`/`user_roles` 平行表。
 - 提供统一的权限校验中间件 `RequirePermission(permissionKey)`，由代码中的静态
   「角色 → 权限点」映射吸收角色判断。迁移已有审核、仲裁入口时先建立特征测试，保持当前

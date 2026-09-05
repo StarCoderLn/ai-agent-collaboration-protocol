@@ -188,6 +188,11 @@ async function main() {
       DISPATCH_PUBLIC_URL: URLS.dispatch,
       DISPATCH_QUEUE_MODE: "local",
       LOCAL_AGENT_SECRET: agentSecret,
+	  // 自动准入在三次技术调用全部通过后仅发起一次批量评测；复用开发者已经配置的
+	  // DeepSeek 密钥，不再要求为审核流程维护第二套本地凭证。
+	  DEEPSEEK_API_KEY: apiKey,
+	  DEEPSEEK_BASE_URL: paperEnv.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+	  AGENT_ADMISSION_EVALUATOR_MODEL: process.env.AGENT_ADMISSION_EVALUATOR_MODEL ?? "deepseek-chat",
     },
   });
   await waitForService(dispatch, "Dispatch Engine", () => probeJson(`${URLS.dispatch}/health`, ServiceStatusSchema));

@@ -71,29 +71,19 @@ func TestManualPauseRequiresManualResume(t *testing.T) {
 	}
 }
 
-func TestPendingReviewCanBeApprovedOrRejectedOnlyWithReviewEvidence(t *testing.T) {
+func TestPendingReviewRequiresAutomaticAdmissionEvidence(t *testing.T) {
 	approved, err := TransitionAgentStatus(
 		AgentState{Status: AgentPendingReview},
-		AdminApprove{ReviewReason: "协议字段、价格与服务端点已人工核对"},
+		AdminApprove{AdmissionDecisionID: "admission-decision-1"},
 	)
 	if err != nil || approved.Status != AgentActive {
-		t.Fatalf("manual MVP approval failed: state=%+v err=%v", approved, err)
-	}
-	rejected, err := TransitionAgentStatus(
-		AgentState{Status: AgentPendingReview},
-		AdminReject{ReviewReason: "服务端点无法通过基础连通性检查"},
-	)
-	if err != nil || rejected.Status != AgentDelisted {
-		t.Fatalf("manual MVP rejection failed: state=%+v err=%v", rejected, err)
+		t.Fatalf("automatic admission approval failed: state=%+v err=%v", approved, err)
 	}
 	if _, err = TransitionAgentStatus(AgentState{Status: AgentPendingReview}, AdminApprove{}); err == nil {
-		t.Fatal("approval without review evidence must be rejected")
+		t.Fatal("没有自动评测证据时不能把 Agent 转为可接单")
 	}
-	if _, err = TransitionAgentStatus(AgentState{Status: AgentPendingReview}, AdminReject{}); err == nil {
-		t.Fatal("rejection without a reason must be rejected")
-	}
-	if _, err = TransitionAgentStatus(AgentState{Status: AgentActive}, AdminReject{ReviewReason: "late rejection"}); err == nil {
-		t.Fatal("review rejection must not bypass the active lifecycle")
+	if _, err = TransitionAgentStatus(AgentState{Status: AgentActive}, AdminApprove{AdmissionDecisionID: "late-decision"}); err == nil {
+		t.Fatal("准入事件不能绕过 active 状态的生命周期约束")
 	}
 }
 

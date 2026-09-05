@@ -5,7 +5,6 @@ import { withCredentialedCors } from "./cors";
 export type AgentDirectoryRouteContext = Readonly<{ params: Promise<{ id: string }> }>;
 export interface AgentDirectoryHttpDeps {
   resolveActorId(request: Request): Promise<string>;
-  isAgentReviewer(actorId: string): Promise<boolean>;
   directory: PgAgentDirectory;
   allowedOrigin: string;
 }
@@ -15,7 +14,6 @@ export function createAgentDirectoryHandlers(deps: AgentDirectoryHttpDeps) {
     publicList: (request: Request) => publicList(deps, request),
     publicDetail: (context: AgentDirectoryRouteContext) => publicDetail(deps, context),
     owned: (request: Request) => owned(deps, request),
-    reviewQueue: (request: Request) => reviewQueue(deps, request),
   };
 }
 
@@ -54,17 +52,6 @@ async function owned(deps: AgentDirectoryHttpDeps, request: Request): Promise<Re
   catch { return response(deps, 503, errorBody("AGENT_DIRECTORY_UNAVAILABLE", "Agent 管理列表暂不可用", true)); }
 }
 
-async function reviewQueue(deps: AgentDirectoryHttpDeps, request: Request): Promise<Response> {
-  const actor = await requiredActor(deps, request);
-  if (actor instanceof Response) return actor;
-  try {
-    if (!await deps.isAgentReviewer(actor)) return response(deps, 403, errorBody("AGENT_REVIEW_FORBIDDEN", "当前钱包没有 Agent 审核权限", false));
-    const rawStatus = new URL(request.url).searchParams.get("status") ?? "pending_review";
-    if (!isReviewStatus(rawStatus)) return response(deps, 422, errorBody("VALIDATION_FAILED", "审核状态筛选无效", false));
-    return response(deps, 200, { agents: await deps.directory.reviewQueue(rawStatus) });
-  } catch { return response(deps, 503, errorBody("AGENT_REVIEW_UNAVAILABLE", "Agent 审核列表暂不可用", true)); }
-}
-
 async function requiredActor(deps: AgentDirectoryHttpDeps, request: Request): Promise<string | Response> {
   try { return await deps.resolveActorId(request); }
   catch (error) {
@@ -85,6 +72,3 @@ function boundedInteger(raw: string | null, fallback: number, minimum: number, m
   return value < minimum || value > maximum ? null : value;
 }
 function isUuid(value: string): boolean { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
-function isReviewStatus(value: string): value is "pending_review" | "active" | "paused" | "delisted" {
-  return value === "pending_review" || value === "active" || value === "paused" || value === "delisted";
-}

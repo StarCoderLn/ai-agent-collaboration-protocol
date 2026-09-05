@@ -13,15 +13,14 @@ import (
 )
 
 const (
-	lifecycleAgentID         = "83100000-0000-4000-8000-000000000001"
-	lifecycleTaskID          = "83100000-0000-4000-8000-000000000002"
-	lifecycleDistributionID  = "83100000-0000-4000-8000-000000000003"
-	lifecycleAssignmentID    = "83100000-0000-4000-8000-000000000004"
-	lifecycleRejectedAgentID = "83100000-0000-4000-8000-000000000005"
-	lifecycleOwner           = "0x8310000000000000000000000000000000000001"
+	lifecycleAgentID        = "83100000-0000-4000-8000-000000000001"
+	lifecycleTaskID         = "83100000-0000-4000-8000-000000000002"
+	lifecycleDistributionID = "83100000-0000-4000-8000-000000000003"
+	lifecycleAssignmentID   = "83100000-0000-4000-8000-000000000004"
+	lifecycleOwner          = "0x8310000000000000000000000000000000000001"
 )
 
-func TestAgentLifecycleRepositoryPostgresPersistsAdminReviewEvidence(t *testing.T) {
+func TestAgentLifecycleRepositoryPostgresPersistsAutomaticAdmissionEvidence(t *testing.T) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("DATABASE_URL is not configured")
@@ -34,53 +33,37 @@ func TestAgentLifecycleRepositoryPostgresPersistsAdminReviewEvidence(t *testing.
 	t.Cleanup(pool.Close)
 	cleanupLifecycleFixture(t, ctx, pool)
 	t.Cleanup(func() { cleanupLifecycleFixture(t, ctx, pool) })
-	for _, agent := range []struct{ id, name string }{
-		{lifecycleAgentID, "待通过 Agent"},
-		{lifecycleRejectedAgentID, "待驳回 Agent"},
-	} {
-		_, err = pool.Exec(ctx, `
+	_, err = pool.Exec(ctx, `
 			INSERT INTO agents(
-			 id,provider_wallet_address,name,category_id,capability_desc,tags,pricing_type,price_amount,
+			 id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,pricing_type,price_amount,
 			 price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
-			) VALUES ($1,'0x8310000000000000000000000000000000000001',$2,
-			 '40000000-0000-4000-8000-000000000001','审核测试',ARRAY['agent'],'fixed',1000000,
-			 'USDC','http://127.0.0.1:9999/v1/tasks','review@example.com','pending_review',60,1)`, agent.id, agent.name)
-		if err != nil {
-			t.Fatal(err)
-		}
+			) VALUES ($1,'0x8310000000000000000000000000000000000001','0x8310000000000000000000000000000000000001','自动准入 Agent',
+			 '40000000-0000-4000-8000-000000000001','自动准入测试',ARRAY['agent'],'fixed',1000000,
+			 'USDC','http://127.0.0.1:9999/v1/tasks','admission@example.com','pending_review',60,1)`, lifecycleAgentID)
+	if err != nil {
+		t.Fatal(err)
 	}
 	repository := &AgentLifecycleRepository{Pool: pool}
-	reviewer := "0x9999999999999999999999999999999999999999"
 	now := time.Date(2090, 2, 1, 0, 0, 0, 0, time.UTC)
 	approved, err := repository.Transition(ctx, agentlifecycle.Command{
-		AgentID: lifecycleAgentID, ActorID: reviewer, ActorType: agentlifecycle.ActorAdmin,
-		Event:          domain.AdminApprove{ReviewReason: "资料和服务端点均已核验"},
-		IdempotencyKey: "agent-lifecycle:review-approve:0001", Now: now,
+		AgentID: lifecycleAgentID, ActorID: "system:auto-admission", ActorType: agentlifecycle.ActorAdmin,
+		Event:          domain.AdminApprove{AdmissionDecisionID: "15000000-0000-4000-8000-000000000099"},
+		IdempotencyKey: "agent-lifecycle:auto-admission:0001", Now: now,
 	})
 	if err != nil || approved.Status != domain.AgentActive {
 		t.Fatalf("approve: snapshot=%+v err=%v", approved, err)
 	}
-	rejected, err := repository.Transition(ctx, agentlifecycle.Command{
-		AgentID: lifecycleRejectedAgentID, ActorID: reviewer, ActorType: agentlifecycle.ActorAdmin,
-		Event:          domain.AdminReject{ReviewReason: "服务端点无法完成基础检查"},
-		IdempotencyKey: "agent-lifecycle:review-reject:0001", Now: now.Add(time.Second),
-	})
-	if err != nil || rejected.Status != domain.AgentDelisted {
-		t.Fatalf("reject: snapshot=%+v err=%v", rejected, err)
-	}
 
-	var approvedReason, rejectedReason, approvedActor, rejectedActor string
+	var decisionID, evidenceType, approvedActor string
 	err = pool.QueryRow(ctx, `
 		SELECT
-		 (SELECT after_summary->'trigger'->>'reviewReason' FROM audit_logs WHERE target_id=$1 AND action='agent.lifecycle.approve'),
-		 (SELECT after_summary->'trigger'->>'reviewReason' FROM audit_logs WHERE target_id=$2 AND action='agent.lifecycle.reject'),
-		 (SELECT actor_id FROM audit_logs WHERE target_id=$1 AND action='agent.lifecycle.approve'),
-		 (SELECT actor_id FROM audit_logs WHERE target_id=$2 AND action='agent.lifecycle.reject')`,
-		lifecycleAgentID, lifecycleRejectedAgentID,
-	).Scan(&approvedReason, &rejectedReason, &approvedActor, &rejectedActor)
-	if err != nil || approvedReason != "资料和服务端点均已核验" || rejectedReason != "服务端点无法完成基础检查" ||
-		approvedActor != reviewer || rejectedActor != reviewer {
-		t.Fatalf("review audit evidence mismatch: approve=%q reject=%q actors=%q/%q err=%v", approvedReason, rejectedReason, approvedActor, rejectedActor, err)
+		 after_summary->'trigger'->>'admissionDecisionId',
+		 after_summary->'trigger'->>'evidenceType',actor_id
+		 FROM audit_logs WHERE target_id=$1 AND action='agent.lifecycle.approve'`, lifecycleAgentID,
+	).Scan(&decisionID, &evidenceType, &approvedActor)
+	if err != nil || decisionID != "15000000-0000-4000-8000-000000000099" ||
+		evidenceType != "sandbox_evaluation" || approvedActor != "system:auto-admission" {
+		t.Fatalf("automatic admission audit evidence mismatch: decision=%q type=%q actor=%q err=%v", decisionID, evidenceType, approvedActor, err)
 	}
 }
 
@@ -188,9 +171,9 @@ func seedLifecycleFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool)
 	statements := []string{
 		`DELETE FROM idempotency_records WHERE operation_type LIKE '%83100000-0000-4000-8000-000000000001%'`,
 		`INSERT INTO agents(
-		 id,provider_wallet_address,name,category_id,capability_desc,tags,pricing_type,price_amount,
+		 id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,pricing_type,price_amount,
 		 price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
-		) VALUES ('83100000-0000-4000-8000-000000000001','0x8310000000000000000000000000000000000001',
+		) VALUES ('83100000-0000-4000-8000-000000000001','0x8310000000000000000000000000000000000001','0x8310000000000000000000000000000000000001',
 		 '生命周期集成 Agent','40000000-0000-4000-8000-000000000001','生命周期测试',ARRAY['agent'],
 		 'fixed',1000000,'USDC','http://127.0.0.1:9999/v1/tasks','lifecycle@example.com','active',60,1)`,
 		`INSERT INTO tasks(

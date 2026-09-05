@@ -202,6 +202,11 @@ describe("AgentRegistrationForm", () => {
 			"placeholder",
 			"输入自定义标签，按回车添加",
 		);
+		expect(
+			screen.getByText(
+				"输入你熟悉的能力名称即可，平台会统一识别常见同义表达，无需与任务文案完全一致",
+			),
+		).toBeInTheDocument();
 		expect(screen.getByLabelText("收款钱包")).toHaveValue(CONNECTED_WALLET);
 		expect(screen.getByLabelText("单次服务报价（USDC）")).toHaveValue("");
 		expect(screen.getByLabelText("单次服务报价（USDC）")).toHaveAttribute(
@@ -223,7 +228,7 @@ describe("AgentRegistrationForm", () => {
 		expect(screen.queryByText("AICP v1")).not.toBeInTheDocument();
 		expect(
 			screen.getByText(
-				"连接测试通过后即可提交；平台上架后会持续记录服务运行状态。",
+				"上架后将自动执行 3 项测试。平台不收取验证费；测试可能消耗你的模型 API 额度或计算资源，相关费用按你的服务配置产生。",
 			),
 		).toBeInTheDocument();
 		expect(
@@ -322,7 +327,7 @@ describe("AgentRegistrationForm", () => {
 		).toBeInTheDocument();
 	});
 
-	it("提交成功后清空凭证并链接到正式编辑页", async () => {
+	it("提交成功后清空凭证并链接到自动验证进度", async () => {
 		mockTaxonomyResponses();
 		vi.mocked(fetch).mockResolvedValueOnce(connectionSuccessResponse());
 		vi.mocked(fetch).mockResolvedValueOnce(
@@ -342,7 +347,7 @@ describe("AgentRegistrationForm", () => {
 
 		await waitFor(() =>
 			expect(screen.getByRole("status")).toHaveTextContent(
-				"提交成功，等待平台验证",
+				"提交成功，自动验证已经开始",
 			),
 		);
 		expect(fetch).toHaveBeenLastCalledWith(
@@ -370,9 +375,9 @@ describe("AgentRegistrationForm", () => {
 		// 无案例是正常的首次上架路径，请求不发送空数组，也不会让服务端误判为缺失资料。
 		expect(requestBody).not.toHaveProperty("portfolioCases");
 		expect(screen.queryByText("公开案例")).not.toBeInTheDocument();
-		expect(screen.getByRole("link", { name: "继续配置" })).toHaveAttribute(
+		expect(screen.getByRole("link", { name: "查看验证进度" })).toHaveAttribute(
 			"href",
-			"/agents/agent-123/edit",
+			"/workspace/agents",
 		);
 		expect(screen.getByLabelText("访问密钥")).toHaveValue("");
 	});
@@ -459,7 +464,7 @@ describe("AgentRegistrationForm", () => {
 		fireEvent.click(screen.getByRole("button", { name: "提交上架" }));
 
 		await waitFor(() =>
-			expect(screen.getByText("继续配置")).toBeInTheDocument(),
+			expect(screen.getByText("查看验证进度")).toBeInTheDocument(),
 		);
 		const registrationBody = JSON.parse(
 			String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body),

@@ -26,6 +26,19 @@ const ownerHealthSchema = publicHealthSchema.extend({
 	intervalSeconds: z.number().int().positive(),
 });
 
+const admissionSchema = z
+	.object({
+		status: z.enum(["queued", "running", "passed", "failed"]),
+		attemptNo: z.number().int().positive(),
+		completedRuns: z.number().int().min(0).max(3),
+		score: z.number().int().min(0).max(100).nullable(),
+		summary: z.string().nullable(),
+		failureCode: z.string().nullable(),
+		startedAt: z.iso.datetime().nullable(),
+		completedAt: z.iso.datetime().nullable(),
+	})
+	.nullable();
+
 const pricingSchema = z.object({
 	type: z.string().min(1),
 	// 金额始终以最小单位的十进制字符串传输，避免超过 Number.MAX_SAFE_INTEGER 后失真。
@@ -63,7 +76,14 @@ const managedAgentSchema = publicAgentSchema
 		providerWalletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
 		serviceEndpoint: z.url(),
 		pauseReason: pauseReasonSchema,
+		// 提供者控制台需要解释冷启动进度，但阈值由服务端配置下发，浏览器不能复制
+		// “3 个任务”这类资金风控常量，否则运营调整后页面会展示过期规则。
+		coldStart: z.object({
+			riskLimited: z.boolean(),
+			completedTaskThreshold: z.number().int().positive(),
+		}),
 		health: ownerHealthSchema,
+		admission: admissionSchema,
 	});
 
 const publicListSchema = z.object({
@@ -79,6 +99,12 @@ const lifecycleSnapshotSchema = z.object({
 	status: statusSchema,
 	pauseReason: pauseReasonSchema,
 	updatedAt: z.iso.datetime(),
+});
+const admissionRetrySchema = z.object({
+	agentId: uuidSchema,
+	roundId: uuidSchema,
+	attemptNo: z.number().int().positive(),
+	status: z.literal("queued"),
 });
 
 const scoreDimensionSchema = z.object({
@@ -143,6 +169,7 @@ export type PublicDirectoryAgent = z.infer<typeof publicAgentSchema>;
 export type ManagedDirectoryAgent = z.infer<typeof managedAgentSchema>;
 export type AgentLifecycleSnapshot = z.infer<typeof lifecycleSnapshotSchema>;
 export type AgentScoreDetails = z.infer<typeof agentScoreSchema>;
+export type AgentAdmissionRetry = z.infer<typeof admissionRetrySchema>;
 export type AgentDirectoryErrorBody = z.infer<typeof errorSchema>;
 export type PublicAgentDirectoryPage = z.infer<typeof publicListSchema>;
 
@@ -206,20 +233,6 @@ export async function listOwnedAgents(
 	return parseSuccess(response, managedListSchema).then((body) => body.agents);
 }
 
-export async function listReviewAgents(
-	status: ManagedDirectoryAgent["status"] = "pending_review",
-	signal?: AbortSignal,
-): Promise<readonly ManagedDirectoryAgent[]> {
-	const response = await request(
-		`/admin/agents?status=${encodeURIComponent(status)}`,
-		{
-			credentials: "include",
-			signal,
-		},
-	);
-	return parseSuccess(response, managedListSchema).then((body) => body.agents);
-}
-
 export async function transitionOwnedAgent(
 	agentId: string,
 	action: "pause" | "resume" | "delist",
@@ -231,21 +244,26 @@ export async function transitionOwnedAgent(
 	);
 }
 
-export async function reviewAgent(
+/** 失败重测只创建新轮次；页面随后轮询我的 Agent 列表读取真实执行进度。 */
+export async function retryAgentAdmission(
 	agentId: string,
-	decision: "approve" | "reject",
-	reviewReason: string,
 	idempotencyKey: string,
-): Promise<AgentLifecycleSnapshot> {
-	const reason = reviewReason.trim();
-	if (reason.length < 4 || reason.length > 1_000) {
-		throw new Error("审核理由需为 4–1000 个字符");
+): Promise<AgentAdmissionRetry> {
+	if (idempotencyKey.length < 8 || idempotencyKey.length > 200) {
+		throw new Error("Idempotency-Key 长度必须为 8–200 个字符");
 	}
-	return transition(
-		`/admin/agents/${encodeURIComponent(parseAgentId(agentId))}/${decision}`,
-		idempotencyKey,
-		{ reviewReason: reason },
+	const response = await request(
+		`/agents/${encodeURIComponent(parseAgentId(agentId))}/admission/retry`,
+		{
+			method: "POST",
+			credentials: "include",
+			headers: {
+				accept: "application/json",
+				"idempotency-key": idempotencyKey,
+			},
+		},
 	);
+	return parseSuccess(response, admissionRetrySchema);
 }
 
 async function transition(

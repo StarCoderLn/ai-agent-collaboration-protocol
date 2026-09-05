@@ -1,6 +1,6 @@
 import type { QueryExecutor } from "../db/pool";
 
-export type AgentDirectoryAudience = "public" | "owner" | "reviewer";
+export type AgentDirectoryAudience = "public" | "owner";
 
 type DirectoryRow = {
   id: string; provider_wallet_address: string; payout_wallet_address: string; name: string; category_id: string; category_name: string | null;
@@ -8,8 +8,13 @@ type DirectoryRow = {
   service_endpoint: string; status: "pending_review" | "active" | "paused" | "delisted";
   pause_reason: "health_check" | "manual" | null; created_at: Date; updated_at: Date;
   score: string | null; sample_size: number; dispute_rate: string | null; completed_count: string;
-  final_count: string; prior_weight: number; latest_health_code: string | null; latest_health_at: Date | null;
+  final_count: string; probation_completed_task_threshold: number;
+  latest_health_code: string | null; latest_health_at: Date | null;
   consecutive_failure_count: number; consecutive_success_count: number; health_check_interval_seconds: number;
+  admission_status: "queued" | "running" | "passed" | "failed" | null;
+  admission_attempt_no: number | null; admission_completed_runs: number; admission_score: number | null;
+  admission_summary: string | null; admission_failure_code: string | null;
+  admission_started_at: Date | null; admission_completed_at: Date | null;
   total_count: string;
 };
 
@@ -34,11 +39,16 @@ const DIRECTORY_SELECT = `
          score.dispute_rate::text,
          COALESCE(history.completed_count,0)::text AS completed_count,
          COALESCE(history.final_count,0)::text AS final_count,
-         COALESCE((rule.bayesian_prior->>'priorWeight')::int,20) AS prior_weight,
+         COALESCE(config.probation_completed_task_threshold,3)::int AS probation_completed_task_threshold,
          health.result_code AS latest_health_code,health.checked_at AS latest_health_at,
          COALESCE(config.consecutive_failure_count,0)::int AS consecutive_failure_count,
          COALESCE(config.consecutive_success_count,0)::int AS consecutive_success_count,
          COALESCE(config.health_check_interval_seconds,300)::int AS health_check_interval_seconds,
+         admission.status AS admission_status,admission.attempt_no AS admission_attempt_no,
+         COALESCE(admission.completed_runs,0)::int AS admission_completed_runs,
+         admission.final_score::int AS admission_score,admission.summary AS admission_summary,
+         admission.failure_code AS admission_failure_code,
+         admission.started_at AS admission_started_at,admission.completed_at AS admission_completed_at,
          count(*) OVER()::text AS total_count
     FROM agents agent
     LEFT JOIN categories category ON category.id=agent.category_id
@@ -54,12 +64,20 @@ const DIRECTORY_SELECT = `
        WHERE assignment.agent_id=agent.id AND assignment.status='accepted'
     ) history ON TRUE
     LEFT JOIN LATERAL (
-      SELECT bayesian_prior FROM scoring_rule_versions WHERE active=TRUE ORDER BY created_at DESC LIMIT 1
-    ) rule ON TRUE
-    LEFT JOIN LATERAL (
       SELECT result_code,checked_at FROM agent_health_checks
        WHERE agent_id=agent.id ORDER BY checked_at DESC,id DESC LIMIT 1
     ) health ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT round.status,round.attempt_no,round.final_score,round.summary,round.failure_code,
+		     round.started_at,round.completed_at,
+             (SELECT count(*) FROM sandbox_test_runs run
+               WHERE run.agent_id=agent.id AND run.round_id=round.id
+                 AND run.status IN ('completed','failed')) AS completed_runs
+        FROM sandbox_admission_rounds round
+       WHERE round.agent_id=agent.id
+       ORDER BY round.attempt_no DESC
+       LIMIT 1
+    ) admission ON TRUE
     LEFT JOIN agent_status_config config ON config.agent_id=agent.id`;
 
 /**
@@ -101,14 +119,6 @@ export class PgAgentDirectory {
     );
     return result.rows.map((row) => project(row, "owner"));
   }
-
-  async reviewQueue(status: "pending_review" | "active" | "paused" | "delisted"): Promise<readonly Record<string, unknown>[]> {
-    const result = await this.db.query<DirectoryRow>(
-      `${DIRECTORY_SELECT} WHERE agent.status=$1 ORDER BY agent.created_at,agent.id LIMIT 100`,
-      [status],
-    );
-    return result.rows.map((row) => project(row, "reviewer"));
-  }
 }
 
 function project(row: DirectoryRow, audience: AgentDirectoryAudience): Record<string, unknown> {
@@ -129,7 +139,9 @@ function project(row: DirectoryRow, audience: AgentDirectoryAudience): Record<st
     sampleSize: row.sample_size,
     disputeRate: row.dispute_rate === null ? null : Number.parseFloat(row.dispute_rate),
     completedCount: completed, successRate: finalCount === 0 ? null : completed / finalCount,
-    isNew: row.sample_size < row.prior_weight,
+    // “新 Agent”是面向用户的履历事实：只有完成、验收并结算过真实任务才会消失。
+    // 沙箱准入、仅接单、执行失败和评分样本都不能冒充一次成功交付。
+    isNew: completed === 0,
     createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
   };
   if (audience === "public") {
@@ -142,12 +154,50 @@ function project(row: DirectoryRow, audience: AgentDirectoryAudience): Record<st
     payoutWalletAddress: row.payout_wallet_address,
     serviceEndpoint: row.service_endpoint,
     pauseReason: row.pause_reason,
+    coldStart: {
+      // 冷启动报价限制与“新 Agent”标识使用不同边界：首次成功后移除标识，累计
+      // 达到配置阈值后才解除资金风险限制。阈值随响应下发，前端无需复制业务常量。
+      riskLimited: completed < row.probation_completed_task_threshold,
+      completedTaskThreshold: row.probation_completed_task_threshold,
+    },
     health: {
       ...publicHealth(row),
       consecutiveFailureCount: row.consecutive_failure_count,
       consecutiveSuccessCount: row.consecutive_success_count,
       intervalSeconds: row.health_check_interval_seconds,
     },
+    admission: ownerAdmission(row),
+  };
+}
+
+/**
+ * pending_review Agent 在 Worker 尚未完成首次扫描时也显示“排队中”，避免注册成功后的
+ * 短暂空窗被页面误解为没有启动验证；历史 active Agent 没有准入轮次时保持 null。
+ */
+function ownerAdmission(row: DirectoryRow) {
+  if (row.admission_status === null) {
+    return row.status === "pending_review"
+      ? {
+          status: "queued" as const,
+          attemptNo: 1,
+          completedRuns: 0,
+          score: null,
+          summary: null,
+          failureCode: null,
+          startedAt: null,
+          completedAt: null,
+        }
+      : null;
+  }
+  return {
+    status: row.admission_status,
+    attemptNo: row.admission_attempt_no ?? 1,
+    completedRuns: row.admission_completed_runs,
+    score: row.admission_score,
+    summary: row.admission_summary,
+    failureCode: row.admission_failure_code,
+    startedAt: row.admission_started_at?.toISOString() ?? null,
+    completedAt: row.admission_completed_at?.toISOString() ?? null,
   };
 }
 

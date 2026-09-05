@@ -7,7 +7,7 @@ import {
 	getPublicAgent,
 	listOwnedAgents,
 	listPublicAgents,
-	reviewAgent,
+	retryAgentAdmission,
 	transitionOwnedAgent,
 } from "./agent-directory";
 
@@ -207,6 +207,8 @@ describe("Agent directory API client", () => {
 						payoutWalletAddress: "0x2222222222222222222222222222222222222222",
 						serviceEndpoint: "https://agent.example.com/run",
 						pauseReason: null,
+						coldStart: { riskLimited: false, completedTaskThreshold: 3 },
+						admission: null,
 						health: {
 							...publicAgent.health,
 							consecutiveFailureCount: 0,
@@ -224,43 +226,26 @@ describe("Agent directory API client", () => {
 		expect(agent).not.toHaveProperty("email");
 	});
 
-	it("submits a simple, auditable approve or reject decision without asking for a fake sandbox UUID", async () => {
-		vi.mocked(fetch).mockImplementation(async () =>
+	it("starts a provider-owned automatic verification retry without exposing manual review", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
 			Response.json({
 				agentId,
-				status: "active",
-				pauseReason: null,
-				updatedAt: "2026-08-23T02:00:00.000Z",
+				roundId: "83100000-0000-4000-8000-000000000099",
+				attemptNo: 2,
+				status: "queued",
 			}),
 		);
 
-		await reviewAgent(
-			agentId,
-			"approve",
-			"  基础资料和服务端点已经核验  ",
-			"review-agent-approve-1",
-		);
-		await reviewAgent(
-			agentId,
-			"reject",
-			"服务端点无法访问",
-			"review-agent-reject-1",
-		);
+		await retryAgentAdmission(agentId, "retry-admission-1");
 
-		expect(fetch).toHaveBeenNthCalledWith(
-			1,
-			`https://business-api.test/api/admin/agents/${agentId}/approve`,
+		expect(fetch).toHaveBeenCalledWith(
+			`https://business-api.test/api/agents/${agentId}/admission/retry`,
 			expect.objectContaining({
 				method: "POST",
 				credentials: "include",
-				body: JSON.stringify({ reviewReason: "基础资料和服务端点已经核验" }),
-			}),
-		);
-		expect(fetch).toHaveBeenNthCalledWith(
-			2,
-			`https://business-api.test/api/admin/agents/${agentId}/reject`,
-			expect.objectContaining({
-				body: JSON.stringify({ reviewReason: "服务端点无法访问" }),
+				headers: expect.objectContaining({
+					"idempotency-key": "retry-admission-1",
+				}),
 			}),
 		);
 	});

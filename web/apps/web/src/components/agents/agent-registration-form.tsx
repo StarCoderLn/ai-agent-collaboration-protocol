@@ -872,15 +872,34 @@ function AgentSubmitCard({
 					/>
 				)}
 			</dl>
-			{/* 右栏只提醒提交后的关键动作；凭证与计费细节已在对应字段旁说明，
-			    避免用户在提交前重复阅读大段提示。 */}
+			{/* 费用告知必须出现在触发真实测试前。平台不收验证费不等于提供者的模型免费，
+			    因此明确区分 API 额度与钱包扣款，测试范围通过原生折叠区按需展开。 */}
 			<div className="mt-5 flex items-start gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2.5 text-muted-foreground text-xs leading-5">
 				<CheckCircle2
 					className="mt-0.5 size-4 shrink-0 text-primary"
 					aria-hidden
 				/>
-				<p>{t("连接测试通过后即可提交；平台上架后会持续记录服务运行状态。")}</p>
+				<p>
+					{t(
+						"上架后将自动执行 3 项测试。平台不收取验证费；测试可能消耗你的模型 API 额度或计算资源，相关费用按你的服务配置产生。",
+					)}
+				</p>
 			</div>
+			<details className="mt-3 text-muted-foreground text-xs leading-5">
+				<summary className="cursor-pointer hover:text-foreground">
+					{t("查看测试范围与限制")}
+				</summary>
+				<p className="mt-2">
+					{t(
+						"每轮 3 项小型测试，单项最多等待 3 分钟；优先短文、单张图片或短片示例。三项测试不等于三次模型调用，请在你的服务端设置资源与费用上限。",
+					)}
+				</p>
+				<p className="mt-2">
+					{t(
+						"重新验证至少间隔 10 分钟，每个 Agent 在 24 小时内最多 3 轮；不扣钱包资金，也不支付测试报酬。",
+					)}
+				</p>
+			</details>
 			<Button
 				form={AGENT_REGISTRATION_FORM_ID}
 				type={walletConnected ? "submit" : "button"}
@@ -911,12 +930,9 @@ function AgentSubmitCard({
 				>
 					<CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
 					<span>
-						{t("提交成功，等待平台验证，")}
-						<Link
-							className="font-medium underline"
-							href={`/agents/${state.agentId}/edit`}
-						>
-							{t("继续配置")}
+						{t("提交成功，自动验证已经开始，")}
+						<Link className="font-medium underline" href="/workspace/agents">
+							{t("查看验证进度")}
 						</Link>
 					</span>
 				</p>

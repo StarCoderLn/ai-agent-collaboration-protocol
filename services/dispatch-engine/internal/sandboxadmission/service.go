@@ -8,6 +8,7 @@ import (
 	"errors"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -33,6 +34,9 @@ type RoundPlan struct {
 	AgentID             string
 	RoundID             string
 	TemplateID          string
+	AgentName           string
+	Capability          string
+	Tags                []string
 	Endpoint            string
 	IntegrationMode     string
 	EncryptedCredential string
@@ -115,6 +119,9 @@ type Caller interface {
 type Result struct {
 	AgentID      string
 	RoundID      string
+	AgentName    string
+	Capability   string
+	TestInputs   []json.RawMessage
 	Runs         []Run
 	CallsStarted int
 }
@@ -172,10 +179,15 @@ func (s *Service) RunSandboxTest(ctx context.Context, command Command) (Result, 
 			}
 		}
 		callsStarted++
+		testInput, inputErr := testInputForRun(plan, runNo)
+		if inputErr != nil {
+			_ = s.Repository.ReleaseRun(ctx, claim)
+			return Result{}, inputErr
+		}
 		outcome, callErr := s.Caller.Call(ctx, CallRequest{
 			AgentID: command.AgentID, RoundID: command.RoundID, RunNo: runNo,
 			Endpoint: plan.Endpoint, IntegrationMode: plan.IntegrationMode,
-			Secret: secret, Body: append([]byte(nil), plan.TestInput...),
+			Secret: secret, Body: testInput,
 			IdempotencyKey: sandboxIdempotencyKey(command.RoundID, runNo),
 		})
 		if callErr != nil {
@@ -200,7 +212,66 @@ func (s *Service) RunSandboxTest(ctx context.Context, command Command) (Result, 
 	if len(runs) != RunsPerRound {
 		return Result{}, ErrRoundInconsistent
 	}
-	return Result{AgentID: command.AgentID, RoundID: command.RoundID, Runs: runs, CallsStarted: callsStarted}, nil
+	testInputs := make([]json.RawMessage, 0, RunsPerRound)
+	for runNo := 1; runNo <= RunsPerRound; runNo++ {
+		testInput, inputErr := testInputForRun(plan, runNo)
+		if inputErr != nil {
+			return Result{}, inputErr
+		}
+		testInputs = append(testInputs, testInput)
+	}
+	return Result{
+		AgentID: command.AgentID, RoundID: command.RoundID,
+		AgentName: plan.AgentName, Capability: plan.Capability, TestInputs: testInputs,
+		Runs: runs, CallsStarted: callsStarted,
+	}, nil
+}
+
+/**
+ * testInputForRun 从轮次开始时冻结的模板中选择对应测试题，并补入 Agent 自述能力。
+ * v1 模板只有单个对象，仍按原样兼容；v2 及以后使用恰好三个 cases，防止所谓“三次
+ * 测试”实际只是重复同一道题。动态补充字段只使用公开档案，不会把凭证写入任务正文。
+ */
+func testInputForRun(plan RoundPlan, runNo int) ([]byte, error) {
+	if runNo < 1 || runNo > RunsPerRound {
+		return nil, ErrRoundInconsistent
+	}
+	var template struct {
+		Cases []map[string]any `json:"cases"`
+	}
+	if err := json.Unmarshal(plan.TestInput, &template); err != nil {
+		return nil, errors.New("sandbox test template is invalid")
+	}
+	if len(template.Cases) == 0 {
+		// 已经发起的 v1 轮次必须继续使用被冻结的原模板，不能因部署新代码而改变输入。
+		return append([]byte(nil), plan.TestInput...), nil
+	}
+	if len(template.Cases) != RunsPerRound {
+		return nil, ErrRoundInconsistent
+	}
+	testCase := template.Cases[runNo-1]
+	// 通用题目的原始标题只描述验证维度（例如“约束遵循测试”），直接交给内容生成
+	// Agent 容易被误当成最终作品主题。把公开 Agent 名称写入任务标题后，论文、图片、
+	// PPT 与 Coding Agent 都能明确“用自己的能力完成这个维度”，无需为每种类型复制题库。
+	if title, ok := testCase["title"].(string); ok {
+		title = strings.TrimSpace(title)
+		agentName := strings.TrimSpace(plan.AgentName)
+		if title != "" && agentName != "" {
+			testCase["title"] = agentName + " · " + title
+		}
+	}
+	testCase["id"] = "sandbox:" + plan.RoundID + ":" + strconv.Itoa(runNo)
+	testCase["requiredCapability"] = plan.Capability
+	testCase["tags"] = append([]string(nil), plan.Tags...)
+	testCase["agentProfile"] = map[string]any{
+		"name":               plan.AgentName,
+		"declaredCapability": plan.Capability,
+	}
+	encoded, err := json.Marshal(testCase)
+	if err != nil {
+		return nil, errors.New("sandbox test input cannot be encoded")
+	}
+	return encoded, nil
 }
 
 func sandboxIdempotencyKey(roundID string, runNo int) string {

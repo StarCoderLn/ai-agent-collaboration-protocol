@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,9 +32,9 @@ func TestSandboxAdmissionRepositoryPostgresRoundIsolationAndLeaseRecovery(t *tes
 	t.Cleanup(func() { cleanupSandboxFixture(t, ctx, pool) })
 	_, err = pool.Exec(ctx, `
 		INSERT INTO agents(
-		 id,provider_wallet_address,name,category_id,capability_desc,tags,pricing_type,price_amount,
+		 id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,pricing_type,price_amount,
 		 price_currency,service_endpoint,email,status
-		) VALUES ($1,'0x1111111111111111111111111111111111111111','Sandbox fixture Agent',
+		) VALUES ($1,'0x1111111111111111111111111111111111111111','0x1111111111111111111111111111111111111111','Sandbox fixture Agent',
 		 '40000000-0000-4000-8000-000000000001','sandbox protocol',ARRAY['agent'],'fixed',1000000,
 		 'USDC','https://agent.example/v1/run','sandbox-fixture@example.com','pending_review')`, sandboxAgentID)
 	if err != nil {
@@ -47,8 +48,16 @@ func TestSandboxAdmissionRepositoryPostgresRoundIsolationAndLeaseRecovery(t *tes
 	repository := &SandboxAdmissionRepository{Pool: pool}
 	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
 	plan, err := repository.PrepareRound(ctx, sandboxAgentID, sandboxRoundID, now)
-	if err != nil || plan.TemplateID != "15000000-0000-4000-8000-000000000001" || len(plan.TestInput) == 0 {
-		t.Fatalf("generic template was not frozen into round: plan=%+v err=%v", plan, err)
+	if err != nil || plan.TemplateID != "15000000-0000-4000-8000-000000000003" || !strings.Contains(string(plan.TestInput), "测试范围") {
+		t.Fatalf("新轮次必须冻结带资源限制的 v3 模板：template=%s err=%v", plan.TemplateID, err)
+	}
+	// 已有轮次仍按旧模板恢复，不能因发布新成本策略而改变同一幂等键对应的测试输入。
+	if _, err = pool.Exec(ctx, `UPDATE sandbox_test_runs SET template_id='15000000-0000-4000-8000-000000000002' WHERE agent_id=$1 AND round_id=$2`, sandboxAgentID, sandboxRoundID); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := repository.PrepareRound(ctx, sandboxAgentID, sandboxRoundID, now)
+	if err != nil || legacy.TemplateID != "15000000-0000-4000-8000-000000000002" || strings.Contains(string(legacy.TestInput), "测试范围") {
+		t.Fatalf("历史轮次不得静默更换模板：template=%s err=%v", legacy.TemplateID, err)
 	}
 	runs, err := repository.ListRound(ctx, sandboxAgentID, sandboxRoundID)
 	if err != nil || len(runs) != sandboxadmission.RunsPerRound {

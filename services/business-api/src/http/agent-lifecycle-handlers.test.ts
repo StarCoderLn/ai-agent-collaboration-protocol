@@ -32,39 +32,8 @@ describe("Agent lifecycle HTTP boundary", () => {
     const response = await handlers.pause(request("/api/agents/x/pause", "pause:agent:client-2"), context(AGENT_ID));
     expect(response.status).toBe(200);
     expect(transitionAgent).toHaveBeenCalledWith(
-      AGENT_ID, ACTOR, "provider", "manual_pause", "pause:agent:client-2",
+	  AGENT_ID, ACTOR, "manual_pause", "pause:agent:client-2",
     );
-  });
-
-  it("requires the reviewer role and a concrete reason for an MVP review decision", async () => {
-    const forbidden = createAgentLifecycleHandlers(deps({ isAgentReviewer: vi.fn(async () => false) }));
-    const forbiddenResponse = await forbidden.approve(
-      request("/api/admin/agents/x/approve", "approve:agent:client-1", { reviewReason: "资料核验通过" }),
-      context(AGENT_ID),
-    );
-    expect(forbiddenResponse.status).toBe(403);
-
-    const transitionAgent = vi.fn(async () => ({ statusCode: 200, body: { agentId: AGENT_ID, status: "active" } }));
-    const approved = createAgentLifecycleHandlers(deps({ transitionAgent, isAgentReviewer: vi.fn(async () => true) }));
-    const approvedResponse = await approved.approve(
-      request("/api/admin/agents/x/approve", "approve:agent:client-2", { reviewReason: "资料与服务端点核验通过" }),
-      context(AGENT_ID),
-    );
-    expect(approvedResponse.status).toBe(200);
-    expect(transitionAgent).toHaveBeenCalledWith(
-      AGENT_ID, ACTOR, "admin", "admin_approve", "approve:agent:client-2", "资料与服务端点核验通过",
-    );
-
-	const transitionReject = vi.fn(async () => ({ statusCode: 200, body: { agentId: AGENT_ID, status: "delisted" } }));
-	const rejected = createAgentLifecycleHandlers(deps({ transitionAgent: transitionReject, isAgentReviewer: vi.fn(async () => true) }));
-	const rejectedResponse = await rejected.reject(
-		request("/api/admin/agents/x/reject", "reject:agent:client-2", { reviewReason: "服务端点无法完成基础检查" }),
-		context(AGENT_ID),
-	);
-	expect(rejectedResponse.status).toBe(200);
-	expect(transitionReject).toHaveBeenCalledWith(
-		AGENT_ID, ACTOR, "admin", "admin_reject", "reject:agent:client-2", "服务端点无法完成基础检查",
-	);
   });
 
   it("preserves the Go state-machine error response", async () => {
@@ -83,7 +52,6 @@ describe("Agent lifecycle HTTP boundary", () => {
 function deps(overrides: Partial<AgentLifecycleHttpDeps> = {}): AgentLifecycleHttpDeps {
   return {
     resolveActorId: vi.fn(async () => ACTOR),
-    isAgentReviewer: vi.fn(async () => false),
     transitionAgent: vi.fn(async () => ({ statusCode: 200, body: {} })),
     allowedOrigin: "https://web.example",
     ...overrides,

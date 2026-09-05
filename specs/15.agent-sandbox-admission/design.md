@@ -1,81 +1,84 @@
-# 新 Agent 沙箱准入 — 技术设计
+# 新 Agent 自动准入 — 技术设计
 
 ## 设计版本
 
-| 日期       | 版本 | 说明     |
-| ---------- | ---- | -------- |
-| 2026-08-20 | v1   | 初始设计 |
-| 2026-08-24 | v2   | T-001/T-002 落地：增加轮次幂等、三槽位租约恢复与独立沙箱执行模块 |
+| 日期       | 版本 | 说明 |
+| ---------- | ---- | ---- |
+| 2026-08-20 | v1 | 初始设计 |
+| 2026-08-24 | v2 | 增加轮次幂等、调用槽位与租约恢复 |
+| 2026-09-04 | v3 | 取消人工审核，改为确定性技术门禁、一次 AI 批量评测与自动状态迁移 |
+| 2026-09-06 | v4 | 费用知情、小型示例模板 v3、轮次限流及持久化故障恢复上限 |
 
-## 项目架构
+## 状态与边界
 
-- 架构类型: 多服务架构
-- 涉及层: 分发引擎（Go，沙箱调用执行，复用 [[1.agent-protocol-contract]]）、交易/业务服务（测试模板管理、清单判定 API）、PostgreSQL、前端
+```text
+注册成功 → queued → running（0/3～3/3）→ AI 评测 → passed / failed
+```
 
-## 功能模块设计
+- `sandboxadmission.Service` 只负责三次隔离调用，不依赖任务、分配、评分或资金模块。
+- `sandboxadmission.Worker` 负责编排轮次、技术门禁、质量评测和生命周期迁移。
+- `AutomaticAdmissionRepository` 是轮次、租约、评测和提供者重试的持久化权威。
+- [[3.agent-health-lifecycle]] 仍是 Agent 对外状态的唯一权威；准入模块只提交带结构化证据的事件。
 
-### 模块 1: 测试任务模板
+## 执行流程
 
-**涉及层及关键设计:**
+1. Worker 扫描 `pending_review` 且没有历史轮次的 Agent，幂等创建 `initial` 轮次。
+2. Worker 用 `FOR UPDATE SKIP LOCKED` 领取到期轮次并写入租约。
+3. `RunSandboxTest` 依次领取三个调用槽位。每个槽位使用独立测试题和稳定幂等键；进程恢复时已完成槽位不会重做。
+4. 任一调用失败或不符合协议时，确定性技术门禁直接写入失败评测，不产生模型费用。
+5. 三次技术检查全部通过后，评测器把公开档案、三道测试输入和三份冻结产物合并为一个请求。
+6. 模型返回三组结构化分数与质量事实；解析器校验必须恰好包含 1、2、3 三个编号，再由平台计算平均分与是否通过。
+7. 评测记录先持久化。通过时 Worker 使用 `agent-admission:{round_id}` 幂等键和评测 ID 迁移 Agent 状态；随后完成轮次。进程若在两步之间退出，恢复时只补状态迁移，不重新评测。
+8. 失败后，所属提供者可以提交带 `Idempotency-Key` 的重新验证请求；新轮次递增 `attempt_no`，历史证据不删除。
 
-- `sandbox_test_templates` 按能力分类（复用 [[4.task-creation-and-preview]] 的 `categories`）存储固定测试输入和判定清单项列表，版本化（同一分类的模板更新后，已进行中的沙箱测试仍使用发起时的模板版本，不因模板更新而中途改变判定标准）。
-- MVP 先提供一份通用清单模板作为所有分类的默认值（见 requirements.md 开放问题），分类专属模板作为后续可插入的数据，不影响流程代码。
+## 失败与恢复语义
 
-### 模块 2: 沙箱调用执行
-
-**涉及层及关键设计:**
-
-- Agent 通过 [[2.agent-registration]] 的基础注册审核后，Go 分发引擎以稳定 `round_id` 触发一轮 3 次调用，每次调用复用 [[1.agent-protocol-contract]] 的 `Sign(req, secret, "sandbox")`，请求体为模板中的固定测试输入。三次逻辑调用分别使用 `sandbox:{round_id}:1..3` 幂等键；进程恢复继续使用原键，提供者修复后的重测使用新 `round_id`。
-- 调用产出（Agent 返回的结果引用）与技术指标（协议合规、延迟、报错分类）自动写入 `sandbox_test_runs`，这部分完全不需要人工参与，复用协议层已有的错误分类能力，不重新发明一套判断逻辑。
-- 独立 `sandboxadmission` 模块只依赖沙箱仓储、凭证解密器和 Agent 调用器，不依赖任务、分配、评分或资金服务。每个 run 使用数据库租约防止并发重复执行；进程在响应落库前崩溃时允许租约到期恢复，但仍使用同一幂等键，因此语义是 3 个逻辑调用，而不是承诺跨网络的物理 exactly-once。
-- MVP 把最多 1 MiB 的不可信响应编码为只存储、不执行的 `data:` 引用；后续可在模块内部替换成对象存储实现，不改变服务接口和表结构。
-
-### 模块 3: 清单式人工判定
-
-**涉及层及关键设计:**
-
-- 判定 API 只接受"清单项 → 是/否"的结构化输入（`checked_items: { itemKey: boolean }`），不接受开放式评分或自由文本作为判定的唯一依据，从接口设计上防止判定退化为主观印象打分。
-- 判定逻辑：清单项全部为「否"（即未命中任何负面项，如"未跑题""无报错""格式正确"）时判定为「通过」；单次沙箱调用判定完成后，需 3 次调用全部通过才触发准入。
-
-### 模块 4: 准入决策整合
-
-**涉及层及关键设计:**
-
-- 3 次判定全部通过后，本模块调用 [[3.agent-health-lifecycle]] 暴露的 `TransitionAgentStatus(agentId, AdminApprove, actor)`，`reason` 字段固定填入本次判定记录的 ID，不允许自由文本替代，保证"为什么批准"始终可追溯到具体清单判定，而不是一句人工总结。
-- 未全部通过：Agent 保持 `pending_review`（试运行）状态，提供者可在修复问题后主动请求重新发起一轮沙箱测试（复用模块 2，视为新一轮 3 次调用，不清除历史记录）。
-
-### 模块 5: 前端
-
-**涉及层及关键设计:**
-
-- 运营查看页展示 3 次调用的产出物、技术指标和清单，逐项勾选，不提供"总体评分"输入框，界面结构本身引导运营做清单式判断而非印象打分。
-
-## 前端视觉规范
-
-前端实现遵循 `docs/DESIGN.md`：沙箱调用产出以卡片形式并排展示（3 次调用对比更容易），技术指标用中性 tag（协议合规/报错分类等），清单勾选项使用 checkbox 而非评分组件，强化"这是清单判断不是打分"的界面语义。判定结果（通过/不通过）用 success/warning 语义色，不用 error（未通过是可重试的中间态，不是失败）。
+- Agent 技术或质量失败：完成当前轮次并展示失败原因，等待提供者修复后主动重试。
+- 网络、数据库或评测服务故障：释放轮次租约，延迟后重试；最多 3 次 Worker 执行。耗尽后以 `ADMISSION_RECOVERY_LIMIT` 暂停，质量分与技术判定保持空值，不冒充 Agent 质量失败。已经保存评测的轮次继续补状态迁移，不再调用模型。
+- Agent 调用响应已产生但写库前进程退出：再次使用相同调用幂等键，由符合协议的 Agent 重放结果。
+- AI 响应尚未持久化前进程退出：可能再次请求评测服务；这是外部接口无法提供写入原子性的剩余风险。已保存评测绝不重复请求。
+- 同一 Agent 同时最多一个 `queued/running` 轮次，由部分唯一索引保证。
 
 ## 接口契约
 
-- 内部：`RunSandboxTest(agentId, roundId) sandboxTestRound`（建立并执行一轮 3 次逻辑调用，均为 `call_type=sandbox`）。
-- `GET /api/admin/agents/:id/sandbox-runs`：查看沙箱调用产出与技术指标。
-- `POST /api/admin/agents/:id/sandbox-evaluation`：提交清单判定，请求体 `{ runIds: [...], checkedItems: {...} }`；全部通过时内部调用 `TransitionAgentStatus`。
-- `POST /api/agents/:id/sandbox-retry`：提供者请求重新发起一轮沙箱测试（仅 `pending_review` 状态可调用）。
+- 内部执行：`Worker.RunOnce(ctx, enqueueLimit)`。
+- 内部重试：`POST /internal/agents/:id/admission/retry`，必须带内部服务令牌、可信 `X-Actor-ID`、`X-Actor-Type: provider` 和 `Idempotency-Key`。
+- 公网重试：`POST /api/agents/:id/admission/retry`，由 Business API 从 SIWE 会话解析提供者身份，不接受客户端自报钱包。
+- Agent 目录读取返回 `admission` 投影，包括轮次状态、进度、分数、总结和失败原因；不返回测试产物或敏感凭据。
 
 ## 数据模型
 
-- `sandbox_test_templates(id PK, category_id FK nullable, test_input JSONB, checklist_items JSONB, version, created_at, deprecated_at)`；`category_id=NULL` 是通用兜底模板。
-- `sandbox_test_runs(id PK, agent_id FK, template_id FK, round_id, run_no, call_type, status, output_ref, technical_metrics JSONB, lock_token, locked_until, started_at, completed_at, created_at)`；唯一键为 `(agent_id, round_id, run_no)`。
-- `sandbox_evaluations(id PK, agent_id FK, round_id, run_ids JSONB, reviewer_id, checked_items JSONB, decision, decided_at)`
-- 状态迁移统一写入 [[2.agent-registration]] 定义的共享 `audit_logs` 表。
+- `sandbox_test_templates`：版本化测试输入与检查项；v2 模板包含三个不同 `cases`。
+- `sandbox_test_runs`：每个逻辑调用的状态、冻结产物引用、技术指标与调用租约；唯一键 `(agent_id, round_id, run_no)`。
+- `sandbox_evaluations`：三条 run ID、自动检查项、决定、分数、评测模型和完整结构化报告；`reviewer_id` 兼容列固定写入 `system:auto-admission`。
+- `sandbox_admission_rounds`：尝试序号、触发来源、重试请求 ID、状态、摘要、最终分数、评测报告和 Worker 租约。
+- 生命周期迁移与注册审计继续写入既有审计表，不复制状态权威。
 
-## 安全考虑
+## 安全与成本
 
-- 判定 API 需要运营角色权限校验（复用 [[14.ops-backend-and-metrics]] 的 `RequirePermission()`）。
-- 沙箱调用不得触碰真实资金路径：`RunSandboxTest` 不创建 `tasks`/`task_assignments` 记录，也不经过 [[9.dispatch-and-acceptance]] 的派发链路，从代码路径上物理隔离，而不是靠业务规则约束。
+- 平台支付自身评审请求，提供者承担其 Agent 内部模型/API/算力开销；不扣提供者钱包、不发测试报酬、不自动报销。提交上架前展示提醒，重新验证先展示确认区。
+- `RetryRound` 在 Agent 行锁内检查最近轮次的创建时间：间隔至少 10 分钟，滚动 24 小时最多 3 轮（含首次）。同键重放先于限流检查，超限返回 HTTP 429 / `AGENT_ADMISSION_RATE_LIMITED`。这不是跨钱包反作弊额度。
+- `0040` 增加持久化 `worker_attempts`；重启不重置恢复次数。三次 Agent 槽位与已保存评测仍幂等复用；单项 HTTP 等待上限 3 分钟，评审输出上限 3000 tokens。网络响应落库前故障仍可能重复产生服务商费用，上限不等于零重复收费保证。
+- 新通用模板 v3 请求最小示例：文档正文最多 2000 字、图片最多 1 张、视频最多 5 秒、PPT 最多 4 页；旧轮次继续使用已冻结模板。这些是请求约束，不是对第三方内部执行的强制沙箱，提供者必须在其服务端限制资源与费用。
+- 快速 HTTP JSON 接入使用可选 Bearer Token；高级 AICP 接入使用现有 HMAC 签名。凭证只在调用边界解密，不进入日志或评测上下文。
+- 评测器拒绝外部产物 URL，只读取平台在沙箱调用完成时冻结的 `data:` 内容，并限制请求和响应大小。
+- 通用测试维度会用 Agent 名称锚定任务标题，避免“约束遵循测试”等抽象标题被内容生成 Agent 误当成与能力无关的作品主题。
+- AI 评测只检查用户可见交付，不把内部工具品牌、检索过程或隐藏校验日志作为验收条件。
+- 评测模型只提供分数与事实；最终阈值在本地代码中固定执行。
+- 沙箱路径不能创建 `tasks`、`task_assignments`、托管、评分或结算记录。
+
+## 前端设计
+
+- 注册完成页直接提供“查看验证进度”，不再出现“等待人工审核”。
+- 我的 Agent 卡片显示排队、三次测试进度、AI 评测动效、通过或失败状态；运行中每 3 秒静默刷新，不重新显示整页骨架。
+- 质量失败态显示总分、简短总结和“重新验证”；系统恢复耗尽显示暂停原因且不伪造分数。重试先确认可能再次产生提供者 API/算力开销，再调用接口；取消不发请求，限流在中英文页面均显示可理解原因。
 
 ## 技术决策
 
-| 决策 | 选项 | 理由 |
-| ---- | ---- | ---- |
-| 判定输入形式 | 结构化是/否清单（选中）vs 1-10 分打分 | 打分本质上仍是主观判断且不可复核（"7分"和"8分"的界限说不清）；是/否清单把判断拆成可复核的客观项，符合本 feature 存在的目的 |
-| 准入触发方式 | 本 feature 调用 3 的 `TransitionAgentStatus`（选中）vs 3 直接轮询本 feature 的判定结果 | 由触发方主动调用比被动轮询更符合事件驱动的一致性模型，且避免 [[3.agent-health-lifecycle]] 反过来依赖本 feature 的内部表结构 |
+| 决策 | 选择与理由 |
+| ---- | ---------- |
+| 质量判定 | 一次 AI 批量评测 + 平台固定阈值；兼顾开放式产物判断与可控放行规则 |
+| 调用次数 | 三道不同测试题，而非同题重复三次；更能验证稳定性与约束遵循 |
+| 状态恢复 | PostgreSQL 持久化轮次、槽位和租约；支持进程重启与未来多实例 Worker |
+| 正式业务隔离 | 独立沙箱模块，不复用派发/资金流程；从结构上避免测试污染业务数据 |
+| 人工审核 | 不保留正常准入入口；失败由提供者修复后重新验证，运营仅处理系统异常 |

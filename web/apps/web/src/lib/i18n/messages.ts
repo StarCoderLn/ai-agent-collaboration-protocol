@@ -5,6 +5,32 @@ import type { AppLocale } from "./locale";
  * 映射继续作为英文文案的单一权威目录。
  */
 export const EN_MESSAGES = {
+	"补充用途、风格或参考示例，有助于 Agent 更准确地交付。":
+		"Add the intended use, style or references to help your Agent deliver a closer match.",
+	"请补充主题或用途，例如：为夏季促销设计海报。":
+		"Add a topic or purpose, such as a poster for a summer sale.",
+	"未填写补充说明，将按任务标题匹配与执行":
+		"Matching and delivery will follow your task title unless you add more detail.",
+	发布后推荐执行方案: "Execution plan after posting",
+	"上架后将自动执行 3 项测试。平台不收取验证费；测试可能消耗你的模型 API 额度或计算资源，相关费用按你的服务配置产生。":
+		"Listing triggers 3 automated tests. There is no platform verification fee, but your Agent may incur model API or compute costs under your service configuration.",
+	查看测试范围与限制: "Test scope and limits",
+	"每轮 3 项小型测试，单项最多等待 3 分钟；优先短文、单张图片或短片示例。三项测试不等于三次模型调用，请在你的服务端设置资源与费用上限。":
+		"Each round has 3 small tests with a 3-minute response timeout per test. We request short text, one image or a short clip. A test may involve multiple model calls; enforce resource and spending limits in your service.",
+	"重新验证至少间隔 10 分钟，每个 Agent 在 24 小时内最多 3 轮；不扣钱包资金，也不支付测试报酬。":
+		"Rounds must be at least 10 minutes apart, with a maximum of 3 per Agent in 24 hours. No wallet funds are deducted and test work is not compensated.",
+	"重新验证至少间隔 10 分钟，每个 Agent 在 24 小时内最多 3 轮。请稍后重试。":
+		"Wait at least 10 minutes between rounds. Each Agent is limited to 3 rounds in 24 hours. Please try again later.",
+	重新验证确认: "Confirm another verification round",
+	确认重新验证: "Confirm new test round",
+	"重新验证会再次执行 3 项测试，可能再次消耗你的模型 API 额度或计算资源；平台不扣钱包资金。":
+		"A new round runs 3 more tests and may incur further model API or compute costs. The platform does not deduct wallet funds.",
+	本次执行范围: "Delivery scope",
+	"按以下任务需求及已选执行方案交付；未明确的内容不代表你已确认。":
+		"Delivery follows your request below and the selected plan. Unspecified details are not confirmed requirements.",
+	"系统异常，验证已暂停": "Verification paused after a system issue",
+	"自动验证遇到系统异常，已停止自动重试以避免额外调用。请稍后手动重新验证。":
+		"Verification encountered a system issue. Automatic retries have stopped to avoid further calls. Please retry manually later.",
 	"Agent 协作网络": "Agent Collaboration Network",
 	任务市场: "Task Marketplace",
 	"Agent 市场": "Agent Marketplace",
@@ -31,7 +57,6 @@ export const EN_MESSAGES = {
 	创建: "Create",
 	我的工作台: "My Workspace",
 	开发者: "Developers",
-	"Agent 实验室": "Agent Lab",
 	协议与实现文档: "Protocol & Implementation Docs",
 	交易保障: "Transaction protection",
 	"USDC 资金托管": "USDC held in escrow",
@@ -95,6 +120,11 @@ export const EN_MESSAGES = {
 	"{title} PDF 预览": "{title} PDF preview",
 	"当前浏览器无法播放这份视频交付物。":
 		"Your browser cannot play this video deliverable.",
+	"文件已准备好，可下载检查": "File ready for download and review",
+	"当前浏览器无法在页面内完整预览该格式，请下载并使用对应应用检查交付内容。":
+		"This format cannot be fully previewed in the browser. Download it and review the deliverable in a compatible application.",
+	"下载{title}": "Download {title}",
+	下载文件: "Download file",
 	当前交付物无法直接验收: "This deliverable cannot be reviewed directly",
 	"Agent 返回的格式没有可用的原生预览。请要求 Agent 改为文档、图片、视频、PDF、HTML 或平台结构化制品后再验收。":
 		"The Agent returned a format without a usable native preview. Ask the Agent to resubmit a document, image, video, PDF, HTML file, or platform-structured artifact before approval.",
@@ -220,8 +250,8 @@ export const EN_MESSAGES = {
 		"Follow progress and result versions in real time. Approve, request revisions, or submit evidence to open a dispute.",
 	"已验证的 Agent": "Verified Agents",
 	"先看证据，再选择执行者": "Choose with evidence, not promises",
-	"对比匹配标签、样本量、历史完成率、报价和预计时长。新 Agent 会明确标识受控上线期。":
-		"Compare match signals, sample size, completion history, pricing, and estimated time. New Agents are clearly marked during controlled rollout.",
+	"对比匹配标签、样本量、历史完成率、报价和预计时长；尚无正式交付记录的 Agent 会明确标记为新 Agent。":
+		"Compare match signals, sample size, completion history, pricing, and estimated time. Agents without a settled delivery are clearly marked as new.",
 	"查看 Agent 市场": "Explore Agent Marketplace",
 	"需求澄清与 PRD 专家": "Requirements & PRD Specialist",
 	产品需求: "Product Requirements",
@@ -286,8 +316,8 @@ export const EN_MESSAGES = {
 	"能力、质量与成本透明可比": "Transparent capability, quality, and cost",
 	发现你的: "Build your",
 	"Agent 执行队伍": "Agent delivery team",
-	"这里只展示已通过审核且当前可接单的 Agent。评分、完成记录与健康状态均来自正式业务数据。":
-		"Only reviewed, available Agents appear here. Ratings, delivery history, and health signals all come from production business records.",
+	"这里只展示已通过自动验证且当前可接单的 Agent。评分、完成记录与健康状态均来自正式业务数据。":
+		"Only automatically verified, available Agents appear here. Ratings, delivery history, and health signals all come from production business records.",
 	"Agent 市场加载失败，请稍后重试":
 		"Agent marketplace failed to load. Please try again.",
 	"搜索 Agent 名称、能力或标签": "Search Agent name, capability, or tag",
@@ -297,13 +327,14 @@ export const EN_MESSAGES = {
 	"可接单 Agent": "Available Agents",
 	"暂无可接单 Agent": "No Agents are currently available",
 	"没有匹配的 Agent": "No matching Agents",
-	"通过审核并处于健康状态的 Agent 会显示在这里。":
-		"Reviewed Agents with a healthy status will appear here.",
+	"通过自动验证并处于健康状态的 Agent 会显示在这里。":
+		"Automatically verified Agents with a healthy status will appear here.",
 	"调整能力分类或搜索关键词后重试。":
 		"Adjust the capability category or search terms and try again.",
-	已通过平台审核: "Platform reviewed",
-	受控上线: "Controlled rollout",
-	新入驻: "New",
+	已通过自动验证: "Automatically verified",
+	"新 Agent": "New Agent",
+	尚无已验收并结算的真实任务记录:
+		"No real task has been approved and settled yet",
 	暂无: "N/A",
 	"{count} 份评分": "{count} ratings",
 	"{count} 次完成": "{count} completions",
@@ -397,6 +428,7 @@ export const EN_MESSAGES = {
 	继续处理: "Continue",
 	正在加载工作台: "Loading workspace",
 	草稿: "Draft",
+	规划与选人: "Planning & Agent selection",
 	待托管: "Awaiting escrow",
 	匹配中: "Matching",
 	"待 Agent 接单": "Awaiting Agent acceptance",
@@ -536,6 +568,8 @@ export const EN_MESSAGES = {
 	"暂时没有可用标签，请稍后再试":
 		"No tags are available right now. Please try again later",
 	能力标签: "Capability tags",
+	"输入你熟悉的能力名称即可，平台会统一识别常见同义表达，无需与任务文案完全一致":
+		"Describe capabilities in familiar terms. The platform normalizes common equivalents, so they do not need to match task wording exactly.",
 	"只使用平台受控标签，用逗号分隔":
 		"Use platform-governed tags separated by commas",
 	"可用标签：": "Available tags:",
@@ -650,6 +684,7 @@ export const EN_MESSAGES = {
 		"Category, tags, and deadline are checked before posting",
 	预算: "Budget",
 	返回工作台: "Back to Workspace",
+	"返回我的 Agent": "Back to My Agents",
 	删除任务: "Delete task",
 	"确认删除这个任务？": "Delete this task?",
 	"任务将从市场和工作台移除；工作流与审计记录会被安全保留。":
@@ -671,10 +706,6 @@ export const EN_MESSAGES = {
 	"争议 ID 可从任务详情的状态时间线或争议发起结果中取得。":
 		"Find the dispute ID in the task timeline or the dispute submission result.",
 	核对卷宗: "Review case",
-	"独立 Agent Lab": "Independent Agent Lab",
-	"论文调研 Agent": "Research Review Agent",
-	"通过平台真实调用 Mastra Agent，检索 OpenAlex 论文并生成带引用的报告。":
-		"Call a Mastra Agent through the platform to retrieve OpenAlex papers and produce a cited report.",
 	"Agent 提供者中心": "Agent Provider Center",
 	一页上架你的: "List your",
 	快速上架你的: "Quickly list your",
@@ -741,6 +772,8 @@ export const EN_MESSAGES = {
 		"Connect an execution endpoint and signing key, then confirm capabilities and pricing. The platform performs protocol checks and admission review after submission.",
 	"查看审核与健康状态，维护配置，并通过受控生命周期操作管理是否接单。":
 		"Review admission and health status, maintain configuration, and control availability through governed lifecycle actions.",
+	"查看自动验证与健康状态，维护配置，并管理是否接单。":
+		"Track automatic verification and health, maintain configuration, and control task intake.",
 	"分类加载失败，请刷新页面后重试":
 		"Categories failed to load. Refresh the page and try again.",
 	"请输入大于 0、最多 6 位小数的 USDC 金额":
@@ -799,73 +832,22 @@ export const EN_MESSAGES = {
 	连接钱包后提交: "Connect wallet to submit",
 	正在连接钱包: "Connecting wallet",
 	"提交成功，等待平台验证，": "Submitted and awaiting platform verification. ",
+	"提交成功，自动验证已经开始，":
+		"Submitted. Automatic verification has started. ",
 	继续配置: "Continue setup",
+	查看验证进度: "View verification progress",
 	"（可重试）": " (retryable)",
 	"先连接，再确认资料": "Connect first, then confirm details",
 	执行地址和共享密钥: "Execution endpoint and shared secret",
 	提交市场档案: "Submit marketplace profile",
 	"能力、报价和收款钱包": "Capabilities, pricing, and payout wallet",
 	请检查输入内容: "Check the input and try again.",
-	"Agent Lab 返回了无法识别的数据": "Agent Lab returned unrecognized data.",
-	"Agent Lab 请求失败，请确认 Web 服务仍在运行":
-		"Agent Lab request failed. Confirm that the Web service is still running.",
-	填写任务: "Define task",
-	"Agent 执行": "Agent execution",
-	查看交付: "Review delivery",
-	验收完成: "Approved",
-	"1. 填写研究任务": "1. Define the research task",
-	"提交内容会真实发送给 Agent，不是预设结果":
-		"Your request is sent to the live Agent; the result is not prewritten.",
-	研究主题: "Research topic",
-	研究问题: "Research question",
-	报告语言: "Report language",
-	简体中文: "Simplified Chinese",
-	目标字数: "Target length",
-	来源数量: "Number of sources",
-	年份范围: "Year range",
-	起始年份: "Start year",
-	结束年份: "End year",
-	"2. 选择执行 Agent": "2. Select an execution Agent",
-	"论文检索与综述 Agent": "Paper Search & Review Agent",
-	真实可调用: "Live",
-	"Mastra + DeepSeek · OpenAlex 真实论文检索 · 引用校验":
-		"Mastra + DeepSeek · Live OpenAlex retrieval · Citation validation",
-	"当前只展示已真实接入并验收过的 Agent；后续 Agent 会在这里成为候选项。":
-		"Only live, verified Agents appear here today. Additional Agents will become selectable candidates as they are admitted.",
-	"模型正在检索和写作…": "The model is researching and writing…",
-	派发任务并开始执行: "Dispatch task and start",
-	"Ollama 通常需要数分钟；DeepSeek 通常更快。生成期间请保持 Agent 服务运行。":
-		"Ollama usually takes several minutes; DeepSeek is typically faster. Keep the Agent service running during generation.",
-	"（可以重试）": " (retry available)",
-	任务体验进度: "Task experience progress",
-	调研报告将在这里出现: "Your research report will appear here",
-	"Agent 会先从 OpenAlex 检索真实论文，再生成带来源编号和局限性说明的报告。":
-		"The Agent retrieves real papers from OpenAlex before producing a report with numbered sources and limitations.",
-	"Agent 正在工作": "Agent is working",
-	"正在检索论文、调用配置的模型并校验引用，请不要关闭页面。":
-		"Retrieving papers, calling the configured model, and validating citations. Keep this page open.",
-	这次任务没有完成: "This task did not complete",
-	测试任务完成: "Test task completed",
-	"引用：": "Citations: ",
-	来源: "Sources",
-	作者信息缺失: "Author information unavailable",
-	局限性: "Limitations",
-	"模型未额外列出局限性。": "The model did not list additional limitations.",
-	"验收完成，Agent 测试流程已跑通": "Approved—the Agent test flow is complete",
-	"本次测试记录用于 Agent 能力评估；任务交付、验收与结算在任务工作台中完成。":
-		"This test record supports Agent capability evaluation. Production delivery, approval, and settlement happen in the task workspace.",
-	"5. 验收这份交付物": "5. Approve this deliverable",
-	"确认报告满足任务要求，或者修改任务后重新派发。":
-		"Confirm that the report meets the task, or revise the request and dispatch it again.",
-	验收并完成体验: "Approve and finish",
-	修改任务后重新执行: "Revise task and rerun",
 	"Agent 详情加载失败": "Agent details failed to load.",
 	"没有找到这个 Agent": "Agent not found",
-	"它可能尚未通过审核、已经下架，或者链接无效。":
-		"It may still be awaiting review, may have been delisted, or the link may be invalid.",
+	"它可能尚未通过自动验证、已经下架，或者链接无效。":
+		"It may still be in automatic verification, may have been delisted, or the link may be invalid.",
 	"Agent 详情暂时不可用": "Agent details are temporarily unavailable",
-	平台审核通过: "Platform approved",
-	受控上线期: "Controlled rollout",
+	自动验证通过: "Automatically verified",
 	"档案更新于 {date}": "Profile updated {date}",
 	发布任务并匹配: "Post a task and match",
 	可验证的历史快照: "Verifiable history snapshot",
@@ -881,10 +863,10 @@ export const EN_MESSAGES = {
 	服务健康: "Service health",
 	尚未完成首次探测: "First health check pending",
 	"探测于 {date}": "Checked {date}",
-	平台审核与服务保障: "Platform review & service assurance",
-	平台审核已通过: "Platform review approved",
-	"只有审核通过且可接单的 Agent 才会出现在市场，服务地址和提供者敏感信息不会公开。":
-		"Only reviewed Agents that can accept work appear in the marketplace. Service URLs and sensitive provider information remain private.",
+	自动验证与服务保障: "Automated verification & service assurance",
+	三次自动验证已通过: "Three verification trials passed",
+	"只有完成三次试运行并通过自动评测的 Agent 才会出现在市场，服务地址和提供者敏感信息不会公开。":
+		"Only Agents that complete three trials and pass automated evaluation appear in the marketplace. Service URLs and sensitive provider information remain private.",
 	评分样本可追溯: "Traceable rating evidence",
 	"当前没有真实用户评分，平台不会用冷启动分数补位。":
 		"No verified user ratings yet. Cold-start scores are never shown as rating evidence.",
@@ -894,9 +876,6 @@ export const EN_MESSAGES = {
 	"计价方式：{type}": "Pricing model: {type}",
 	历史完成: "Completed history",
 	评分样本: "Rating samples",
-	受控上线期说明: "Controlled rollout",
-	"评分样本尚未达到当前规则的先验权重。平台会限制风险暴露，样本达标后自动解除该标记。":
-		"Rating evidence has not yet reached the current rule's prior-weight threshold. The platform limits risk exposure and removes this label automatically when enough evidence is available.",
 	完成强度: "Completion strength",
 	质量反馈: "Quality feedback",
 	沟通体验: "Communication experience",
@@ -931,6 +910,20 @@ export const EN_MESSAGES = {
 	"Agent 已暂停接收新任务": "Agent paused for new tasks.",
 	"Agent 已恢复接单": "Agent resumed accepting tasks.",
 	"Agent 已下架，后续不能恢复": "Agent delisted and cannot be restored.",
+	已开始新一轮自动验证: "A new automatic verification round has started.",
+	自动验证中: "Automatic verification",
+	验证未通过: "Verification failed",
+	验证通过后开始: "Starts after verification",
+	自动验证未通过: "Automatic verification did not pass",
+	"AI 正在评测三份产物": "AI is evaluating the three deliverables",
+	已进入自动验证队列: "Queued for automatic verification",
+	"正在执行测试任务 {current}/3": "Running trial task {current}/3",
+	"第 {count} 轮": "Round {count}",
+	"平台将完成 3 次隔离测试，再结合协议检查与 AI 质量评测自动决定是否上架。":
+		"The platform runs three isolated trials, then combines protocol checks with AI quality evaluation to decide listing automatically.",
+	"评分 {score}/100": "Score {score}/100",
+	重新验证: "Verify again",
+	"测试任务 {count}": "Trial {count}",
 	连接提供者钱包: "Connect provider wallet",
 	"使用注册 Agent 时的提供者钱包登录，平台只会返回属于该钱包的 Agent。":
 		"Sign in with the provider wallet used to register the Agent. The platform returns only Agents owned by that wallet.",
@@ -940,14 +933,14 @@ export const EN_MESSAGES = {
 		"Submit Agent details and a service URL. Once verified, the Agent can appear in the marketplace.",
 	待验证: "Pending verification",
 	"上架第一个 Agent": "List your first Agent",
-	"新入驻 · 受控上线": "New · controlled rollout",
 	编辑配置: "Edit configuration",
 	暂停接单: "Pause intake",
 	恢复接单: "Resume intake",
 	下架: "Delist",
-	当前处于受控上线期: "Currently in controlled rollout",
-	"评分样本达到平台先验权重前，单任务预算按历史任务第 30 百分位设置上限；样本充足后自动解除，无需人工申请。":
-		"Until rating evidence reaches the platform's prior-weight threshold, per-task budgets are capped at the 30th percentile of historical tasks. The limit is removed automatically when evidence is sufficient.",
+	"完成首个真实任务后将移除“新 Agent”标识；累计完成 {count} 个后自动解除冷启动报价限制。":
+		"The New Agent label is removed after the first settled task. Cold-start pricing limits are removed after {count} settled tasks.",
+	"已完成 {current}/{target} 个真实任务；达到 {target} 个后自动解除冷启动报价限制。":
+		"{current}/{target} settled tasks completed. Cold-start pricing limits are removed at {target}.",
 	平台健康检查已自动暂停接单: "Platform health checks paused intake",
 	"连续探测成功达到恢复阈值后会自动恢复。这里不提供手动恢复按钮，避免绕过健康状态机。":
 		"Intake resumes automatically after consecutive successful checks reach the recovery threshold. Manual resume is unavailable to protect the health state machine.",
@@ -961,42 +954,12 @@ export const EN_MESSAGES = {
 	最近更新: "Last updated",
 	"{count} 秒": "{count}s",
 	可接单: "Available",
-	待审核: "Pending review",
 	健康暂停: "Health paused",
 	手动暂停: "Manually paused",
 	已下架: "Delisted",
 	"正在加载 Agent 管理列表": "Loading Agent management list",
 	"异常 · 连续失败 {count}": "Degraded · {count} consecutive failures",
 	待首次探测: "Awaiting first check",
-	审核列表加载失败: "Review queue failed to load.",
-	"请填写至少 4 个字符的审核理由，方便提供者理解决定并保留审计依据。":
-		"Enter at least four characters explaining the review decision for the provider and audit record.",
-	"审核通过，Agent 已进入可接单状态":
-		"Approved. The Agent can now accept tasks.",
-	"已驳回，Agent 需要修正后重新注册":
-		"Rejected. The Agent must be corrected and registered again.",
-	"审核操作失败，请稍后重试": "Review action failed. Please try again.",
-	连接审核员钱包: "Connect reviewer wallet",
-	"审核队列只对具有 agent_reviewer 角色的钱包开放。":
-		"The review queue is available only to wallets with the agent_reviewer role.",
-	"按 Agent 状态筛选": "Filter by Agent status",
-	当前钱包没有审核权限: "This wallet lacks review permission",
-	审核列表暂时不可用: "Review queue is temporarily unavailable",
-	"没有 {status} 的 Agent": "No Agents with status: {status}",
-	"切换上方状态可以查看其他 Agent。":
-		"Switch the status filter above to view other Agents.",
-	"提交于 {date}": "Submitted {date}",
-	提供者钱包: "Provider wallet",
-	审核理由: "Review rationale",
-	"说明已经核对的资料，或写清需要提供者修正的问题；决定和审核员钱包都会进入审计记录。":
-		"Describe what was verified or what the provider must correct. The decision and reviewer wallet are recorded in the audit trail.",
-	"例如：服务地址可访问，能力与报价说明一致。":
-		"Example: The service URL is reachable and capabilities match the listed price.",
-	审核通过: "Approve",
-	驳回并下架: "Reject and delist",
-	"驳回后为终态；提供者修正问题后需要重新注册 Agent。":
-		"Rejection is final. The provider must register the Agent again after fixing the issues.",
-	"正在加载 Agent 审核列表": "Loading Agent review queue",
 	已暂停: "Paused",
 	"执行方案暂时无法加载，请返回任务详情后重试。":
 		"The execution plan is temporarily unavailable. Return to task details and try again.",
@@ -1288,7 +1251,8 @@ export const EN_MESSAGES = {
 	报价币种不一致: "Pricing currency mismatch",
 	任务截止时间已过: "Task deadline passed",
 	预计无法按时交付: "Cannot meet the deadline",
-	"超出新入驻 Agent 预算上限": "Exceeds new-Agent budget cap",
+	"Agent 当前报价超出冷启动风险上限":
+		"The Agent's current price exceeds the cold-start risk limit",
 	未满足平台硬约束: "Platform hard constraint not met",
 	需要发布者补充信息: "Client input required",
 	"Agent 正在处理返工": "Agent is handling revisions",
@@ -1673,6 +1637,15 @@ export const EN_MESSAGES = {
 	"候选只代表匹配结果；点击确认后才会锁定报价并正式派发。":
 		"Candidates are matching results only. Confirming locks the quote and formally dispatches the Agent.",
 	重新匹配该阶段: "Rematch this stage",
+	调整截止时间: "Adjust deadline",
+	"该阶段已完成匹配，但所有 Agent 均被硬条件排除。":
+		"Matching finished, but every Agent was excluded by a hard constraint.",
+	"请选择新的截止日期，保存后平台会生成新的匹配记录。":
+		"Choose a new deadline. The platform will create a new matching record after you save.",
+	请选择新的截止日期: "Choose a new deadline",
+	新的截止日期必须晚于当前时间:
+		"The new deadline must be later than the current time",
+	"历史匹配记录不会被覆盖。": "Previous matching records will be preserved.",
 	"尚未生成该阶段的候选 Agent":
 		"No candidate Agents have been generated for this stage",
 	阶段报价: "Stage quote",
@@ -1758,12 +1731,18 @@ export const EN_MESSAGES = {
 	阶段价格偏好: "Stage price preference",
 	未设置: "Not set",
 	匹配偏好: "Matching preferences",
-	"先看价格区间，再决定预算上限":
-		"Review the price range before setting a budget limit",
+	"先看候选报价，再决定预算上限":
+		"Review candidate quotes before setting a budget limit",
 	"预算上限是可选的推荐偏好，不会立即扣款。所有阶段选完后，平台才按冻结报价计算准确托管金额。":
 		"The budget limit is an optional recommendation preference and does not charge you. Escrow is calculated from locked quotes only after every stage is selected.",
-	当前候选组合区间: "Current candidate combination range",
+	候选总价参考: "Candidate total",
+	候选总价区间: "Candidate total range",
+	按各阶段当前候选报价合计:
+		"Sum of the current candidate quotes for every stage",
+	按各阶段最低与最高候选报价分别合计:
+		"Sum of the lowest and highest candidate quotes for every stage",
 	候选生成中: "Generating candidates",
+	暂无候选报价: "No candidate quote available",
 	"期望总预算上限（可选）": "Preferred total budget limit (optional)",
 	"例如：100": "For example: 100",
 	"预算上限须在 1–100,000 USDC 之间，最多保留 6 位小数":
@@ -1796,10 +1775,13 @@ export const EN_MESSAGES = {
 	保存并重新推荐: "Save and refresh recommendations",
 	"能力标签用于解释排序，不会因为某个标签未命中就直接淘汰候选。":
 		"Capability tags explain ranking and do not eliminate a candidate solely because one tag is missing.",
-	已匹配能力: "Matched capabilities",
-	暂无标签证据: "No tag evidence yet",
-	尚未覆盖: "Not yet covered",
-	当前能力均有标签证据: "All current capabilities have tag evidence",
+	符合: "Matched",
+	暂无标签要求: "No tag requirements",
+	"黄色标签暂未命中，仅影响推荐排序":
+		"Yellow tags are not matched yet and only affect recommendation ranking",
+	暂无真实履约评分: "No verified delivery rating yet",
+	完成首个已验收任务后展示五维评分:
+		"Five-dimension ratings appear after the first accepted delivery",
 	"预算参考 {amount}": "Budget reference {amount}",
 	"已选报价 {amount}": "Selected quote {amount}",
 	待选择后确认: "Confirmed after selection",
@@ -1931,6 +1913,221 @@ export const EN_MESSAGES = {
 		"DAO panels reach a majority through independent votes and cannot use the platform's direct decision form.",
 	"发布者和 Agent 只能提交证据；平台仲裁员角色由服务端权限表验证。":
 		"Publishers and Agents can only submit evidence. Platform arbitrator access is verified by server-side roles.",
+	查看可验证的: "Review verifiable",
+	链上记录: "onchain records",
+	"把平台业务摘要与原始区块数据放在一起，清楚核对资金发生了什么。":
+		"Review the business summary alongside raw block data to understand exactly how funds moved.",
+	暂时无法读取链上交易: "The onchain transaction is temporarily unavailable",
+	交易哈希格式不正确: "The transaction hash format is invalid",
+	当前网络中没有找到这笔交易:
+		"This transaction was not found on the current network",
+	无法显示这笔交易: "Unable to display this transaction",
+	正在读取交易与区块回执: "Reading the transaction and block receipt",
+	交易状态: "Transaction status",
+	交易成功: "Transaction successful",
+	交易执行失败: "Transaction reverted",
+	刷新链上状态: "Refresh onchain status",
+	在区块浏览器查看: "View in block explorer",
+	业务金额: "Business amount",
+	区块高度: "Block height",
+	等待打包: "Waiting to be included",
+	链上确认数: "Onchain confirmations",
+	"{count} 次确认": "{count} confirmation(s)",
+	上链时间: "Onchain time",
+	等待确认: "Awaiting confirmation",
+	统一结算明细: "Unified settlement details",
+	"所有 Agent 分账、平台费用与余额退款在同一笔交易中原子完成。":
+		"All Agent payouts, platform fees, and balance refunds completed atomically in one transaction.",
+	"Agent 成交总额": "Total Agent gross amount",
+	平台费用: "Platform fee",
+	退回发布者: "Refunded to publisher",
+	序号: "No.",
+	收款地址: "Recipient address",
+	成交额: "Gross amount",
+	实际到账: "Net received",
+	业务事件摘要: "Business event summary",
+	代币资金流向: "Token fund flow",
+	"以下金额直接来自代币合约 Transfer 事件。":
+		"These amounts come directly from token contract Transfer events.",
+	转出地址: "From",
+	转入地址: "To",
+	已识别的合约事件: "Recognized contract events",
+	"只解释当前部署中已配置的平台合约事件。":
+		"Only platform contract events configured for this deployment are interpreted.",
+	这笔交易没有已识别的平台业务事件:
+		"No recognized platform business event was found in this transaction",
+	链上原始信息: "Raw onchain information",
+	交易哈希: "Transaction hash",
+	发送方: "From",
+	接收方: "To",
+	合约创建交易: "Contract creation transaction",
+	区块哈希: "Block hash",
+	网络费用: "Network fee",
+	"实际 Gas 单价": "Effective gas price",
+	网络费用合计: "Total network fee",
+	查看原始调用数据: "View raw call data",
+	复制: "Copy",
+	已复制: "Copied",
+	等待链上确认: "Awaiting onchain confirmation",
+	"交易已上链，但执行回滚": "Transaction was included but reverted",
+	"交易已广播，等待区块确认":
+		"Transaction broadcast; awaiting block confirmation",
+	任务资金已完成统一结算: "Task funds settled successfully",
+	任务资金已进入托管: "Task funds deposited into escrow",
+	仲裁退款已执行: "Arbitration refund executed",
+	托管资金已退款: "Escrow funds refunded",
+	"DAO 质押已完成": "DAO stake completed",
+	"DAO 质押已赎回": "DAO stake withdrawn",
+	链上交易已确认: "Onchain transaction confirmed",
+	未识别业务金额: "No recognized business amount",
+	"发布者的 USDC 已由托管合约锁定。只有验收、退款或仲裁路径可以释放。":
+		"The publisher's USDC is locked by the escrow contract and can only be released through approval, refund, or arbitration.",
+	"DAO 或平台裁决摘要与证据根已经随退款写入同一笔链上交易。":
+		"The DAO or platform decision digest and evidence root were recorded in the same onchain refund transaction.",
+	"未释放的托管余额已按合约记录退回发布者。":
+		"The unreleased escrow balance was returned to the publisher according to the contract record.",
+	"YD 已锁定在 DAO 合约中，并更新了该钱包的仲裁资格。":
+		"YD was locked in the DAO contract and the wallet's arbitration eligibility was updated.",
+	"已按 DAO 退出规则赎回锁定的 YD。":
+		"Locked YD was withdrawn under the DAO exit rules.",
+	资金进入托管: "Funds deposited into escrow",
+	"Agent 分账释放": "Agent payout released",
+	工作流统一结算: "Workflow settled",
+	"单 Agent 资金释放": "Single-Agent payout released",
+	里程碑资金释放: "Milestone payout released",
+	托管最终确认: "Escrow finalized",
+	托管退款: "Escrow refunded",
+	仲裁退款: "Arbitration refund",
+	"DAO 增加质押": "DAO stake added",
+	"DAO 申请退出": "DAO exit requested",
+	"DAO 取消退出": "DAO exit cancelled",
+	"DAO 赎回质押": "DAO stake withdrawn",
+	"DAO 最低质押额更新": "DAO minimum stake updated",
+	代币转账: "Token transfer",
+	查看链上记录: "View onchain record",
+	返回争议卷宗: "Back to dispute case",
+	"返回 DAO 仲裁": "Back to DAO arbitration",
+
+	"Agent 实验室": "Agent Lab",
+	"对比匹配标签、样本量、历史完成率、报价和预计时长。新 Agent 会明确标识受控上线期。":
+		"Compare match signals, sample size, completion history, pricing, and estimated time. New Agents are clearly marked during controlled rollout.",
+	"这里只展示已通过审核且当前可接单的 Agent。评分、完成记录与健康状态均来自正式业务数据。":
+		"Only reviewed, available Agents appear here. Ratings, delivery history, and health signals all come from production business records.",
+	"通过审核并处于健康状态的 Agent 会显示在这里。":
+		"Reviewed Agents with a healthy status will appear here.",
+	已通过平台审核: "Platform reviewed",
+	受控上线: "Controlled rollout",
+	新入驻: "New",
+	"独立 Agent Lab": "Independent Agent Lab",
+	"论文调研 Agent": "Research Review Agent",
+	"通过平台真实调用 Mastra Agent，检索 OpenAlex 论文并生成带引用的报告。":
+		"Call a Mastra Agent through the platform to retrieve OpenAlex papers and produce a cited report.",
+	"Agent Lab 返回了无法识别的数据": "Agent Lab returned unrecognized data.",
+	"Agent Lab 请求失败，请确认 Web 服务仍在运行":
+		"Agent Lab request failed. Confirm that the Web service is still running.",
+	填写任务: "Define task",
+	"Agent 执行": "Agent execution",
+	查看交付: "Review delivery",
+	验收完成: "Approved",
+	"1. 填写研究任务": "1. Define the research task",
+	"提交内容会真实发送给 Agent，不是预设结果":
+		"Your request is sent to the live Agent; the result is not prewritten.",
+	研究主题: "Research topic",
+	研究问题: "Research question",
+	报告语言: "Report language",
+	简体中文: "Simplified Chinese",
+	目标字数: "Target length",
+	来源数量: "Number of sources",
+	年份范围: "Year range",
+	起始年份: "Start year",
+	结束年份: "End year",
+	"2. 选择执行 Agent": "2. Select an execution Agent",
+	"论文检索与综述 Agent": "Paper Search & Review Agent",
+	真实可调用: "Live",
+	"Mastra + DeepSeek · OpenAlex 真实论文检索 · 引用校验":
+		"Mastra + DeepSeek · Live OpenAlex retrieval · Citation validation",
+	"当前只展示已真实接入并验收过的 Agent；后续 Agent 会在这里成为候选项。":
+		"Only live, verified Agents appear here today. Additional Agents will become selectable candidates as they are admitted.",
+	"模型正在检索和写作…": "The model is researching and writing…",
+	派发任务并开始执行: "Dispatch task and start",
+	"Ollama 通常需要数分钟；DeepSeek 通常更快。生成期间请保持 Agent 服务运行。":
+		"Ollama usually takes several minutes; DeepSeek is typically faster. Keep the Agent service running during generation.",
+	"（可以重试）": " (retry available)",
+	任务体验进度: "Task experience progress",
+	调研报告将在这里出现: "Your research report will appear here",
+	"Agent 会先从 OpenAlex 检索真实论文，再生成带来源编号和局限性说明的报告。":
+		"The Agent retrieves real papers from OpenAlex before producing a report with numbered sources and limitations.",
+	"Agent 正在工作": "Agent is working",
+	"正在检索论文、调用配置的模型并校验引用，请不要关闭页面。":
+		"Retrieving papers, calling the configured model, and validating citations. Keep this page open.",
+	这次任务没有完成: "This task did not complete",
+	测试任务完成: "Test task completed",
+	"引用：": "Citations: ",
+	来源: "Sources",
+	作者信息缺失: "Author information unavailable",
+	局限性: "Limitations",
+	"模型未额外列出局限性。": "The model did not list additional limitations.",
+	"验收完成，Agent 测试流程已跑通": "Approved—the Agent test flow is complete",
+	"本次测试记录用于 Agent 能力评估；任务交付、验收与结算在任务工作台中完成。":
+		"This test record supports Agent capability evaluation. Production delivery, approval, and settlement happen in the task workspace.",
+	"5. 验收这份交付物": "5. Approve this deliverable",
+	"确认报告满足任务要求，或者修改任务后重新派发。":
+		"Confirm that the report meets the task, or revise the request and dispatch it again.",
+	验收并完成体验: "Approve and finish",
+	修改任务后重新执行: "Revise task and rerun",
+	"它可能尚未通过审核、已经下架，或者链接无效。":
+		"It may still be awaiting review, may have been delisted, or the link may be invalid.",
+	平台审核通过: "Platform approved",
+	受控上线期: "Controlled rollout",
+	平台审核与服务保障: "Platform review & service assurance",
+	平台审核已通过: "Platform review approved",
+	"只有审核通过且可接单的 Agent 才会出现在市场，服务地址和提供者敏感信息不会公开。":
+		"Only reviewed Agents that can accept work appear in the marketplace. Service URLs and sensitive provider information remain private.",
+	受控上线期说明: "Controlled rollout",
+	"评分样本尚未达到当前规则的先验权重。平台会限制风险暴露，样本达标后自动解除该标记。":
+		"Rating evidence has not yet reached the current rule's prior-weight threshold. The platform limits risk exposure and removes this label automatically when enough evidence is available.",
+	"新入驻 · 受控上线": "New · controlled rollout",
+	当前处于受控上线期: "Currently in controlled rollout",
+	"评分样本达到平台先验权重前，单任务预算按历史任务第 30 百分位设置上限；样本充足后自动解除，无需人工申请。":
+		"Until rating evidence reaches the platform's prior-weight threshold, per-task budgets are capped at the 30th percentile of historical tasks. The limit is removed automatically when evidence is sufficient.",
+	待审核: "Pending review",
+	审核列表加载失败: "Review queue failed to load.",
+	"请填写至少 4 个字符的审核理由，方便提供者理解决定并保留审计依据。":
+		"Enter at least four characters explaining the review decision for the provider and audit record.",
+	"审核通过，Agent 已进入可接单状态":
+		"Approved. The Agent can now accept tasks.",
+	"已驳回，Agent 需要修正后重新注册":
+		"Rejected. The Agent must be corrected and registered again.",
+	"审核操作失败，请稍后重试": "Review action failed. Please try again.",
+	连接审核员钱包: "Connect reviewer wallet",
+	"审核队列只对具有 agent_reviewer 角色的钱包开放。":
+		"The review queue is available only to wallets with the agent_reviewer role.",
+	"按 Agent 状态筛选": "Filter by Agent status",
+	当前钱包没有审核权限: "This wallet lacks review permission",
+	审核列表暂时不可用: "Review queue is temporarily unavailable",
+	"没有 {status} 的 Agent": "No Agents with status: {status}",
+	"切换上方状态可以查看其他 Agent。":
+		"Switch the status filter above to view other Agents.",
+	"提交于 {date}": "Submitted {date}",
+	提供者钱包: "Provider wallet",
+	审核理由: "Review rationale",
+	"说明已经核对的资料，或写清需要提供者修正的问题；决定和审核员钱包都会进入审计记录。":
+		"Describe what was verified or what the provider must correct. The decision and reviewer wallet are recorded in the audit trail.",
+	"例如：服务地址可访问，能力与报价说明一致。":
+		"Example: The service URL is reachable and capabilities match the listed price.",
+	审核通过: "Approve",
+	驳回并下架: "Reject and delist",
+	"驳回后为终态；提供者修正问题后需要重新注册 Agent。":
+		"Rejection is final. The provider must register the Agent again after fixing the issues.",
+	"正在加载 Agent 审核列表": "Loading Agent review queue",
+	"超出新入驻 Agent 预算上限": "Exceeds new-Agent budget cap",
+	"先看价格区间，再决定预算上限":
+		"Review the price range before setting a budget limit",
+	当前候选组合区间: "Current candidate combination range",
+	已匹配能力: "Matched capabilities",
+	暂无标签证据: "No tag evidence yet",
+	尚未覆盖: "Not yet covered",
+	当前能力均有标签证据: "All current capabilities have tag evidence",
 } as const;
 
 export type MessageId = keyof typeof EN_MESSAGES;
@@ -1941,7 +2138,13 @@ export function translate(
 	id: MessageId,
 	values: MessageValues = {},
 ): string {
-	const template = locale === "en" ? EN_MESSAGES[id] : id;
+	// MessageId 在静态调用点可以阻止漏翻译，但状态映射、历史数据等动态边界仍可能因
+	// 错误断言或版本差异传入目录之外的键。英文缺项时回退可读的中文源句，不能让一条
+	// 次要文案因为 `undefined.replace` 使整个任务详情页崩溃。
+	const template =
+		locale === "en"
+			? ((EN_MESSAGES as Partial<Record<string, string>>)[id] ?? id)
+			: id;
 	return template.replace(
 		/\{([A-Za-z][A-Za-z0-9_]*)\}/g,
 		(placeholder, name: string) => {

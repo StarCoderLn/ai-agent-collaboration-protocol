@@ -1,9 +1,6 @@
 package domain
 
-import (
-	"fmt"
-	"strings"
-)
+import "fmt"
 
 // AgentStatus 是候选过滤与生命周期迁移共用的权威状态。下架是终态；暂停原因
 // 不塞进额外布尔值，而是和状态一起形成一个完整快照，避免表达非法组合。
@@ -32,13 +29,9 @@ type AgentState struct {
 // eventName/reason 任意字符串拼成一个状态迁移请求。
 type AgentEvent interface{ isAgentEvent() }
 
-// AdminApprove 接受两种互斥证据：当前 MVP 的人工审核理由，或后续 Feature 15
-// 产生的沙箱判定 ID。状态机只认结构化证据，不允许无依据把 Agent 直接转为 active。
-type AdminApprove struct {
-	ReviewReason        string
-	AdmissionDecisionID string
-}
-type AdminReject struct{ ReviewReason string }
+// AdminApprove 沿用已发布的事件名称，但现在只代表自动准入 Worker 的通过决定。
+// AdmissionDecisionID 必须引用已持久化评测；不再接受人工自由文本作为放行证据。
+type AdminApprove struct{ AdmissionDecisionID string }
 type ManualPause struct{}
 type AutoPauseHealthCheck struct{}
 type ManualResume struct{}
@@ -46,7 +39,6 @@ type AutoResumeHealthCheck struct{}
 type ProviderDelist struct{}
 
 func (AdminApprove) isAgentEvent()          {}
-func (AdminReject) isAgentEvent()           {}
 func (ManualPause) isAgentEvent()           {}
 func (AutoPauseHealthCheck) isAgentEvent()  {}
 func (ManualResume) isAgentEvent()          {}
@@ -71,14 +63,8 @@ func (ResumeRequiresHealthRecoveryError) Error() string { return "RESUME_REQUIRE
 func TransitionAgentStatus(from AgentState, event AgentEvent) (AgentState, error) {
 	switch e := event.(type) {
 	case AdminApprove:
-		hasManualReason := strings.TrimSpace(e.ReviewReason) != ""
-		hasSandboxDecision := strings.TrimSpace(e.AdmissionDecisionID) != ""
-		if from.Status == AgentPendingReview && hasManualReason != hasSandboxDecision {
+		if from.Status == AgentPendingReview && e.AdmissionDecisionID != "" {
 			return AgentState{Status: AgentActive}, nil
-		}
-	case AdminReject:
-		if from.Status == AgentPendingReview && strings.TrimSpace(e.ReviewReason) != "" {
-			return AgentState{Status: AgentDelisted}, nil
 		}
 	case ManualPause:
 		if from.Status == AgentActive {

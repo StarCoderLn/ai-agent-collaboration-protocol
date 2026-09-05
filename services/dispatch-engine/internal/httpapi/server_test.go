@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/executionproxy"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matching"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/protocol"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/sandboxadmission"
 )
 
 type fakeMatcher struct{ record matching.Record }
@@ -107,6 +109,25 @@ func (f *fakeAgentLifecycle) Transition(_ context.Context, command agentlifecycl
 	f.command = command
 	pauseReason := "manual"
 	return agentlifecycle.Snapshot{AgentID: command.AgentID, Status: domain.AgentPaused, PauseReason: &pauseReason, UpdatedAt: command.Now}, nil
+}
+
+// fakeAdmissionRetry 记录经过内部认证和提供者身份校验后的重新验证命令。错误由测试用例
+// 注入，用于证明 HTTP 边界不会把越权或非法状态误报为普通服务异常。
+type fakeAdmissionRetry struct {
+	agentID, actorID, idempotencyKey string
+	err                              error
+}
+
+func (f *fakeAdmissionRetry) RetryRound(
+	_ context.Context, agentID, actorID, idempotencyKey string, _ time.Time,
+) (sandboxadmission.RoundClaim, error) {
+	f.agentID, f.actorID, f.idempotencyKey = agentID, actorID, idempotencyKey
+	if f.err != nil {
+		return sandboxadmission.RoundClaim{}, f.err
+	}
+	return sandboxadmission.RoundClaim{
+		AgentID: agentID, RoundID: "83200000-0000-4000-8000-000000000001", AttemptNo: 2,
+	}, nil
 }
 
 func (f *fakeExecutionProxy) Forward(_ context.Context, _, _, _, key string, body []byte) (executionproxy.Response, error) {
@@ -225,45 +246,116 @@ func TestInternalAgentLifecycleRequiresActorTypeAndIdempotency(t *testing.T) {
 	}
 }
 
-func TestInternalAgentLifecycleAcceptsConstrainedAdminReviewDecisions(t *testing.T) {
-	for _, testCase := range []struct {
-		name, body  string
-		assertEvent func(t *testing.T, event domain.AgentEvent)
+func TestAgentAdmissionRetryRequiresInternalAuthProviderAndIdempotency(t *testing.T) {
+	retry := &fakeAdmissionRetry{}
+	server := Server{InternalToken: "internal-secret", AdmissionRetry: retry}
+	path := "/internal/agents/83100000-0000-4000-8000-000000000001/admission/retry"
+
+	testCases := []struct {
+		name       string
+		authorize  bool
+		actorID    string
+		actorType  string
+		requestKey string
+		wantStatus int
 	}{
-		{
-			name: "approve", body: `{"event":"admin_approve","reviewReason":"基础资料与服务端点已核验"}`,
-			assertEvent: func(t *testing.T, event domain.AgentEvent) {
-				approval, ok := event.(domain.AdminApprove)
-				if !ok || approval.ReviewReason == "" {
-					t.Fatalf("unexpected approval: %+v", event)
-				}
-			},
-		},
-		{
-			name: "reject", body: `{"event":"admin_reject","reviewReason":"服务端点无法访问"}`,
-			assertEvent: func(t *testing.T, event domain.AgentEvent) {
-				rejection, ok := event.(domain.AdminReject)
-				if !ok || rejection.ReviewReason == "" {
-					t.Fatalf("unexpected rejection: %+v", event)
-				}
-			},
-		},
-	} {
+		{name: "缺少内部服务凭证", actorID: "provider-1", actorType: "provider", requestKey: "retry:request-1", wantStatus: http.StatusUnauthorized},
+		{name: "非提供者身份", authorize: true, actorID: "admin-1", actorType: "admin", requestKey: "retry:request-2", wantStatus: http.StatusForbidden},
+		{name: "缺少幂等键", authorize: true, actorID: "provider-1", actorType: "provider", wantStatus: http.StatusBadRequest},
+	}
+	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			lifecycle := &fakeAgentLifecycle{}
-			server := Server{InternalToken: "internal-secret", AgentLifecycle: lifecycle}
-			request := httptest.NewRequest(http.MethodPost, "/internal/agents/83100000-0000-4000-8000-000000000001/transitions", strings.NewReader(testCase.body))
-			request.Header.Set("Authorization", "Bearer internal-secret")
-			request.Header.Set(headerInternalActor, "0x1111111111111111111111111111111111111111")
-			request.Header.Set(headerInternalActorType, "admin")
-			request.Header.Set("Idempotency-Key", "review:agent:"+testCase.name)
+			request := httptest.NewRequest(http.MethodPost, path, nil)
+			if testCase.authorize {
+				request.Header.Set("Authorization", "Bearer internal-secret")
+			}
+			request.Header.Set(headerInternalActor, testCase.actorID)
+			request.Header.Set(headerInternalActorType, testCase.actorType)
+			request.Header.Set("Idempotency-Key", testCase.requestKey)
 			response := httptest.NewRecorder()
 			server.Handler().ServeHTTP(response, request)
-			if response.Code != http.StatusOK {
-				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			if response.Code != testCase.wantStatus {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, testCase.wantStatus, response.Body.String())
 			}
-			testCase.assertEvent(t, lifecycle.command.Event)
 		})
+	}
+	if retry.agentID != "" {
+		t.Fatalf("非法请求不应到达准入仓储：%+v", retry)
+	}
+}
+
+func TestAgentAdmissionRetryMapsOwnershipStateAndSuccess(t *testing.T) {
+	path := "/internal/agents/83100000-0000-4000-8000-000000000001/admission/retry"
+	testCases := []struct {
+		name       string
+		retryError error
+		wantStatus int
+	}{
+		{name: "越权", retryError: sandboxadmission.ErrAdmissionForbidden, wantStatus: http.StatusForbidden},
+		{name: "当前状态不可重试", retryError: sandboxadmission.ErrAdmissionNotRetryable, wantStatus: http.StatusConflict},
+		{name: "重试超过频率限制", retryError: sandboxadmission.ErrAdmissionRateLimited, wantStatus: http.StatusTooManyRequests},
+		{name: "重新排队成功", wantStatus: http.StatusAccepted},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			retry := &fakeAdmissionRetry{err: testCase.retryError}
+			server := Server{InternalToken: "internal-secret", AdmissionRetry: retry}
+			request := httptest.NewRequest(http.MethodPost, path, nil)
+			request.Header.Set("Authorization", "Bearer internal-secret")
+			request.Header.Set(headerInternalActor, "provider-1")
+			request.Header.Set(headerInternalActorType, "provider")
+			request.Header.Set("Idempotency-Key", "retry:request-3")
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, request)
+			if response.Code != testCase.wantStatus {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, testCase.wantStatus, response.Body.String())
+			}
+			if retry.agentID != "83100000-0000-4000-8000-000000000001" || retry.actorID != "provider-1" || retry.idempotencyKey != "retry:request-3" {
+				t.Fatalf("重新验证命令丢失可信身份或幂等信息：%+v", retry)
+			}
+			if testCase.retryError == nil && !strings.Contains(response.Body.String(), `"status":"queued"`) {
+				t.Fatalf("成功响应没有明确排队状态：%s", response.Body.String())
+			}
+		})
+	}
+
+	// 未知仓储错误必须保留为可重试的 500，不能被错误降级为业务拒绝。
+	retry := &fakeAdmissionRetry{err: errors.New("database unavailable")}
+	server := Server{InternalToken: "internal-secret", AdmissionRetry: retry}
+	request := httptest.NewRequest(http.MethodPost, path, nil)
+	request.Header.Set("Authorization", "Bearer internal-secret")
+	request.Header.Set(headerInternalActor, "provider-1")
+	request.Header.Set(headerInternalActorType, "provider")
+	request.Header.Set("Idempotency-Key", "retry:request-4")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), `"retryable":true`) {
+		t.Fatalf("未知故障的恢复语义不正确：status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestInternalAgentLifecycleRejectsFormerManualReviewEvents(t *testing.T) {
+	for _, testCase := range []struct {
+		body       string
+		wantStatus int
+	}{
+		{body: `{"event":"admin_approve"}`, wantStatus: http.StatusForbidden},
+		{body: `{"event":"admin_approve","reviewReason":"人工通过"}`, wantStatus: http.StatusUnprocessableEntity},
+		{body: `{"event":"admin_approve","admissionDecisionId":"forged-decision"}`, wantStatus: http.StatusUnprocessableEntity},
+		{body: `{"event":"admin_reject","reviewReason":"人工驳回"}`, wantStatus: http.StatusUnprocessableEntity},
+	} {
+		lifecycle := &fakeAgentLifecycle{}
+		server := Server{InternalToken: "internal-secret", AgentLifecycle: lifecycle}
+		request := httptest.NewRequest(http.MethodPost, "/internal/agents/83100000-0000-4000-8000-000000000001/transitions", strings.NewReader(testCase.body))
+		request.Header.Set("Authorization", "Bearer internal-secret")
+		request.Header.Set(headerInternalActor, "0x1111111111111111111111111111111111111111")
+		request.Header.Set(headerInternalActorType, "admin")
+		request.Header.Set("Idempotency-Key", "former-review-event")
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != testCase.wantStatus || lifecycle.command.Event != nil {
+			t.Fatalf("旧人工审核事件不应绕过自动准入：status=%d command=%+v body=%s", response.Code, lifecycle.command, response.Body.String())
+		}
 	}
 }
 
