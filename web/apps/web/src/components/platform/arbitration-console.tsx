@@ -6,7 +6,6 @@ import { SelectField } from "@web/ui/components/select";
 import { Textarea } from "@web/ui/components/textarea";
 import {
 	AlertTriangle,
-	ArrowLeft,
 	CheckCircle2,
 	Loader2,
 	LockKeyhole,
@@ -19,6 +18,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import { useLocale } from "@/components/i18n/locale-provider";
+import PageBackLink from "@/components/platform/page-back-link";
 import {
 	decideTaskDispute,
 	getTaskDispute,
@@ -218,15 +218,9 @@ export default function ArbitrationConsole({
 	return (
 		<main className="min-h-[70vh] bg-accent">
 			<section className="border-b bg-card">
-				<div className="mx-auto max-w-295 px-4 py-8 sm:px-6 lg:px-10">
-					<Link
-						href="/workspace/disputes"
-						className="inline-flex items-center gap-1.5 text-muted-foreground text-sm hover:text-foreground"
-					>
-						<ArrowLeft className="size-4" />
-						{t("返回争议查询")}
-					</Link>
-					<div className="mt-5 flex flex-wrap items-start justify-between gap-4">
+				<div className="page-back-header mx-auto max-w-295 px-4 pb-8 sm:px-6 lg:px-10">
+					<PageBackLink href="/workspace/disputes" label="返回争议查询" />
+					<div className="flex flex-wrap items-start justify-between gap-4">
 						<div>
 							<p className="font-medium text-destructive text-xs">
 								{t("仲裁员独立工作台")}

@@ -4,7 +4,6 @@ import { Button } from "@web/ui/components/button";
 import { Skeleton } from "@web/ui/components/skeleton";
 import {
 	AlertTriangle,
-	ArrowLeft,
 	BarChart3,
 	Bot,
 	CheckCircle2,
@@ -19,6 +18,7 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale } from "@/components/i18n/locale-provider";
+import PageBackLink from "@/components/platform/page-back-link";
 import {
 	AgentDirectoryRequestError,
 	type AgentScoreDetails,
@@ -110,15 +110,9 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 	return (
 		<main className="min-h-[70vh] bg-accent">
 			<section className="border-b bg-card">
-				<div className="mx-auto max-w-275 px-4 py-8 sm:px-6">
-					<Link
-						href="/agents"
-						className="inline-flex items-center gap-1.5 text-muted-foreground text-sm hover:text-foreground"
-					>
-						<ArrowLeft className="size-4" />
-						{t("Agent 市场")}
-					</Link>
-					<div className="mt-5 flex flex-wrap items-start gap-5">
+				<div className="page-back-header mx-auto max-w-275 px-4 pb-8 sm:px-6">
+					<PageBackLink href="/agents" label="返回 Agent 市场" />
+					<div className="flex flex-wrap items-start gap-5">
 						<span className="flex size-16 items-center justify-center rounded-xl bg-secondary-container font-bold text-secondary">
 							{initials(agent.name)}
 						</span>
@@ -523,7 +517,6 @@ function DetailState({
 	description: string;
 	action?: React.ReactNode;
 }) {
-	const { t } = useLocale();
 	return (
 		<main className="mx-auto max-w-xl px-4 py-20 text-center">
 			<Icon className="mx-auto size-9 text-muted-foreground" />
@@ -531,9 +524,7 @@ function DetailState({
 			<p className="mt-2 text-muted-foreground">{description}</p>
 			<div className="mt-5 flex justify-center gap-3">
 				{action}
-				<Button variant="outline" render={<Link href="/agents" />}>
-					{t("返回 Agent 市场")}
-				</Button>
+				<PageBackLink href="/agents" label="返回 Agent 市场" />
 			</div>
 		</main>
 	);

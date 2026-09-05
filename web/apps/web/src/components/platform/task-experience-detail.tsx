@@ -6,7 +6,6 @@ import { SelectField } from "@web/ui/components/select";
 import { Textarea } from "@web/ui/components/textarea";
 import {
 	AlertCircle,
-	ArrowLeft,
 	Bot,
 	Check,
 	CheckCircle2,
@@ -44,6 +43,7 @@ import { DatePicker } from "@/components/platform/date-picker";
 import FormalWorkflowView, {
 	type SelectionActionResult,
 } from "@/components/platform/formal-workflow-view";
+import PageBackLink from "@/components/platform/page-back-link";
 import TaskAgentAllocationGraph from "@/components/platform/task-agent-allocation-graph";
 import {
 	acceptTaskResult,
@@ -181,7 +181,7 @@ export default function TaskExperienceDetail({
 	const returnHref =
 		returnSource === "workspace" ? "/workspace/tasks" : "/tasks";
 	const returnLabel =
-		returnSource === "workspace" ? t("返回工作台") : t("返回任务市场");
+		returnSource === "workspace" ? "返回工作台" : "返回任务市场";
 	const [data, setData] = useState<LoadedTask | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -500,17 +500,11 @@ export default function TaskExperienceDetail({
 	return (
 		<main className="min-h-[75vh] bg-accent">
 			<section className="border-b bg-card">
-				<div className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-12">
+				<div className="page-back-header mx-auto max-w-7xl px-4 pb-7 sm:px-6 lg:px-12">
+					<PageBackLink href={returnHref} label={returnLabel} />
 					<div className="flex flex-wrap items-start justify-between gap-5">
 						<div>
-							<Link
-								href={returnHref}
-								className="inline-flex cursor-pointer items-center gap-1.5 text-muted-foreground text-sm hover:text-foreground"
-							>
-								<ArrowLeft className="size-4" />
-								{returnLabel}
-							</Link>
-							<div className="mt-4 flex flex-wrap items-center gap-2">
+							<div className="flex flex-wrap items-center gap-2">
 								<StatusBadge status={task.status} />
 								<FormalStateBadge owner={data.owned !== null} />
 							</div>
@@ -3412,13 +3406,9 @@ function NotFoundState({ message }: { message: string }) {
 			<AlertCircle className="mx-auto size-9 text-warning" />
 			<h1 className="mt-4 font-bold text-2xl">{t("无法打开这个任务")}</h1>
 			<p className="mt-2 text-muted-foreground">{message}</p>
-			<Button
-				size="lg"
-				className="mt-7 min-h-12 rounded-xl px-6"
-				render={<Link href="/tasks" />}
-			>
-				{t("返回任务市场")}
-			</Button>
+			<div className="mt-7 flex justify-center">
+				<PageBackLink href="/tasks" label="返回任务市场" />
+			</div>
 		</main>
 	);
 }

@@ -34,6 +34,20 @@
 	}
 }
 
+/*
+ * 带返回入口的页头共用垂直节奏：顶部留白 16px，44px 点击区下方再留 36px。
+ * 返回链接须直接放在容器首行，后续内容不再单独添加顶部间距；错误态内的
+ * 返回操作不使用此容器，避免把居中提示中的操作强行变成页头导航。
+ */
+.page-back-header {
+	padding-top: 1rem;
+}
+
+.page-back-header > [data-slot="page-back-link"] {
+	display: flex;
+	margin-bottom: 2.25rem;
+}
+
 .site-ambient {
 	position: fixed;
 	inset: 0;

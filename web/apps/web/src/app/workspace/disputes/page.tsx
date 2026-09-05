@@ -5,16 +5,16 @@ import { Input } from "@web/ui/components/input";
 import { Scale, Search } from "lucide-react";
 
 import { useLocale } from "@/components/i18n/locale-provider";
-import WorkspaceBackLink from "@/components/platform/workspace-back-link";
+import PageBackLink from "@/components/platform/page-back-link";
 
 export default function WorkspaceDisputesPage() {
 	const { t } = useLocale();
 	return (
 		<main className="min-h-[70vh]">
 			<section className="page-hero border-b">
-				<div className="mx-auto max-w-7xl px-4 py-9 sm:px-6 lg:px-12">
-					<WorkspaceBackLink />
-					<div className="mt-5 flex items-start gap-3">
+				<div className="page-back-header mx-auto max-w-7xl px-4 pb-9 sm:px-6 lg:px-12">
+					<PageBackLink href="/workspace" label="返回工作台" />
+					<div className="flex items-start gap-3">
 						<span className="flex size-11 items-center justify-center rounded-xl bg-destructive-container text-destructive">
 							<Scale className="size-5" />
 						</span>

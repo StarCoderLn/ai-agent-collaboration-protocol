@@ -31,8 +31,8 @@ import {
 } from "@/lib/api/tasks";
 import { formatDate } from "@/lib/platform/format";
 import { formatMinorAmount } from "@/lib/platform/money";
+import PageBackLink from "./page-back-link";
 import { StatusBadge } from "./status-badge";
-import WorkspaceBackLink from "./workspace-back-link";
 
 type LoadState =
 	| Readonly<{ kind: "idle" }>
@@ -82,9 +82,9 @@ export default function WorkspaceDashboard() {
 		<main className="min-h-[70vh]">
 			<section className="page-hero border-b">
 				<div className="scan-beam" aria-hidden />
-				<div className="relative mx-auto max-w-7xl px-4 py-9 sm:px-6 lg:px-12">
-					<WorkspaceBackLink />
-					<div className="mt-5">
+				<div className="page-back-header relative mx-auto max-w-7xl px-4 pb-9 sm:px-6 lg:px-12">
+					<PageBackLink href="/workspace" label="返回工作台" />
+					<div>
 						<p className="cyber-kicker font-medium text-secondary text-xs">
 							MISSION CONTROL · PUBLISHER
 						</p>

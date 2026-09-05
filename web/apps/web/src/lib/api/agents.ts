@@ -10,11 +10,11 @@ import { BUSINESS_API_BASE_URL } from "./base-url";
  * - `PATCH /api/agents/:id`：编辑除钱包地址外的字段，返回完整档案。
  * - `PUT /api/agents/:id/credentials`：整体覆盖写凭证，只返回 `keyVersion`/`configured`，
  *   不存在、也不会新增任何返回明文或密文的路径（AC-002）。
+ * - `GET /api/agents/:id`：读取当前提供者拥有的单个 Agent 档案，用于编辑表单回显；
+ *   路由、所有权校验和生产依赖已经由 2.agent-registration T-012 完成。
  *
- * `GET /api/agents/:id`（读取单个档案用于回显编辑表单）尚未在 2.agent-registration
- * 的任务清单中定义为独立任务，这里按同一资源的 RESTful 惯例对接；真实 Route Handler 落地前
- * 调用会以网络错误呈现，页面已用 `AgentFetchError` 承接并展示可重试的错误态
- * （docs/DESIGN.md「Loading and empty states」）。
+ * 三个接口都以服务端 SIWE 会话识别提供者，不能接受浏览器自报的钱包地址。网络故障、
+ * 会话过期或响应契约损坏由 `AgentApiRequestError` 统一承接，页面据此展示可重试错误态。
  */
 
 const API_BASE_URL = BUSINESS_API_BASE_URL;
