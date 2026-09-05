@@ -11,6 +11,21 @@ const OWNER = `0x${"84".repeat(20)}`;
 const PAYOUT = `0x${"85".repeat(20)}`;
 const ACTIVE_AGENT = "84000000-0000-4000-8000-000000000001";
 const PENDING_AGENT = "84000000-0000-4000-8000-000000000002";
+const SETTLED_TASKS = [
+  "84000000-0000-4000-8000-000000000011",
+  "84000000-0000-4000-8000-000000000012",
+  "84000000-0000-4000-8000-000000000013",
+] as const;
+const DISTRIBUTIONS = [
+  "84000000-0000-4000-8000-000000000021",
+  "84000000-0000-4000-8000-000000000022",
+  "84000000-0000-4000-8000-000000000023",
+] as const;
+const ASSIGNMENTS = [
+  "84000000-0000-4000-8000-000000000031",
+  "84000000-0000-4000-8000-000000000032",
+  "84000000-0000-4000-8000-000000000033",
+] as const;
 
 integration("Agent directory PostgreSQL projections", () => {
   let pool: Pool;
@@ -21,7 +36,7 @@ integration("Agent directory PostgreSQL projections", () => {
   });
   afterAll(async () => { await cleanup(pool); await pool.end(); });
 
-  it("publishes only active redacted profiles while owners and reviewers receive their allowed fields", async () => {
+  it("publishes only active redacted profiles while owners receive private management fields", async () => {
     const directory = new PgAgentDirectory(asQueryExecutor(pool));
     const publicAgent = await directory.publicAgent(ACTIVE_AGENT);
     expect(publicAgent).toMatchObject({
@@ -46,14 +61,9 @@ integration("Agent directory PostgreSQL projections", () => {
       payoutWalletAddress: PAYOUT,
       serviceEndpoint: "http://127.0.0.1:9202/v1/workflow/execute",
       pauseReason: null,
+      coldStart: { riskLimited: true, completedTaskThreshold: 3 },
       health: { status: "healthy", consecutiveFailureCount: 0, intervalSeconds: 300 },
     });
-    const review = await directory.reviewQueue("pending_review");
-    expect(review.find((agent) => agent.id === PENDING_AGENT)).toMatchObject({
-      id: PENDING_AGENT, status: "pending_review",
-    });
-    expect(review.find((agent) => agent.id === PENDING_AGENT)).not.toHaveProperty("email");
-
     const scoring = new PgScoringRepository(asQueryExecutor(pool));
     await expect(scoring.readLatestScore(ACTIVE_AGENT)).resolves.toEqual({
       statusCode: 200,
@@ -65,8 +75,75 @@ integration("Agent directory PostgreSQL projections", () => {
         message: "尚无真实用户评分",
       },
     });
+
+    // 首次成功必须指完整的“交付、验收、结算”事实，而不是接单次数或评分次数。
+    // 评分样本保持为 0，证明新标识与冷启动风险门禁已经和贝叶斯先验解耦。
+    await insertSettledHistory(pool, 0);
+    await expect(directory.publicAgent(ACTIVE_AGENT)).resolves.toMatchObject({
+      isNew: false,
+      completedCount: 1,
+      sampleSize: 0,
+    });
+    await expect(directory.ownedAgents(OWNER)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: ACTIVE_AGENT,
+          coldStart: { riskLimited: true, completedTaskThreshold: 3 },
+        }),
+      ]),
+    );
+
+    await insertSettledHistory(pool, 1);
+    await insertSettledHistory(pool, 2);
+    await expect(directory.ownedAgents(OWNER)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: ACTIVE_AGENT,
+          isNew: false,
+          completedCount: 3,
+          coldStart: { riskLimited: false, completedTaskThreshold: 3 },
+        }),
+      ]),
+    );
   });
 });
+
+async function insertSettledHistory(pool: Pool, index: number): Promise<void> {
+  const taskId = SETTLED_TASKS[index];
+  const distributionId = DISTRIBUTIONS[index];
+  const assignmentId = ASSIGNMENTS[index];
+  if (taskId === undefined || distributionId === undefined || assignmentId === undefined) {
+    throw new Error(`SETTLED_HISTORY_FIXTURE_OUT_OF_RANGE:${index}`);
+  }
+  await pool.query(
+    `INSERT INTO tasks(
+       id,publisher_id,title,description,acceptance_criteria,deliverable_format,category_id,
+       category_version,tag_names,pricing_type,budget_min_minor,budget_max_minor,currency,
+       deadline,required_capability,attachments,visibility,status
+     ) VALUES (
+       $1,'integration-publisher',$2,'证明 Agent 已完成一次真实资金闭环。','交付已验收并完成结算',
+       '集成测试证据','40000000-0000-4000-8000-000000000001',1,ARRAY['agent'],
+       'fixed',1200000,1200000,'USDC','2090-01-02T00:00:00Z','产品工作流','[]'::jsonb,
+       'private','settled'
+     )`,
+    [taskId, `Agent 冷启动结算测试 ${index + 1}`],
+  );
+  await pool.query(
+    `INSERT INTO job_distribution_records(
+       id,task_id,rule_version,input_fingerprint,input_snapshot,candidates,filter_reasons,
+       final_selection_agent_id
+     ) VALUES ($1,$2,'ranking-v1',$3,'{}'::jsonb,'[]'::jsonb,'{}'::jsonb,$4)`,
+    [distributionId, taskId, `agent-cold-start-${index}`, ACTIVE_AGENT],
+  );
+  await pool.query(
+    `INSERT INTO task_assignments(
+       id,task_id,agent_id,distribution_record_id,agreed_amount_minor,status,version,
+       assigned_by,assigned_at,accept_by,responded_at
+     ) VALUES ($1,$2,$3,$4,1200000,'accepted',1,'integration-test',now(),
+       now() + interval '5 minutes',now())`,
+    [assignmentId, taskId, ACTIVE_AGENT, distributionId],
+  );
+}
 
 async function seed(pool: Pool): Promise<void> {
   await pool.query(
@@ -105,6 +182,9 @@ async function seed(pool: Pool): Promise<void> {
 }
 
 async function cleanup(pool: Pool): Promise<void> {
+  await pool.query("DELETE FROM task_assignments WHERE id = ANY($1::uuid[])", [ASSIGNMENTS]);
+  await pool.query("DELETE FROM job_distribution_records WHERE id = ANY($1::uuid[])", [DISTRIBUTIONS]);
+  await pool.query("DELETE FROM tasks WHERE id = ANY($1::uuid[])", [SETTLED_TASKS]);
   await pool.query("DELETE FROM agent_score_snapshots WHERE agent_id IN ($1,$2)", [ACTIVE_AGENT, PENDING_AGENT]);
   await pool.query("DELETE FROM agent_health_checks WHERE agent_id IN ($1,$2)", [ACTIVE_AGENT, PENDING_AGENT]);
   await pool.query("DELETE FROM agent_health_probe_schedule WHERE agent_id IN ($1,$2)", [ACTIVE_AGENT, PENDING_AGENT]);

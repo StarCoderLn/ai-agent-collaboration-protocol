@@ -144,7 +144,7 @@ export default function AgentMarketplace() {
 							{/* 桌面端有足够横向空间，保持价值说明为一行；窄屏仍允许自然换行，避免横向溢出。 */}
 							<p className="mt-3 text-muted-foreground lg:whitespace-nowrap">
 								{t(
-									"这里只展示已通过审核且当前可接单的 Agent。评分、完成记录与健康状态均来自正式业务数据。",
+									"这里只展示已通过自动验证且当前可接单的 Agent。评分、完成记录与健康状态均来自正式业务数据。",
 								)}
 							</p>
 						</div>
@@ -234,7 +234,7 @@ export default function AgentMarketplace() {
 								description={
 									hasActiveFilters
 										? t("调整能力分类或搜索关键词后重试。")
-										: t("通过审核并处于健康状态的 Agent 会显示在这里。")
+										: t("通过自动验证并处于健康状态的 Agent 会显示在这里。")
 								}
 							/>
 						)}
@@ -271,7 +271,7 @@ function AgentCard({ agent }: { agent: PublicDirectoryAgent }) {
 							</h3>
 							<ShieldCheck
 								className="size-4 shrink-0 text-primary"
-								aria-label={t("已通过平台审核")}
+								aria-label={t("已通过自动验证")}
 							/>
 						</div>
 						{/* 分类决定用户是否继续查看，必须完整展示；状态圆点禁止收缩，
@@ -284,8 +284,12 @@ function AgentCard({ agent }: { agent: PublicDirectoryAgent }) {
 						</div>
 					</div>
 					{agent.isNew && (
-						<span className="shrink-0 rounded-full bg-warning/10 px-2 py-1 font-medium text-[11px] text-warning">
-							{t("新入驻")}
+						<span
+							className="shrink-0 rounded-full bg-warning/10 px-2 py-1 font-medium text-[11px] text-warning"
+							// 徽标保持简短，完整判定口径通过原生悬停提示提供，避免用户把“新”误解为注册时间较短。
+							title={t("尚无已验收并结算的真实任务记录")}
+						>
+							{t("新 Agent")}
 						</span>
 					)}
 				</div>

@@ -223,6 +223,7 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		       COALESCE(load.count, 0)::int,
 		       COALESCE(score.sample_size, 0)::int,
 		       COALESCE((score_rule.bayesian_prior->>'priorWeight')::int, 20),
+		       COALESCE(status_config.probation_completed_task_threshold, 3)::int,
 		       COALESCE(history.probation_cap_minor, 50000000000000000)::bigint,
 		       COALESCE(score.dimensions,'{}'::jsonb),COALESCE(score.dispute_rate,0)::float8,
 		       COALESCE(similar_stats.completed,0)::int,COALESCE(similar_stats.on_time_rate,0)::float8,
@@ -323,7 +324,8 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 			&candidate.ID, &candidate.Name, &candidate.CategoryID, &candidate.Tags, &statusValue,
 			&pauseReason, &candidate.PriceMinor, &candidate.Currency, &candidate.Score, &candidate.Completed,
 			&estimatedSeconds, &candidate.ResponseMinutes, &candidate.CurrentLoad,
-			&candidate.RatingSampleSize, &candidate.PriorWeight, &candidate.ProbationBudgetCapMinor,
+			&candidate.RatingSampleSize, &candidate.PriorWeight,
+			&candidate.ProbationCompletedTaskThreshold, &candidate.ProbationBudgetCapMinor,
 			&dimensionsJSON, &candidate.DisputeRate, &candidate.SimilarCompleted,
 			&candidate.OnTimeRate, &candidate.ReworkRate, &casesJSON,
 		); err != nil {

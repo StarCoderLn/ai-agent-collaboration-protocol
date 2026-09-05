@@ -177,7 +177,7 @@ func TestInitialMatchCoordinatorPostgresAutomaticallyLocksFrozenTopCandidate(t *
 		id, name string
 		price    int64
 	}{
-		{integrationAgentID, "排序第一的 Agent", 6500},
+		{integrationAgentID, "排序第一的 Agent", 6500000},
 		{overBudgetAgentID, "排序第二的 Agent", 7500000},
 	} {
 		_, err = pool.Exec(ctx, `

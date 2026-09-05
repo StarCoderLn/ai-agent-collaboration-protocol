@@ -49,7 +49,8 @@ func TestRunMatchingPersistsCompleteCandidateEvidenceAndReplaysSameFingerprint(t
 			ID: "agent-1", Name: "Go 工程师", CategoryID: "code", Tags: []string{"Go", "API"},
 			State: domain.AgentState{Status: domain.AgentActive}, PriceMinor: 8_000, Score: 4.8,
 			Completed: 42, EstimatedDuration: 30 * time.Minute, ResponseMinutes: 2,
-			RatingSampleSize: 30, PriorWeight: 20, ProbationBudgetCapMinor: 5_000,
+			RatingSampleSize: 30, PriorWeight: 20,
+			ProbationCompletedTaskThreshold: 3, ProbationBudgetCapMinor: 5_000,
 		}},
 		Rules: domain.RankingRules{Version: "ranking-v1", TagMatchWeight: 30, QualityWeight: 30, PriceWeight: 15, ResponseSpeedWeight: 10, LoadWeight: 5, CompletedWeight: 10},
 	}}
@@ -77,6 +78,20 @@ func TestRunMatchingPersistsCompleteCandidateEvidenceAndReplaysSameFingerprint(t
 	}
 	if len(first.InputSnapshot) == 0 || first.RuleVersion != "ranking-v1" || first.InputFingerprint == "" {
 		t.Fatalf("record lacks replay evidence: %+v", first)
+	}
+}
+
+func TestCandidateViewsKeepsEmptyTagEvidenceAsJSONArrays(t *testing.T) {
+	views := candidateViews([]domain.RankedCandidate{{
+		Agent: domain.AgentCandidate{ID: "agent-without-tag-evidence"},
+	}}, nil)
+	if len(views) != 1 {
+		t.Fatalf("expected one candidate view, got %d", len(views))
+	}
+	// 空标签是合法的“没有匹配证据”，API 必须以 [] 表达；nil 会被 JSON 编码为
+	// null，导致严格的浏览器契约拒绝整份工作流响应。
+	if views[0].MatchedTags == nil || views[0].UnmatchedTags == nil {
+		t.Fatalf("empty tag evidence must remain arrays: %+v", views[0])
 	}
 }
 

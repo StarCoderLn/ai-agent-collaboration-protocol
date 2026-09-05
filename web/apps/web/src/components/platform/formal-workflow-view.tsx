@@ -1796,6 +1796,8 @@ function WorkflowCandidateSelection({
 					{orderedCandidates.map((candidate, index) => {
 						const currentlySelected =
 							candidate.agentId === node.selection?.agentId;
+						const hasVerifiedScoreEvidence =
+							hasCandidateScoreEvidence(candidate);
 						return (
 							<article
 								key={candidate.agentId}
@@ -1809,10 +1811,12 @@ function WorkflowCandidateSelection({
 											{confidenceLabel(candidate.confidence ?? "low", t)}
 										</p>
 									</div>
-									<span className="inline-flex items-center gap-1 rounded-full bg-secondary-container px-2 py-1 text-[10px] text-secondary">
-										<Star className="size-3 fill-current" />
-										{candidate.score.toFixed(1)}
-									</span>
+									{hasVerifiedScoreEvidence && (
+										<span className="inline-flex items-center gap-1 rounded-full bg-secondary-container px-2 py-1 text-[10px] text-secondary">
+											<Star className="size-3 fill-current" />
+											{candidate.score.toFixed(1)}
+										</span>
+									)}
 								</div>
 								<div className="mt-3 flex flex-wrap gap-1.5">
 									{(candidate.recommendationBadges ?? []).map((badge) => (
@@ -1863,31 +1867,42 @@ function WorkflowCandidateSelection({
 										value={formatRate(candidate.disputeRate ?? 0)}
 									/>
 								</div>
-								<div className="mt-4 space-y-2 border-primary/10 border-t pt-4">
-									{scoreDimensionRows(candidate.scoreDimensions ?? {}, t).map(
-										(dimension) => (
-											<div
-												key={dimension.label}
-												className="grid grid-cols-[5.5rem_1fr_2rem] items-center gap-2 text-[10px]"
-											>
-												<span className="text-muted-foreground">
-													{dimension.label}
-												</span>
-												<span className="h-1.5 overflow-hidden rounded-full bg-muted">
-													<span
-														className="block h-full rounded-full bg-gradient-to-r from-primary to-secondary"
-														style={{
-															width: `${Math.max(0, Math.min(100, dimension.value * 20))}%`,
-														}}
-													/>
-												</span>
-												<span className="text-right font-medium">
-													{dimension.value.toFixed(1)}
-												</span>
-											</div>
-										),
-									)}
-								</div>
+								{hasVerifiedScoreEvidence ? (
+									<div className="mt-4 space-y-2 border-primary/10 border-t pt-4">
+										{scoreDimensionRows(candidate.scoreDimensions ?? {}, t).map(
+											(dimension) => (
+												<div
+													key={dimension.label}
+													className="grid grid-cols-[5.5rem_1fr_2rem] items-center gap-2 text-[10px]"
+												>
+													<span className="text-muted-foreground">
+														{dimension.label}
+													</span>
+													<span className="h-1.5 overflow-hidden rounded-full bg-muted">
+														<span
+															className="block h-full rounded-full bg-gradient-to-r from-primary to-secondary"
+															style={{
+																width: `${Math.max(0, Math.min(100, dimension.value * 20))}%`,
+															}}
+														/>
+													</span>
+													<span className="text-right font-medium">
+														{dimension.value.toFixed(1)}
+													</span>
+												</div>
+											),
+										)}
+									</div>
+								) : (
+									<div className="mt-4 rounded-xl border border-primary/15 border-dashed bg-accent/20 px-3 py-2.5">
+										<p className="font-medium text-xs">
+											{t("暂无真实履约评分")}
+										</p>
+										<p className="mt-1 text-[10px] text-muted-foreground leading-4">
+											{t("完成首个已验收任务后展示五维评分")}
+										</p>
+									</div>
+								)}
 								{(candidate.deliveryCases?.length ?? 0) > 0 && (
 									<div className="mt-4 space-y-2 border-primary/10 border-t pt-4">
 										<p className="font-medium text-xs">{t("相关交付案例")}</p>
@@ -2541,6 +2556,22 @@ function CapabilityEvidence({
 				)}
 			</div>
 		</div>
+	);
+}
+
+/**
+ * 内部冷启动先验不能冒充真实履约评分。只有评分、结算历史或仲裁事实至少存在一项时，
+ * 候选卡才展示综合分与五维条形图；先验仍保留在服务端供排序稳定性使用。
+ */
+function hasCandidateScoreEvidence(candidate: TaskCandidate): boolean {
+	if ((candidate.sampleSize ?? 0) > 0 || candidate.completed > 0) return true;
+	return Object.values(candidate.scoreDimensions ?? {}).some(
+		(dimension) =>
+			typeof dimension === "object" &&
+			dimension !== null &&
+			"sampleSize" in dimension &&
+			typeof dimension.sampleSize === "number" &&
+			dimension.sampleSize > 0,
 	);
 }
 

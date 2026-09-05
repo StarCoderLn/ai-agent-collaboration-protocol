@@ -17,27 +17,30 @@ type AgentDeliveryCase struct {
 }
 
 type AgentCandidate struct {
-	ID                      string
-	Name                    string
-	CategoryID              string
-	Tags                    []string
-	State                   AgentState
-	PriceMinor              int64
-	Currency                string
-	Score                   float64
-	Completed               int
-	EstimatedDuration       time.Duration
-	ResponseMinutes         int
-	CurrentLoad             int
-	RatingSampleSize        int
-	PriorWeight             int
-	ProbationBudgetCapMinor int64
-	ScoreDimensions         json.RawMessage
-	DisputeRate             float64
-	SimilarCompleted        int
-	OnTimeRate              float64
-	ReworkRate              float64
-	DeliveryCases           []AgentDeliveryCase
+	ID                string
+	Name              string
+	CategoryID        string
+	Tags              []string
+	State             AgentState
+	PriceMinor        int64
+	Currency          string
+	Score             float64
+	Completed         int
+	EstimatedDuration time.Duration
+	ResponseMinutes   int
+	CurrentLoad       int
+	RatingSampleSize  int
+	PriorWeight       int
+	// ProbationCompletedTaskThreshold 是解除冷启动报价限制所需的真实结算任务数。
+	// 它与评分先验权重分开：前者控制早期资金风险，后者只描述评分证据置信度。
+	ProbationCompletedTaskThreshold int
+	ProbationBudgetCapMinor         int64
+	ScoreDimensions                 json.RawMessage
+	DisputeRate                     float64
+	SimilarCompleted                int
+	OnTimeRate                      float64
+	ReworkRate                      float64
+	DeliveryCases                   []AgentDeliveryCase
 }
 
 type MatchTask struct {
@@ -61,8 +64,9 @@ const (
 	ProbationBudgetExceeded EligibilityReason = "probation_budget_exceeded"
 )
 
-// ValidateHardConstraints 是资格过滤的单一权威入口。受控上线不是冗余字段，直接
-// 由评分样本量与当前规则 prior weight 比较得出。
+// ValidateHardConstraints 是资格过滤的单一权威入口。冷启动报价限制只依赖已经验收
+// 并结算的真实任务数，不能复用评分样本量：用户可能完成任务但不提交评分，两类事实
+// 的增长速度并不一致，把它们绑定会让 Agent 无法预期何时解除限制。
 func ValidateHardConstraints(task MatchTask, agent AgentCandidate, now time.Time) EligibilityReason {
 	if agent.CategoryID != task.CategoryID {
 		return WrongCategory
@@ -80,9 +84,9 @@ func ValidateHardConstraints(task MatchTask, agent AgentCandidate, now time.Time
 		return CannotMeetDeadline
 	}
 	// 用户预算是规划参考，不是候选资格。若在这里按预算过滤，用户看不到更优但略贵的
-	// Agent，也无法先选组合再得到准确总价。受控上线额度是另一条安全规则：它比较
+	// Agent，也无法先选组合再得到准确总价。冷启动额度是另一条安全规则：它比较
 	// Agent 自己的冻结报价与准入上限，而不是用用户填写的整单预算误伤所有候选。
-	if agent.RatingSampleSize < agent.PriorWeight && agent.PriceMinor > agent.ProbationBudgetCapMinor {
+	if agent.Completed < agent.ProbationCompletedTaskThreshold && agent.PriceMinor > agent.ProbationBudgetCapMinor {
 		return ProbationBudgetExceeded
 	}
 	return Eligible

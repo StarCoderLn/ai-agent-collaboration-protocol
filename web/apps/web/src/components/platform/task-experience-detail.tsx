@@ -1552,8 +1552,12 @@ function CandidateSelection({
 											</span>
 										)}
 										{candidate.isNew && (
-											<span className="rounded-full bg-warning/10 px-2 py-0.5 text-[10px] text-warning">
-												{t("低样本")}
+											<span
+												className="rounded-full bg-warning/10 px-2 py-0.5 text-[10px] text-warning"
+												// 候选选择时解释标识来源，帮助发布者把交付履历与评分样本、自动验证状态区分开。
+												title={t("尚无已验收并结算的真实任务记录")}
+											>
+												{t("新 Agent")}
 											</span>
 										)}
 									</div>

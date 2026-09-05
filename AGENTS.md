@@ -170,3 +170,4 @@
 - [9.dispatch-and-acceptance] 托管意图创建即锁定选人与总价；此前改选须事务重算。
 - [6.escrow-sync-and-wallet] 本地 Anvil 交易须读 pending nonce，避免钱包跨实例缓存造成队列空洞。
 - [13.dispute-and-arbitration] 本地 TestYD 不得覆盖钱包目录中的 Sepolia 产品 YD。
+- [3.agent-health-lifecycle] 新标识、冷启动资金风控和评分置信度须使用各自事实，禁止复用阈值。

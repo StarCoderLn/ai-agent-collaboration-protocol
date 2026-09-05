@@ -313,7 +313,7 @@ export default function Home() {
 							</h2>
 							<p className="mt-3 max-w-2xl text-muted-foreground">
 								{t(
-									"对比匹配标签、样本量、历史完成率、报价和预计时长。新 Agent 会明确标识受控上线期。",
+									"对比匹配标签、样本量、历史完成率、报价和预计时长；尚无正式交付记录的 Agent 会明确标记为新 Agent。",
 								)}
 							</p>
 						</div>

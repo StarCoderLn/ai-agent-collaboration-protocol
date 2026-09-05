@@ -23,7 +23,8 @@ const agent = {
 	disputeRate: 0,
 	completedCount: 1,
 	successRate: 1,
-	isNew: true,
+	// 已完成一次真实结算后即不再是“新 Agent”；评分仍只有一份，继续展示低样本。
+	isNew: false,
 	createdAt: "2026-08-23T00:00:00.000Z",
 	updatedAt: "2026-08-23T01:00:00.000Z",
 	verified: true,
@@ -101,6 +102,8 @@ describe("AgentDetail", () => {
 		expect(screen.getAllByText("全周期")).toHaveLength(5);
 		expect(screen.getAllByText(/规则 score-v1/)).toHaveLength(2);
 		expect(screen.getByText(/原始 ID 仅供平台审计/)).toBeInTheDocument();
+		expect(screen.queryByText("新 Agent")).not.toBeInTheDocument();
+		expect(screen.queryByText(/受控上线/)).not.toBeInTheDocument();
 	});
 
 	it("零样本时只展示暂无评分，不把冷启动先验描述成真实评价", async () => {
@@ -109,6 +112,7 @@ describe("AgentDetail", () => {
 			score: null,
 			sampleSize: 0,
 			completedCount: 0,
+			isNew: true,
 		};
 		const unratedScore = {
 			agentId,
@@ -127,6 +131,10 @@ describe("AgentDetail", () => {
 		render(<AgentDetail agentId={agentId} />);
 
 		expect(await screen.findAllByText("暂无评分")).not.toHaveLength(0);
+		expect(screen.getByText("新 Agent")).toHaveAttribute(
+			"title",
+			"尚无已验收并结算的真实任务记录",
+		);
 		expect(
 			screen.getByText("当前没有真实用户评分，平台不会用冷启动分数补位。"),
 		).toBeInTheDocument();

@@ -92,11 +92,11 @@ func TestMatchingIsDeterministicAndDoesNotHideCandidatesByBudget(t *testing.T) {
 	// 规划预算故意低于两个合格候选的报价，证明它不会作为候选硬过滤条件。
 	task := MatchTask{ID: "task-1", CategoryID: "code", Tags: []string{"Go", "API"}, BudgetMinor: 3_000, Deadline: now.Add(time.Hour)}
 	agents := []AgentCandidate{
-		{ID: "b", CategoryID: "code", Tags: []string{"Go"}, State: AgentState{Status: AgentActive}, PriceMinor: 9_000, Score: 4.5, Completed: 20, EstimatedDuration: 30 * time.Minute, ResponseMinutes: 2, RatingSampleSize: 30, PriorWeight: 20, ProbationBudgetCapMinor: 5_000},
-		{ID: "a", CategoryID: "code", Tags: []string{"Go", "API"}, State: AgentState{Status: AgentActive}, PriceMinor: 4_000, Score: 4.4, Completed: 40, EstimatedDuration: 30 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 2, PriorWeight: 20, ProbationBudgetCapMinor: 5_000},
-		{ID: "risk", CategoryID: "code", Tags: []string{"Go", "API"}, State: AgentState{Status: AgentActive}, PriceMinor: 6_000, Score: 4.7, Completed: 1, EstimatedDuration: 20 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 1, PriorWeight: 20, ProbationBudgetCapMinor: 5_000},
-		{ID: "c", CategoryID: "code", Tags: []string{"API"}, State: AgentState{Status: AgentPaused}, PriceMinor: 8_000, Score: 4.9, Completed: 100, EstimatedDuration: 20 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 100, PriorWeight: 20, ProbationBudgetCapMinor: 5_000},
-		{ID: "d", CategoryID: "code", Tags: []string{"Go"}, State: AgentState{Status: AgentPendingReview}, PriceMinor: 7_000, Score: 4.8, Completed: 80, EstimatedDuration: 20 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 100, PriorWeight: 20, ProbationBudgetCapMinor: 5_000},
+		{ID: "b", CategoryID: "code", Tags: []string{"Go"}, State: AgentState{Status: AgentActive}, PriceMinor: 9_000, Score: 4.5, Completed: 20, EstimatedDuration: 30 * time.Minute, ResponseMinutes: 2, RatingSampleSize: 30, PriorWeight: 20, ProbationCompletedTaskThreshold: 3, ProbationBudgetCapMinor: 5_000},
+		{ID: "a", CategoryID: "code", Tags: []string{"Go", "API"}, State: AgentState{Status: AgentActive}, PriceMinor: 4_000, Score: 4.4, Completed: 40, EstimatedDuration: 30 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 2, PriorWeight: 20, ProbationCompletedTaskThreshold: 3, ProbationBudgetCapMinor: 5_000},
+		{ID: "risk", CategoryID: "code", Tags: []string{"Go", "API"}, State: AgentState{Status: AgentActive}, PriceMinor: 6_000, Score: 4.7, Completed: 1, EstimatedDuration: 20 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 1, PriorWeight: 20, ProbationCompletedTaskThreshold: 3, ProbationBudgetCapMinor: 5_000},
+		{ID: "c", CategoryID: "code", Tags: []string{"API"}, State: AgentState{Status: AgentPaused}, PriceMinor: 8_000, Score: 4.9, Completed: 100, EstimatedDuration: 20 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 100, PriorWeight: 20, ProbationCompletedTaskThreshold: 3, ProbationBudgetCapMinor: 5_000},
+		{ID: "d", CategoryID: "code", Tags: []string{"Go"}, State: AgentState{Status: AgentPendingReview}, PriceMinor: 7_000, Score: 4.8, Completed: 80, EstimatedDuration: 20 * time.Minute, ResponseMinutes: 1, RatingSampleSize: 100, PriorWeight: 20, ProbationCompletedTaskThreshold: 3, ProbationBudgetCapMinor: 5_000},
 	}
 	rules := RankingRules{Version: "ranking-v1", TagMatchWeight: 30, QualityWeight: 30, PriceWeight: 15, ResponseSpeedWeight: 10, LoadWeight: 5, CompletedWeight: 10}
 	first, err := MatchCandidates(task, agents, now, rules)
@@ -115,6 +115,31 @@ func TestMatchingIsDeterministicAndDoesNotHideCandidatesByBudget(t *testing.T) {
 	}
 	if second.Candidates[0].RankScore != first.Candidates[0].RankScore {
 		t.Fatal("same input must reproduce ranking")
+	}
+}
+
+func TestColdStartRiskAndNewBadgeUseDifferentEvidence(t *testing.T) {
+	now := time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)
+	task := MatchTask{ID: "task", CategoryID: "code", Deadline: now.Add(time.Hour)}
+	base := AgentCandidate{
+		ID: "agent", CategoryID: "code", State: AgentState{Status: AgentActive},
+		PriceMinor: 6_000, Currency: "", EstimatedDuration: 10 * time.Minute,
+		RatingSampleSize: 0, PriorWeight: 20,
+		ProbationCompletedTaskThreshold: 3, ProbationBudgetCapMinor: 5_000,
+	}
+
+	// 0、1、2 次真实结算都处于报价保护期；恰好达到 3 次后解除。评分样本始终为 0，
+	// 用来证明贝叶斯低样本状态不会继续延长资金风险限制。
+	for _, completed := range []int{0, 1, 2} {
+		agent := base
+		agent.Completed = completed
+		if got := ValidateHardConstraints(task, agent, now); got != ProbationBudgetExceeded {
+			t.Fatalf("completed=%d should remain risk-limited, got %s", completed, got)
+		}
+	}
+	base.Completed = 3
+	if got := ValidateHardConstraints(task, base, now); got != Eligible {
+		t.Fatalf("three settled tasks must release cold-start limit even with zero ratings, got %s", got)
 	}
 }
 

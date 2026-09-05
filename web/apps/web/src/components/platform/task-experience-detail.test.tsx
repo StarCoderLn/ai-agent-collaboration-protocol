@@ -1063,7 +1063,10 @@ describe("formal task detail", () => {
 		expect(screen.getAllByText("120 USDC").length).toBeGreaterThanOrEqual(1);
 		expect(screen.getByText("预计 10 分钟")).toBeInTheDocument();
 		expect(screen.getByText("12 次完成")).toBeInTheDocument();
-		expect(screen.getByText("低样本")).toBeInTheDocument();
+		expect(screen.getByText("新 Agent")).toHaveAttribute(
+			"title",
+			"尚无已验收并结算的真实任务记录",
+		);
 		expect(getTaskExecutionStatus).toHaveBeenCalledWith(
 			taskId,
 			expect.any(AbortSignal),

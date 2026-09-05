@@ -129,8 +129,12 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 									{t("自动验证通过")}
 								</span>
 								{agent.isNew && (
-									<span className="rounded-full bg-warning/10 px-2.5 py-1 font-medium text-warning text-xs">
-										{t("受控上线期")}
+									<span
+										className="rounded-full bg-warning/10 px-2.5 py-1 font-medium text-warning text-xs"
+										// 详情页沿用同一解释，保证市场卡片与详情页不会出现两套“新 Agent”语义。
+										title={t("尚无已验收并结算的真实任务记录")}
+									>
+										{t("新 Agent")}
 									</span>
 								)}
 							</div>
@@ -284,19 +288,6 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 							<Stat value={String(score.sampleSize)} label={t("评分样本")} />
 						</div>
 					</section>
-					{agent.isNew && (
-						<section className="rounded-xl border border-warning/20 bg-warning/10 p-4">
-							<p className="flex items-center gap-2 font-semibold text-sm text-warning">
-								<Gauge className="size-4" />
-								{t("受控上线期说明")}
-							</p>
-							<p className="mt-2 text-warning/90 text-xs leading-5">
-								{t(
-									"评分样本尚未达到当前规则的先验权重。平台会限制风险暴露，样本达标后自动解除该标记。",
-								)}
-							</p>
-						</section>
-					)}
 				</aside>
 			</div>
 		</main>

@@ -254,25 +254,32 @@ func candidateViews(candidates []domain.RankedCandidate, taskTags []string) []Ca
 		views = append(views, CandidateView{
 			AgentID:                 candidate.Agent.ID,
 			Name:                    candidate.Agent.Name,
-			MatchedTags:             append([]string(nil), candidate.MatchedTags...),
+			// 空匹配也是合法证据，必须从权威出口稳定编码成 []。以 nil 为起点复制空切片
+			// 会让 encoding/json 输出 null，严格客户端会因此拒绝整份候选快照。
+			MatchedTags: append(
+				make([]string, 0, len(candidate.MatchedTags)),
+				candidate.MatchedTags...,
+			),
 			UnmatchedTags:           unmatchedTags(taskTags, candidate.MatchedTags),
 			QuoteMinor:              strconv.FormatInt(candidate.Agent.PriceMinor, 10),
 			EstimatedDurationSecond: int64(candidate.Agent.EstimatedDuration / time.Second),
 			Score:                   candidate.Agent.Score,
 			Completed:               candidate.Agent.Completed,
 			ResponseMinutes:         candidate.Agent.ResponseMinutes,
-			IsNew:                   candidate.Agent.RatingSampleSize < candidate.Agent.PriorWeight,
-			RankScore:               strconv.FormatInt(candidate.RankScore, 10),
-			RecommendationBadges:    badges,
-			TaskFitScore:            fitScore,
-			Confidence:              confidence(candidate.Agent.RatingSampleSize, candidate.Agent.PriorWeight),
-			SampleSize:              candidate.Agent.RatingSampleSize,
-			SimilarCompleted:        candidate.Agent.SimilarCompleted,
-			OnTimeRate:              candidate.Agent.OnTimeRate,
-			ReworkRate:              candidate.Agent.ReworkRate,
-			DisputeRate:             candidate.Agent.DisputeRate,
-			CurrentLoad:             candidate.Agent.CurrentLoad,
-			ScoreDimensions:         append(json.RawMessage(nil), candidate.Agent.ScoreDimensions...),
+			// “新 Agent”只表达尚无真实结算记录，不再借用评分低样本状态。一次任务必须
+			// 完成、验收并结算后 Completed 才会增加，单纯接单或执行失败不会移除标识。
+			IsNew:                candidate.Agent.Completed == 0,
+			RankScore:            strconv.FormatInt(candidate.RankScore, 10),
+			RecommendationBadges: badges,
+			TaskFitScore:         fitScore,
+			Confidence:           confidence(candidate.Agent.RatingSampleSize, candidate.Agent.PriorWeight),
+			SampleSize:           candidate.Agent.RatingSampleSize,
+			SimilarCompleted:     candidate.Agent.SimilarCompleted,
+			OnTimeRate:           candidate.Agent.OnTimeRate,
+			ReworkRate:           candidate.Agent.ReworkRate,
+			DisputeRate:          candidate.Agent.DisputeRate,
+			CurrentLoad:          candidate.Agent.CurrentLoad,
+			ScoreDimensions:      append(json.RawMessage(nil), candidate.Agent.ScoreDimensions...),
 			// API 契约中的案例始终是数组。没有案例时输出 [] 而不是 null，避免浏览器把
 			// 整份候选响应判定为结构损坏，也让调用方无需维护两套“没有数据”语义。
 			DeliveryCases: append(

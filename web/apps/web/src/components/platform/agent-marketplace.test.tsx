@@ -94,7 +94,10 @@ describe("AgentMarketplace", () => {
 		expect(screen.getByText("来自正式 Agent 目录 API")).toBeInTheDocument();
 		expect(screen.getByText("Agent 提供者")).toBeInTheDocument();
 		expect(screen.getByText("0x1234…5678")).toBeInTheDocument();
-		expect(screen.getByText("新入驻")).toBeInTheDocument();
+		expect(screen.getByText("新 Agent")).toHaveAttribute(
+			"title",
+			"尚无已验收并结算的真实任务记录",
+		);
 		expect(screen.queryByText("健康探测正常")).not.toBeInTheDocument();
 		expect(screen.getByText("暂无评分")).toBeInTheDocument();
 		expect(screen.queryByText("3.5")).not.toBeInTheDocument();
