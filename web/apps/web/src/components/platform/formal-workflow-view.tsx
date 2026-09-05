@@ -149,8 +149,9 @@ const NODE_TYPES = {
  * 通过带发布者会话的正式命令接口提交，成功后由父页面重新读取整张工作流。
  */
 export default function FormalWorkflowView({
-	taskDeadline = null,
 	taskTitle,
+	taskDeadline = null,
+	viewportResetKey = "",
 	workflow,
 	viewMode,
 	selectionEditable = false,
@@ -160,7 +161,16 @@ export default function FormalWorkflowView({
 	runSelection,
 }: {
 	taskTitle: string;
+	/**
+	 * 截止时间属于任务合同而不是某个工作流节点。仅在候选快照明确返回
+	 * `deadline_passed` 时用于提供发布者可见、可审计的恢复入口。
+	 */
 	taskDeadline?: string | null;
+	/**
+	 * 托管等任务级事实不会修改工作流节点，但会改变画布所在面板的布局。父页面用
+	 * 权威状态版本触发一次视口重建，避免 React Flow 沿用已经失效的内部变换矩阵。
+	 */
+	viewportResetKey?: string;
 	workflow: FormalWorkflow;
 	viewMode: FormalWorkflowViewMode;
 	selectionEditable?: boolean;
@@ -280,6 +290,23 @@ export default function FormalWorkflowView({
 			}),
 		[orderedNodes, reselection?.nodeId, selectedNodeId, taskTitle, workflow],
 	);
+	// React Flow 会保留内部视口。托管确认使工作流从 planning 进入 running 时，如果沿用
+	// 旧视口，节点虽然仍在数据中却可能全部落到可视区域外。这个键只覆盖会改变画布内容
+	// 或布局的权威事实，普通轮询得到相同状态时不会重挂载，也不会打断用户缩放。
+	const graphViewportKey = useMemo(
+		() =>
+			[
+				viewportResetKey,
+				workflow.run.status,
+				...orderedNodes.flatMap((node) => [
+					node.id,
+					node.status,
+					node.selection?.agentId ?? "",
+					node.assignment?.agentId ?? "",
+				]),
+			].join(":"),
+		[orderedNodes, viewportResetKey, workflow.run.status],
+	);
 	const graphHeight = Math.max(520, Math.min(820, graph.contentHeight));
 
 	return (
@@ -333,6 +360,7 @@ export default function FormalWorkflowView({
 						style={{ height: isFullscreen ? "100vh" : graphHeight }}
 					>
 						<ReactFlow<WorkflowGraphNode, Edge>
+							key={graphViewportKey}
 							nodes={graph.nodes}
 							edges={graph.edges}
 							nodeTypes={NODE_TYPES}

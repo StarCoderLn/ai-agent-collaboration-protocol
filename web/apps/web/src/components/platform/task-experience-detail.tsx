@@ -199,6 +199,9 @@ export default function TaskExperienceDetail({
 	// 阶段 Tab 只在“任务或访问身份首次加载”时根据权威状态定位一次。服务端轮询会持续
 	// 更新任务事实，但不能反复覆盖用户正在查看的阶段，更不能在重试后把页面抢回旧产物。
 	const initializedStageKey = useRef<string | null>(null);
+	// 单独记录权威流程曾经开放到哪一步，只用于识别“托管完成后首次开始执行”这一条
+	// 自动前进路径；后续产物完成仍保留用户当前视角，不会强制跳到验收页。
+	const previousCurrentFlowStage = useRef(0);
 	const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	// httpOnly 会话只能通过异步接口恢复。checking/connecting 期间不能把尚未确定的身份
 	// 当成访客，否则私密任务会先命中公开 404，短暂渲染成“无权访问”。钱包地址纳入
@@ -383,6 +386,20 @@ export default function TaskExperienceDetail({
 				: formalFlowInitialStageIndex(data.workflow, displayTask(data).status),
 		);
 	}, [currentFlowStage, data, hasTaskData, taskAccessIdentity, taskId]);
+
+	useEffect(() => {
+		const previousStage = previousCurrentFlowStage.current;
+		previousCurrentFlowStage.current = currentFlowStage;
+		// 用户在匹配页等待托管时，首个 Agent 真正开始工作后应直接进入执行现场。
+		// 即使 Agent 很快完成并已到验收，也先展示执行阶段，避免跨过整个工作过程。
+		if (
+			previousStage === 1 &&
+			currentFlowStage >= 2 &&
+			selectedFlowStage === 1
+		) {
+			setSelectedFlowStage(2);
+		}
+	}, [currentFlowStage, selectedFlowStage]);
 
 	/**
 	 * 所有详情页命令共享同一套加载与刷新语义，但错误必须出现在用户操作发生的位置。
@@ -615,6 +632,8 @@ export default function TaskExperienceDetail({
 							<div className="space-y-6">
 								<FormalWorkflowView
 									taskTitle={task.title}
+									taskDeadline={task.deadline}
+									viewportResetKey={`${task.statusVersion ?? "unknown"}:${data.escrow?.status ?? "none"}`}
 									workflow={data.workflow}
 									viewMode={
 										selectedFlowStage === 1
@@ -1387,6 +1406,14 @@ async function broadcastEscrow(
 			onProgress: setProgress,
 		});
 		setPendingSubmission(null);
+		try {
+			// Anvil 不会自然继续出块，本地体验必须在 Deposit 已登记后自动挖确认块并
+			// 调用权威同步 worker。测试网和主网会直接跳过，由正式链监听服务处理。
+			await advanceLocalChainForDemo("confirm-deposit");
+		} catch {
+			// Deposit 已经广播并登记，自动推进失败不能再把整笔操作描述成托管失败，
+			// 更不能诱导用户重发。父级随后刷新为“链上确认中”，仍可安全手动重试同步。
+		}
 	} catch (caught) {
 		if (
 			caught instanceof EscrowDepositFlowError &&

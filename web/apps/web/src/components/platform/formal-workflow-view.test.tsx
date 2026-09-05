@@ -127,6 +127,36 @@ describe("FormalWorkflowView", () => {
 		).toBeInTheDocument();
 	});
 
+	it("托管等任务级状态变化后重新挂载画布，使 React Flow 重新适配全部节点", () => {
+		const workflow = workflowFixture();
+		const view = render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				viewportResetKey="3:none"
+				workflow={workflow}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+		const initialCanvas = screen.getByTestId("rf__wrapper");
+
+		view.rerender(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				viewportResetKey="4:submitted"
+				workflow={workflow}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		expect(screen.getByTestId("rf__wrapper")).not.toBe(initialCanvas);
+		expect(screen.getByText("开发可信工作台")).toBeInTheDocument();
+	});
 
 	it("单一候选总价不伪装成区间，并直接说明报价合计来源", () => {
 		const workflow = singleNodeWorkflow();

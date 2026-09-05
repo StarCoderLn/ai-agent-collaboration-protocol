@@ -37,6 +37,7 @@ import {
 	updateTaskMatchCriteria,
 } from "@/lib/api/tasks";
 import {
+	advanceLocalChainForDemo,
 	EscrowDepositFlowError,
 	startEscrowDeposit,
 } from "@/lib/wallet/escrow-deposit-flow";
@@ -102,6 +103,7 @@ vi.mock("@/lib/wallet/escrow-deposit-flow", async (importOriginal) => {
 		await importOriginal<typeof import("@/lib/wallet/escrow-deposit-flow")>();
 	return {
 		...actual,
+		advanceLocalChainForDemo: vi.fn(async () => undefined),
 		startEscrowDeposit: vi.fn(),
 	};
 });
@@ -699,6 +701,64 @@ describe("formal task detail", () => {
 		expect(
 			screen.queryByRole("button", { name: /托管/ }),
 		).not.toBeInTheDocument();
+	});
+
+	it("本地托管登记成功后自动推进确认，不再要求用户手动刷新", async () => {
+		await setTaskStatus("awaiting_escrow");
+		vi.mocked(getTaskEscrowStatus).mockRejectedValue(
+			new TaskApiRequestError(404, {
+				error_code: "ESCROW_NOT_FOUND",
+				message: "该任务尚未创建托管意图",
+				retryable: false,
+			}),
+		);
+		vi.mocked(getTaskWorkflow).mockResolvedValue(
+			planningWorkflowFixture("128000000"),
+		);
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+		fireEvent.click(
+			await screen.findByRole("button", { name: "开始托管 128 USDC" }),
+		);
+
+		await waitFor(() => expect(startEscrowDeposit).toHaveBeenCalledTimes(1));
+		expect(advanceLocalChainForDemo).toHaveBeenCalledWith("confirm-deposit");
+	});
+
+	it("托管后首个节点开始执行时自动切换到 Agent 执行阶段", async () => {
+		await setTaskStatus("awaiting_escrow");
+		vi.mocked(getTaskWorkflow).mockResolvedValue(
+			planningWorkflowFixture("128000000"),
+		);
+
+		render(<TaskExperienceDetail taskId={taskId} />);
+
+		const allocationTab = await screen.findByRole("tab", {
+			name: "查看匹配与接单阶段详情",
+		});
+		expect(allocationTab).toHaveAttribute("aria-selected", "true");
+
+		await setTaskStatus("executing");
+		vi.mocked(getTaskWorkflow).mockResolvedValue(
+			formalWorkflowNodeStateFixture("executing", 20, false),
+		);
+		await waitFor(() => expect(subscribedHandlers).toBeDefined());
+		act(() =>
+			subscribedHandlers?.onEvent({
+				id: "88",
+				type: "task.execution_started",
+				taskId,
+				statusVersion: "8",
+				payload: { status: "executing" },
+				createdAt: "2026-08-29T00:10:00.000Z",
+			}),
+		);
+
+		await waitFor(() =>
+			expect(
+				screen.getByRole("tab", { name: "查看Agent 执行阶段详情" }),
+			).toHaveAttribute("aria-selected", "true"),
+		);
 	});
 
 	it("旧版任务缺少工作流且只有未广播的准备记录时不再展示托管入口", async () => {
