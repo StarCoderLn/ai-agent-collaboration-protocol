@@ -93,10 +93,10 @@ async function main() {
   }
   assertLoopbackUrl(DATABASE_URL, "DATABASE_URL");
   assertDistinctPorts(PORTS);
-  const evidenceEnv = parseEnv(await readFile(path.join(ROOT, "agents/evidence-research/.env"), "utf8"));
-  const apiKey = required(evidenceEnv, "DEEPSEEK_API_KEY");
-  const agentSecret = required(evidenceEnv, "EVIDENCE_AGENT_SECRET");
-  if (agentSecret.length < 16) throw new Error("EVIDENCE_AGENT_SECRET must contain at least 16 characters");
+  const paperEnv = parseEnv(await readFile(path.join(ROOT, "agents/paper-writing/.env"), "utf8"));
+  const apiKey = required(paperEnv, "DEEPSEEK_API_KEY");
+  const agentSecret = required(paperEnv, "WORKFLOW_AGENT_SECRET");
+  if (agentSecret.length < 16) throw new Error("WORKFLOW_AGENT_SECRET must contain at least 16 characters");
 
   // 应用服务携带数据库、内部 token 与本次部署的 Escrow 地址。仅看端口或普通 health
   // 无法证明这些配置相容，所以已占用时明确失败；用户可通过 AICP_*_PORT 选择隔离端口。
@@ -137,10 +137,10 @@ async function main() {
     cwd: path.join(ROOT, "agents/product-workflow"),
     env: {
       DEEPSEEK_API_KEY: apiKey,
-      DEEPSEEK_BASE_URL: evidenceEnv.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+      DEEPSEEK_BASE_URL: paperEnv.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
       // 论文调研可以使用推理模型，但结构化工作流默认使用非推理 chat 模型。两者不能
       // 复用同一个模型变量，否则 reasoning token 会挤占 Coding JSON 的输出预算。
-      WORKFLOW_AGENT_MODEL: process.env.WORKFLOW_AGENT_MODEL ?? evidenceEnv.WORKFLOW_AGENT_MODEL ?? "deepseek-chat",
+      WORKFLOW_AGENT_MODEL: process.env.WORKFLOW_AGENT_MODEL ?? paperEnv.WORKFLOW_AGENT_MODEL ?? "deepseek-chat",
       WORKFLOW_AGENT_SECRET: agentSecret,
       WORKFLOW_AGENT_HOST: "127.0.0.1",
       WORKFLOW_AGENT_PORT: String(PORTS.workflow),
@@ -596,7 +596,7 @@ function parseEnv(source) {
   return result;
 }
 
-function required(record, name) { const value = record[name]; if (typeof value !== "string" || value === "") throw new Error(`${name} is missing from agents/evidence-research/.env`); return value; }
+function required(record, name) { const value = record[name]; if (typeof value !== "string" || value === "") throw new Error(`${name} is missing from agents/paper-writing/.env`); return value; }
 function assertLoopbackUrl(value, name) { const host = new URL(value).hostname; if (!["localhost", "127.0.0.1", "[::1]", "::1"].includes(host)) throw new Error(`${name} must point to loopback`); }
 function portOpen(port) { return new Promise((resolve) => { const socket = net.createConnection({ host: "127.0.0.1", port }); socket.setTimeout(300); socket.once("connect", () => { socket.destroy(); resolve(true); }); socket.once("timeout", () => { socket.destroy(); resolve(false); }); socket.once("error", () => resolve(false)); }); }
 

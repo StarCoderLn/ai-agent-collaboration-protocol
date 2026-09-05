@@ -2,12 +2,12 @@
 
 本目录承载平台自建、可真实执行任务的 Agent。它们用于协议联调、质量评估和演示，不改变第三方 Agent 通过框架无关协议接入平台的边界。
 
-## 高级 Agent 接入 SDK
+## Agent 接入 SDK
 
 `agent-sdk/` 是 `@aicp/agent-sdk` 的仓库内发布源。它集中实现 AICP v1 验签、Nonce、
 并发幂等、Node HTTP 传输、健康检查、正式 `202` 接单和签名结果回调，并提供 Mastra、
-LangGraph 可选适配器。`product-workflow/` 与 `evidence-research/` 已复用同一协议、幂等和
-HTTP 边界；新增独立 Agent 不得再复制 `protocol.ts` 或原生 HTTP 服务壳。
+LangGraph 可选适配器。`product-workflow/` 复用高级协议能力，图片、PPT 与论文 Agent
+复用快速服务外壳；新增独立 Agent 不得复制协议算法或原生 HTTP 服务壳。
 
 普通第三方提供者在产品上架页默认使用“`Agent 执行地址` + 可选`访问密钥`”的快速 HTTP
 JSON 方式，不需要安装此 SDK。SDK 面向平台自建 Agent，以及需要异步接单、签名回调、
@@ -30,9 +30,11 @@ JSON 方式，不需要安装此 SDK。SDK 面向平台自建 Agent，以及需�
 为了凑齐三个结果自动产生三倍费用。
 
 三个步骤依次交付 `RequirementsArtifact`、`DesignArtifact` 和 `CodeArtifact`。设计 Agent
-交付受约束的 `page.tsx + globals.css` 可运行原型；Coding Agent 必须继承完整原型、设计
-锚点和需求制品，再增量实现交互。平台只在无同源、无网络权限的 iframe 中编译预览，
-不会把 Agent 代码导入平台进程，也不会执行模型生成的命令。完整契约见
+只交付结构化 `DesignSpec`；平台可信渲染器根据同一规范生成 1440 桌面端与 390 移动端
+SVG 设计稿，作为用户主要验收产物和 Coding Agent 的视觉事实源。Coding Agent 必须同时
+继承完整需求、`DesignSpec` 与两张设计稿，再成对生成 `page.tsx + globals.css`。平台只在
+无同源、无网络权限的 iframe 中编译预览，不会把 Agent 代码导入平台进程，也不会执行
+模型生成的命令。完整契约见
 [`docs/workflow-artifacts.md`](../docs/workflow-artifacts.md)。
 
 ### 核心代码阅读顺序
@@ -54,12 +56,12 @@ JSON 方式，不需要安装此 SDK。SDK 面向平台自建 Agent，以及需�
 
 ### 本地启动
 
-可以复用已经配置好的论文 Agent DeepSeek Key 和 HMAC secret，无需读取或复制密钥：
+可以复用论文 Agent 配置文件中的 DeepSeek Key 和 `WORKFLOW_AGENT_SECRET`：
 
 ```bash
 cd agents
 set -a
-source evidence-research/.env
+source paper-writing/.env
 set +a
 pnpm --filter @aicp/product-workflow-agents dev
 ```
@@ -70,37 +72,66 @@ pnpm --filter @aicp/product-workflow-agents dev
 `WORKFLOW_AGENT_SECRET`，并确保分发引擎注册信息使用同一服务地址和凭据。所有密钥都
 只能位于服务端环境变量，变量名不得添加 `NEXT_PUBLIC_`。
 
-## 论文调研报告 Agent 能力说明
+后续平台可以使用 LangGraph 编排这些步骤，但被编排的 Agent 不需要由 LangGraph 开发。
+LangGraph 只负责平台侧节点顺序、分支、暂停与恢复；每个节点仍通过框架无关的 HTTP/AICP
+协议调用，因此 Mastra Agent、自研 Agent 和其他语言服务可以出现在同一张执行图中。只有
+某个 Agent 内部本身需要循环、checkpoint 或人工中断恢复时，才需要在该 Agent 内引入
+LangGraph。
+
+## 可手动快速上架的 Mastra Agent
+
+下面三个 Agent 使用独立目录和端口，模型决策均由 Mastra `Agent` 完成；HTTP、Bearer、
+幂等和文件下载复用 `@aicp/agent-sdk` 的快速模式。第三方接入不需要安装 SDK。
+
+| 展示名称 | 目录 | 执行地址 | 主要产物 |
+| --- | --- | --- | --- |
+| 品牌营销图片 Agent | `image-generation/` | `http://127.0.0.1:9301/run` | 1600×900 SVG 图片 |
+| 商业演示文稿 Agent | `presentation-generation/` | `http://127.0.0.1:9302/run` | 在线 HTML 预览 + 可编辑 PPTX |
+| 学术论文写作 Agent | `paper-writing/` | `http://127.0.0.1:9303/run` | 带真实引用的 Markdown 论文初稿 |
+
+论文目录保留一份已有模型配置；图片与 PPT 的开发命令默认复用其中的 DeepSeek Key，
+避免复制密钥。需要覆盖端口、模型或访问密钥时，再在对应目录创建 `.env`。上架页填写
+表格中的执行地址；未设置 `AGENT_API_KEY` 时访问密钥留空。“测试连接”只访问同源
+`/healthz`，不会触发模型调用或产生费用。
+
+需要一次启动三个待上架 Agent 时，在 `agents/` 目录执行：
+
+```bash
+pnpm dev:market-agents
+```
+
+## 学术论文写作 Agent 能力说明
 
 ### 它能帮你做什么
 
-给它一个研究主题和一个具体问题，它会先从 OpenAlex 检索真实论文，再使用配置的
-Ollama 或 DeepSeek 模型整理证据，最后交付一份带来源引用和局限性说明的研究综述。
+给它一个论文标题即可开始；详细需求可选。它会先从 OpenAlex 检索真实论文，再由
+Mastra Agent 使用配置的 Ollama 或 DeepSeek 模型组织论点，最后交付一份带来源引用、
+正文结构和研究限制的 Markdown 论文初稿。
 
 适合用于技术选型调研、课题前期文献摸底、产品研究和快速了解某个学术方向。例如：
 “现有研究中，哪些认证、幂等和失败恢复机制适合独立部署的 AI Agent？”
 
-它不是论文代写或自动投稿工具。交付物是便于人继续判断和核查的调研草稿，不代表
-同行评审结论，也不能替代人工阅读原论文。
+它不承诺自动投稿或学术结论正确。交付物是供用户继续编辑和核查的论文初稿，不代表
+同行评审结论，也不能替代人工阅读原论文及遵守所在机构的学术诚信要求。
 
 ### 输入与输出
 
 | 类别 | 内容 |
 | --- | --- |
-| 必填输入 | 研究主题、具体研究问题 |
-| 可选输入 | 报告语言、目标字数、来源数量、论文年份范围 |
-| 报告正文 | 标题、执行摘要、至少两个分析章节 |
+| 必填输入 | 论文标题 |
+| 可选输入 | 详细关注点和验收要求；内部会把字数、来源数量和年份范围限制在安全区间 |
+| 论文正文 | 标题、摘要、至少两个分析章节、结论与研究限制 |
 | 证据 | 各章节引用的来源编号，以及论文题目、作者、年份、DOI/链接 |
 | 风险说明 | 证据缺失、研究限制和仍需人工确认的内容 |
 | 机器可读字段 | schema 版本、任务 ID、生成时间，便于平台后续编排和验收 |
 
 ### 一次任务怎样才算成功
 
-- Agent 必须先调用 OpenAlex，不能脱离检索结果直接生成报告。
-- 报告至少包含两个非空章节和一条真实引用。
+- Agent 必须先调用 OpenAlex，不能脱离检索结果直接生成论文。
+- 论文至少包含两个非空章节和一条真实引用。
 - 每个引用都必须来自本次检索结果；未知或模型编造的来源 ID 会被代码拒绝。
 - 输出必须通过版本化 Zod schema 校验，字段缺失或格式错误不会作为成功结果返回。
-- 报告必须披露证据不足和不确定性；事实正确性仍需用户通过原论文人工复核。
+- 论文必须披露证据不足和不确定性；事实正确性仍需用户通过原论文人工复核。
 
 ### 耗时与成本
 
@@ -109,28 +140,25 @@ Ollama 或 DeepSeek 模型整理证据，最后交付一份带来源引用和局
   和超时设置限制成本。
 - Ollama：没有 API token 费用，但当前电脑仅靠 CPU 时单次模型调用基线为 3～15 分钟；
   两阶段完整任务尚未重新测量，预计会更久。
-- Agent Lab 进一步把体验任务限制为 500～2,000 字和 3～8 个来源，避免一次测试占用
-  过多时间或模型费用。
+- 快速入口默认生成约 1,800 字并检索 8 个来源，避免一次测试失控消耗模型费用。
 
 ### 当前可用范围
 
-当前版本可在本机 Agent Lab 中真实完成“协议调用 → 论文检索 → 报告生成 → 引用校验 →
-页面展示”的沙箱任务。它仍是 v0.1 技术验证：请求同步执行，nonce 和幂等结果只保存在
-内存中，尚未接入生产环境的异步派发、持久任务状态、进度回调、结算和争议流程。
-DeepSeek 模式已在 2026-08-22 通过 500 字、3 个来源的真实页面闭环；两阶段 Ollama 模式
-尚未重新做完整 CPU 基线验收。
+当前版本只保留平台统一的快速上架入口：标题会被转换成有界研究任务，最终结果以
+Markdown 论文交付。检索与引用校验已有自动化基线；改为论文写作提示后的真实模型质量
+仍需用户授权后单独验收，不能只根据模拟模型测试宣称效果已经通过。
 
 ### 名称
 
-- **展示名称：** 论文调研报告 Agent
-- **一句话说明：** 检索真实论文，并生成带引用和局限性说明的研究综述
-- **系统 ID：** `evidence-research-agent`（用于协议路由和配置，保持稳定，不作为市场展示名）
+- **展示名称：** 学术论文写作 Agent
+- **一句话说明：** 输入标题，检索真实论文并生成带引用的 Markdown 论文初稿
+- **系统 ID：** `paper-writing-agent`（用于协议路由和配置，不作为市场展示名）
 
 ## 技术实现
 
-`evidence-research/` 是项目第一条 Mastra 纵向切片：
+`paper-writing/` 是项目第一条 Mastra 论文写作纵向切片：
 
-- 通过 `@aicp/agent-sdk` 复用协议 v1.0 的验签、时间窗口、Nonce、防重放、HTTP 和并发幂等边界。
+- 通过 `@aicp/agent-sdk` 复用快速 HTTP、Bearer、并发幂等和产物交付边界。
 - 使用两个职责分离的 Mastra `Agent`：第一个规划一次检索，第二个只基于冻结证据生成
   Zod Structured Output；支持 Ollama 本地推理和 DeepSeek 云端推理。
 - 使用 OpenAlex 检索真实学术元数据与摘要。
@@ -140,21 +168,19 @@ DeepSeek 模式已在 2026-08-22 通过 500 字、3 个来源的真实页面闭�
 
 第一次阅读建议按一次真实请求经过系统的顺序看：
 
-1. `src/example-client.ts`：调用方如何构造任务、签名并发送请求。
-2. `../agent-sdk/src/`：共享签名、Nonce、幂等和 Node HTTP 边界。
-3. `src/protocol.ts` / `src/server.ts`：保留旧导入路径的薄兼容出口与服务组合名称。
-4. `src/api.ts`：路由、验签、幂等、输入校验、超时和错误映射。
-5. `src/domain.ts`：论文任务输入、模型草稿和最终报告的数据契约。
-6. `src/mastra-executor.ts`：Mastra 如何调用检索工具并生成结构化报告。
-7. `src/openalex.ts`：如何检索、校验和标准化真实论文数据。
-8. `src/index.ts`：如何把配置、执行器、API 和 HTTP 服务组合起来。
+1. `../agent-sdk/src/quick-server.ts`：共享 HTTP、Bearer、幂等和错误边界。
+2. `src/config.ts`：模型供应商、模型名称与超时配置。
+3. `src/domain.ts`：论文任务输入、模型草稿和最终报告的数据契约。
+4. `src/mastra-executor.ts`：Mastra 如何调用检索工具并生成结构化论文草稿。
+5. `src/openalex.ts`：如何检索、校验和标准化真实论文数据。
+6. `src/quick-paper.ts`：如何把平台任务转换为论文任务并渲染 Markdown。
+7. `src/index.ts`：如何把配置、执行器与 SDK 快速服务外壳组合起来。
 
-核心数据流是：`签名请求 → 协议校验 → 幂等检查 → Mastra 规划一次检索 → OpenAlex 返回并冻结证据 → 无工具 Mastra Agent 生成草稿 → 引用白名单校验 → 返回报告`。
+核心数据流是：`请求校验 → 幂等检查 → Mastra 规划一次检索 → OpenAlex 返回并冻结证据 → 无工具 Mastra Agent 生成草稿 → 引用白名单校验 → 返回 Markdown 论文`。
 
-当前是 v0.1 技术验证，不是生产部署：请求同步等待模型完成，nonce 与幂等结果只保存在
-内存中，进程重启后丢失。平台的正式派发、节点进度和结果回调契约已经冻结；若要把论文
-Agent 升级为正式市场 Agent，应像 `product-workflow` 一样实现该契约并接入持久任务状态，
-不能继续复用 Agent Lab 的同步代理作为生产入口。
+当前是 v0.1 本地接入版本，不是生产部署：快速模式会把幂等结果写入本地 `.local`。
+多实例生产发布前需要把快速缓存与文件产物替换成共享数据库和对象存储；本地手动上架
+和单实例流程不受该边界影响。
 
 ## 本地运行
 
@@ -167,7 +193,7 @@ Agent 升级为正式市场 Agent，应像 `product-workflow` 一样实现该契
 cd agents
 nvm use 22
 pnpm install --frozen-lockfile
-cp evidence-research/.env.example evidence-research/.env
+cp paper-writing/.env.example paper-writing/.env
 ```
 
 ### Ollama 本地模式
@@ -175,8 +201,8 @@ cp evidence-research/.env.example evidence-research/.env
 `.env` 保持以下关键配置：
 
 ```dotenv
-EVIDENCE_AGENT_PROVIDER=ollama
-EVIDENCE_AGENT_MODEL=gemma4:latest
+PAPER_AGENT_PROVIDER=ollama
+PAPER_AGENT_MODEL=gemma4:latest
 OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
 ```
 
@@ -190,57 +216,31 @@ ollama serve
 
 ```bash
 set -a
-source evidence-research/.env
+source paper-writing/.env
 set +a
-pnpm --filter @aicp/evidence-research-agent dev
+pnpm --filter @aicp/paper-writing-agent dev
 ```
 
-在第三个终端发送带协议签名的沙箱请求：
-
-```bash
-set -a
-source evidence-research/.env
-set +a
-pnpm --filter @aicp/evidence-research-agent example
-```
-
-服务默认只绑定 `127.0.0.1:9201`。`EVIDENCE_AGENT_SECRET` 不得提交到仓库或写入日志。
+服务默认只绑定 `127.0.0.1:9303`，上架时填写 `http://127.0.0.1:9303/run`。
 本地 CPU 单次推理基线为 3～15 分钟；Agent 为此使用 6 分钟单步超时、15 分钟模型总超时
 和 16 分钟 HTTP 超时。这组值来自 `gemma4:latest` 的旧单阶段调用基线；当前两阶段完整
 任务尚未重新测量，因此不能把 3～15 分钟当作端到端完成时间。
 
 ### DeepSeek 快速模式
 
-把 `evidence-research/.env` 中的模型配置改为：
+把 `paper-writing/.env` 中的模型配置改为：
 
 ```dotenv
-EVIDENCE_AGENT_PROVIDER=deepseek
-EVIDENCE_AGENT_MODEL=deepseek-v4-flash
+PAPER_AGENT_PROVIDER=deepseek
+PAPER_AGENT_MODEL=deepseek-chat
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_API_KEY=替换成你的服务端密钥
 ```
 
 DeepSeek 模式不需要启动 Ollama，直接启动论文 Agent 即可。Key 只由 Mastra 的服务端模型
-配置读取，不进入公共协议、API 响应或 Agent Lab 浏览器 bundle。DeepSeek 的 JSON 输出不使用
+配置读取，不进入公共协议、API 响应或浏览器 bundle。DeepSeek 的 JSON 输出不使用
 它未完整支持的严格 `json_schema` 响应格式；Mastra 会内联 JSON 结构提示，返回后仍由同一份
 Zod schema 严格校验，因此输出契约不会因切换供应商而放宽。
-
-## 在 Agent Lab 页面体验
-
-论文 Agent 启动后，再启动现有 Next.js Web 项目：
-
-```bash
-cd ../web
-nvm use 22
-pnpm --filter web dev
-```
-
-浏览器访问 `http://127.0.0.1:3001/agent-lab`。页面通过 Next.js 服务端代理完成 HMAC
-签名，浏览器不会收到 `EVIDENCE_AGENT_SECRET`。开发环境中
-`web/apps/web/.env.local` 与 `agents/evidence-research/.env` 必须使用相同密钥。
-
-Agent Lab 当前只允许调用 `127.0.0.1`、`localhost` 或 `::1` 的 HTTP Agent 地址，
-并把任务限制为 500～2,000 字、3～8 个来源，避免体验任务长时间占满本机 CPU。
 
 ## 验证
 
@@ -250,12 +250,10 @@ CI=true pnpm test
 CI=true pnpm build
 ```
 
-共享签名测试向量位于 `docs/protocol-test-vectors/signature-v1.json`，Go 协议实现与 TypeScript Agent 都会消费它，防止两种语言的签名基串漂移。
-
 ## 已知边界
 
 - OpenAlex 的元数据和摘要可能缺失；Agent 必须在 `limitations` 中披露，不能补写不存在的证据。
 - 单次执行调用 OpenAlex 1 次、收集不超过输入的 `sourceCount`，模型输出 token 和总执行时间也有硬上限；这些是成本与失控循环保护，不是质量保证。
-- 当前报告是证据综述草稿，不代表同行评审论文，也不能替代人工引用核查。
+- 当前论文是基于公开证据生成的初稿，不代表同行评审结论，也不能替代人工引用核查。
 - 开放式报告默认人工验收；结构化 schema 和引用存在性通过不等于研究结论正确。
 - Mastra 仅属于 Agent 内部实现。公共请求与响应不得包含 Mastra memory、message 或 workflow 状态。

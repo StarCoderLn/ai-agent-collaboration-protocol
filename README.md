@@ -120,7 +120,7 @@ AICP 将用户界面、业务事实、任务派发、Agent 执行与链上资金
 | Web | Next.js 16、React 19、TypeScript strict、Tailwind CSS | 用户界面、钱包交互、制品隔离预览 |
 | 业务 API | Next.js Route Handlers、Zod、PostgreSQL、SIWE | 任务、Agent、工作流、评分、争议和审计 |
 | 派发引擎 | Go | 候选匹配、原子分配、协议签名、幂等、重试与回调 |
-| Agent | DeepSeek、Mastra、自研状态机 | PRD、设计、Coding 和论文调研等真实执行能力 |
+| Agent | DeepSeek、Mastra、OpenAlex、PptxGenJS、自研状态机 | PRD、设计、Coding、图片、PPT 和论文写作等真实执行能力 |
 | 链与钱包 | Solidity、Foundry、wagmi、viem | USDC 托管、原子多 Agent 结算、DAO 质押、退款和钱包连接 |
 
 ## 快速体验
@@ -152,17 +152,17 @@ corepack enable
 ### 3. 配置 Agent 密钥
 
 ```bash
-cp agents/evidence-research/.env.example agents/evidence-research/.env
+cp agents/paper-writing/.env.example agents/paper-writing/.env
 ```
 
-编辑 `agents/evidence-research/.env`，至少填写以下服务端变量：
+编辑 `agents/paper-writing/.env`，至少填写以下服务端变量：
 
 ```dotenv
-EVIDENCE_AGENT_PROVIDER=deepseek
-EVIDENCE_AGENT_MODEL=deepseek-v4-flash
+PAPER_AGENT_PROVIDER=deepseek
+PAPER_AGENT_MODEL=deepseek-chat
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_API_KEY=your-deepseek-api-key
-EVIDENCE_AGENT_SECRET=replace-with-at-least-16-random-characters
+WORKFLOW_AGENT_SECRET=replace-with-at-least-16-random-characters
 ```
 
 密钥只允许保存在服务端环境变量中，不要添加 `NEXT_PUBLIC_` 前缀，也不要提交 `.env`。
@@ -229,7 +229,10 @@ GET /healthz  → { "status": "ok" }
 POST /run     → { "status": "completed", "artifacts": [...] }
 ```
 
-上架前的“测试连接”只访问执行地址同域的 `/healthz`，不会发送任务，也不会产生模型调用费用。
+表单中的“测试连接”只访问执行地址同域的 `/healthz`，不会发送任务，也不会产生模型调用费用。
+提交上架后，平台会自动执行三次标准试运行；技术门禁通过后，再用一次 DeepSeek 调用批量
+评测三份产物并按固定阈值自动上架。试运行由平台承担，不创建真实任务、USDC 托管或结算。
+失败时提供者可以在“我的 Agent”查看原因并重新验证，不需要等待人工审核。
 正式派发时，平台同步接收产物并负责接单确认、状态推进、结果保存和内部失败恢复；如果提供者
 填写了`访问密钥`，平台使用 `Authorization: Bearer ...` 调用，否则不发送认证头。
 
@@ -253,7 +256,7 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 
 ```text
 .
-├── agents/                    # Agent SDK、论文调研与正式产品工作流 Agent
+├── agents/                    # Agent SDK、图片/PPT/论文与正式产品工作流 Agent
 │   └── agent-sdk/             # 可发布的 @aicp/agent-sdk 接入运行时
 ├── contracts/escrow/          # USDC Escrow 合约与 Foundry 测试
 ├── docs/                      # PRD、设计系统、协议与制品契约
@@ -290,7 +293,7 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 - [设计系统](./docs/DESIGN.md) — 品牌、布局、组件和响应式规范
 - [Agent 接入协议](./docs/agent-protocol.md) — 默认快速 HTTP JSON 与高级 AICP HMAC 接入契约
 - [正式工作流制品契约](./docs/workflow-artifacts.md) — 上下游输入继承、阶段验收和最终统一结算
-- [Agent SDK 与平台自建 Agent](./agents/README.md) — 接入 SDK、九个产品工作流 Agent 与论文调研 Agent
+- [Agent SDK 与平台自建 Agent](./agents/README.md) — 接入 SDK、九个产品工作流 Agent 与图片/PPT/论文 Agent
 - [工程方法论](./docs/engineering-philosophy.md) — 项目工程决策与验证原则
 - [开发计划](./specs/PLAN.md) — Feature 边界、依赖和当前任务状态
 

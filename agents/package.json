@@ -5,6 +5,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "check": "pnpm -r check",
+    "predev:market-agents": "pnpm --filter @aicp/agent-sdk build",
+    "dev:market-agents": "pnpm --parallel --filter @aicp/image-generation-agent --filter @aicp/presentation-generation-agent --filter @aicp/paper-writing-agent dev:server",
     "test": "pnpm -r test"
   }
 }

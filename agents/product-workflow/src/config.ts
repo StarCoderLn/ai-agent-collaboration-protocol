@@ -6,9 +6,7 @@ const EnvironmentSchema = z.object({
   // 工作流要求稳定输出严格 JSON；默认使用非推理 chat 模型，避免 reasoning token
   // 挤占代码制品的输出预算。需要其他模型时仍可通过服务专属变量显式覆盖。
   WORKFLOW_AGENT_MODEL: z.string().min(1).default("deepseek-chat"),
-  // 本地体验时允许复用已经配置的论文 Agent secret，避免用户重复维护相同凭据。
-  WORKFLOW_AGENT_SECRET: z.string().min(16).optional(),
-  EVIDENCE_AGENT_SECRET: z.string().min(16).optional(),
+  WORKFLOW_AGENT_SECRET: z.string().min(16),
   WORKFLOW_AGENT_HOST: z.string().min(1).default("127.0.0.1"),
   WORKFLOW_AGENT_PORT: z.coerce.number().int().min(1).max(65_535).default(9202),
 });
@@ -31,10 +29,6 @@ export type WorkflowAgentConfig = {
 
 export function loadWorkflowAgentConfig(environment: NodeJS.ProcessEnv): WorkflowAgentConfig {
   const parsed = EnvironmentSchema.parse(environment);
-  const secret = parsed.WORKFLOW_AGENT_SECRET ?? parsed.EVIDENCE_AGENT_SECRET;
-  if (secret === undefined) {
-    throw new Error("WORKFLOW_AGENT_SECRET or EVIDENCE_AGENT_SECRET is required");
-  }
   const baseUrl = normalizeBaseUrl(parsed.DEEPSEEK_BASE_URL);
   const modelName = stripProviderPrefix(parsed.WORKFLOW_AGENT_MODEL);
   return {
@@ -46,7 +40,7 @@ export function loadWorkflowAgentConfig(environment: NodeJS.ProcessEnv): Workflo
       url: baseUrl,
       apiKey: parsed.DEEPSEEK_API_KEY,
     },
-    secret,
+    secret: parsed.WORKFLOW_AGENT_SECRET,
     host: parsed.WORKFLOW_AGENT_HOST,
     port: parsed.WORKFLOW_AGENT_PORT,
     modelStepTimeoutMs: 120_000,

@@ -1,0 +1,30 @@
+{
+  "name": "@aicp/paper-writing-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc --noEmit",
+    "predev": "pnpm --filter @aicp/agent-sdk build",
+    "dev": "pnpm dev:watch",
+    "dev:watch": "node --env-file-if-exists=.env --watch --import tsx src/index.ts",
+    "dev:server": "node --env-file-if-exists=.env --import tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aicp/agent-sdk": "workspace:*",
+    "@mastra/core": "1.61.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "tsx": "4.23.12",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

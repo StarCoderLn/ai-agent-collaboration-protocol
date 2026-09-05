@@ -26,8 +26,8 @@ const nextConfig: NextConfig = {
 	// 运行时错误仍会正常显示，不影响开发诊断。
 	devIndicators: false,
 	...(localDistDir === undefined ? {} : { distDir: localDistDir }),
-	// 文档和 Agent Lab 都使用 127.0.0.1；Next.js 16 默认只允许 localhost
-	// 请求开发资源，不显式放行会导致页面只渲染 HTML、客户端交互无法水合。
+	// 本地完整体验使用 127.0.0.1；Next.js 16 默认只允许 localhost 请求开发资源，
+	// 不显式放行会导致页面只渲染 HTML、客户端交互无法水合。
 	allowedDevOrigins: ["127.0.0.1"],
 };
 

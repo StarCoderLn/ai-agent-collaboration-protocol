@@ -1,6 +1,8 @@
 packages:
   - "agent-sdk"
-  - "evidence-research"
+  - "paper-writing"
+  - "image-generation"
+  - "presentation-generation"
   - "product-workflow"
 
 allowBuilds:
