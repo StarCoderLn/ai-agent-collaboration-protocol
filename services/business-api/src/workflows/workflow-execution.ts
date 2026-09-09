@@ -5,19 +5,18 @@ import { z } from "zod";
 import type { QueryExecutor } from "../db/pool";
 import { resultSubmissionInputSchema, workflowExecutionStatusInputSchema } from "../tasks/execution-input";
 import type { ResultSubmissionInput } from "../tasks/execution-input";
-import { emitTaskEvent, emitTaskEventToAgent } from "../tasks/task-event-repository";
+import { emitTaskEvent } from "../tasks/task-event-repository";
 import type { TaskServiceResult } from "../tasks/task-service";
 import { calculatePlatformFee, transitionTaskStatus, type TaskStatus } from "../platform/task-state";
 import { evaluateAutomaticAcceptance } from "./workflow-automatic-acceptance";
 import { buildWorkflowSettlementPlan, type AcceptedWorkflowSettlementLine } from "./workflow-settlement";
 import {
-  aggregateWorkflowStatus,
   transitionWorkflowNode,
   unlockReadyWorkflowNodes,
   WorkflowStateError,
   type WorkflowNodeStatus,
-  type WorkflowRunStatus,
 } from "./workflow-state";
+import { refreshWorkflowTaskProjection } from "./workflow-task-projection";
 
 const uuid = z.string().uuid();
 const integerString = z.string().regex(/^(0|[1-9]\d{0,18})$/);
@@ -150,10 +149,15 @@ export class PgWorkflowExecutionRepository {
           ? { failureStage: input.failureStage }
           : {}),
       });
-    const run = await this.refreshRun(locked.workflow_run_id);
+    const projection = await refreshWorkflowTaskProjection(this.db, {
+      taskId,
+      workflowRunId: locked.workflow_run_id,
+      eventType: input.state === "failed" ? "task.execution_failed" : "task.execution_progress",
+      payload: { workflowNodeId, assignmentId: input.assignmentId, nodeStatus: nextStatus, progress, executionState },
+    });
     const result = resultOf(200, {
       taskId, workflowNodeId, nodeStatus: nextStatus, nodeVersion: nextVersion.toString(),
-      runStatus: run.status, runVersion: run.version.toString(), progress, executionState,
+      runStatus: projection.runStatus, runVersion: projection.runVersion.toString(), progress, executionState,
     });
     await this.saveCallback(key, taskId, input.assignmentId, "execution_status", requestFingerprint, result);
     return result;
@@ -229,6 +233,18 @@ export class PgWorkflowExecutionRepository {
       resultIds: stored.map((entry) => entry.id),
       automaticAcceptance,
     });
+    const submittedProjection = await refreshWorkflowTaskProjection(this.db, {
+      taskId,
+      workflowRunId: locked.workflow_run_id,
+      eventType: "task.results_submitted",
+      payload: {
+        workflowNodeId,
+        assignmentId: input.assignmentId,
+        nodeStatus: nextStatus,
+        batchNo: batch.batch_no,
+        resultIds: storedIds,
+      },
+    });
 
     if (automaticAcceptance.kind === "passed") {
       const resultId = required(storedIds[0], "AUTOMATIC_ACCEPTANCE_RESULT_NOT_FOUND");
@@ -263,10 +279,9 @@ export class PgWorkflowExecutionRepository {
       return result;
     }
 
-    const run = await this.refreshRun(locked.workflow_run_id);
     const result = resultOf(201, {
       taskId, workflowNodeId, nodeStatus: nextStatus, nodeVersion: nextVersion.toString(),
-      runStatus: run.status, runVersion: run.version.toString(), batchNo: batch.batch_no,
+      runStatus: submittedProjection.runStatus, runVersion: submittedProjection.runVersion.toString(), batchNo: batch.batch_no,
       submissionBatch: batch.submission_batch, results: stored,
       automaticAcceptance: automaticAcceptance.kind === "failed"
         ? { state: "failed", ...automaticAcceptance }
@@ -339,16 +354,21 @@ export class PgWorkflowExecutionRepository {
       resultId, acceptanceId, status: nextStatus, acceptance: audit, ...settlement,
     });
     await this.unlockDownstream(terms.workflow_run_id, taskId);
-    const run = await this.refreshRun(terms.workflow_run_id);
-    if (run.status === "completed") {
+    const projection = await refreshWorkflowTaskProjection(this.db, {
+      taskId,
+      workflowRunId: terms.workflow_run_id,
+      eventType: "task.workflow_node_accepted",
+      payload: { workflowNodeId, resultId, acceptanceId, nodeStatus: nextStatus, acceptance: audit },
+    });
+    if (projection.runStatus === "completed") {
       // 中间阶段只通过结构化质量门禁并解锁下游，绝不产生资金任务。只有最终节点由
       // 发布者人工验收、整张工作流进入 completed 后，才固化一笔原子分账 outbox。
       await this.queueFinalSettlement(taskId, terms.workflow_run_id, acceptedBy);
     }
     return resultOf(200, {
       acceptanceId, taskId, workflowNodeId, resultId,
-      nodeStatus: nextStatus, nodeVersion: nextVersion.toString(), runStatus: run.status,
-      runVersion: run.version.toString(), settlement, acceptanceMode: audit.mode,
+      nodeStatus: nextStatus, nodeVersion: nextVersion.toString(), runStatus: projection.runStatus,
+      runVersion: projection.runVersion.toString(), settlement, acceptanceMode: audit.mode,
     });
   }
 
@@ -501,18 +521,9 @@ export class PgWorkflowExecutionRepository {
     });
     // Agent Webhook worker 只消费 task_events。这里显式指定当前节点的 Agent，不能使用
     // “任务最新 assignment”推断，否则返工上游节点时会误投给下游 Agent。
-    const taskVersionRow = await this.db.query<{ status_version: string }>(
-      `UPDATE tasks SET status_version=status_version+1,updated_at=now()
-        WHERE id=$1 RETURNING status_version::text`,
-      [taskId],
-    );
-    const taskStatusVersion = BigInt(required(
-      taskVersionRow.rows[0],
-      "REWORK_TASK_VERSION_NOT_UPDATED",
-    ).status_version);
-    await emitTaskEventToAgent(this.db, {
+    const projection = await refreshWorkflowTaskProjection(this.db, {
       taskId,
-      statusVersion: taskStatusVersion,
+      workflowRunId: node.workflow_run_id,
       eventType: "task.rework_requested",
       payload: {
         workflowNodeId,
@@ -522,12 +533,12 @@ export class PgWorkflowExecutionRepository {
         reason: input.reason,
         status: nextStatus,
       },
-      createdAt: new Date(),
-    }, node.agent_id);
-    const run = await this.refreshRun(node.workflow_run_id);
+      recipientAgentId: node.agent_id,
+    });
     return resultOf(201, {
       taskId, workflowNodeId, requestNo, nodeStatus: nextStatus,
-      nodeVersion: nextVersion.toString(), runStatus: run.status, runVersion: run.version.toString(),
+      nodeVersion: nextVersion.toString(), runStatus: projection.runStatus,
+      runVersion: projection.runVersion.toString(),
     });
   }
 
@@ -619,25 +630,6 @@ export class PgWorkflowExecutionRepository {
       await this.updateNode(node.id, prior.version, node.status, version);
       await this.writeNodeEvent(node.id, taskId, version, "workflow_node.unlocked", { status: node.status });
     }
-  }
-
-  private async refreshRun(workflowRunId: string): Promise<{ status: WorkflowRunStatus; version: bigint }> {
-    const runRows = await this.db.query<{ status: WorkflowRunStatus; version: string }>(
-      "SELECT status,version::text FROM task_workflow_runs WHERE id=$1 FOR UPDATE",
-      [workflowRunId],
-    );
-    const run = required(runRows.rows[0], "WORKFLOW_RUN_NOT_FOUND");
-    const nodeRows = await this.db.query<{ id: string; status: WorkflowNodeStatus }>(
-      "SELECT id::text,status FROM task_workflow_nodes WHERE workflow_run_id=$1 ORDER BY id",
-      [workflowRunId],
-    );
-    const status = aggregateWorkflowStatus(nodeRows.rows);
-    const version = BigInt(run.version) + 1n;
-    await this.db.query(
-      "UPDATE task_workflow_runs SET status=$2,version=$3,updated_at=now() WHERE id=$1 AND version=$4",
-      [workflowRunId, status, version.toString(), run.version],
-    );
-    return { status, version };
   }
 
   private writeNodeEvent(

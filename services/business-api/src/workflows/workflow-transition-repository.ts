@@ -1,6 +1,5 @@
 import type { QueryExecutor } from "../db/pool";
 import {
-  aggregateWorkflowStatus,
   transitionWorkflowNode,
   WorkflowStateError,
 	type WorkflowNodeEvent,
@@ -13,10 +12,10 @@ import {
   WorkflowTransitionError,
   type WorkflowTransitionRepository,
 } from "./workflow-transition";
+import { refreshWorkflowTaskProjection } from "./workflow-task-projection";
 
 type NodeRow = { status: WorkflowNodeStatus; version: string; workflow_run_id: string };
 type AssignmentRow = { status: "pending_ack" | "accepted" | "accept_failed" | "cancelled" };
-type RunRow = { status: WorkflowRunStatus; version: string };
 type InboxRow = {
   task_id: string;
   workflow_node_id: string;
@@ -129,25 +128,24 @@ export class PgWorkflowTransitionRepository implements WorkflowTransitionReposit
         JSON.stringify({ assignmentId: input.assignmentId, status: nextStatus, dispatchEventId: input.eventId })],
     );
 
-    const statuses = await this.db.query<{ id: string; status: WorkflowNodeStatus }>(
-      `SELECT id::text,status FROM task_workflow_nodes WHERE workflow_run_id=$1 ORDER BY id`,
-      [node.workflow_run_id],
-    );
-    const run = await this.readRun(node.workflow_run_id, true);
-    const nextRunStatus = aggregateWorkflowStatus(statuses.rows);
-    const nextRunVersion = BigInt(run.version) + 1n;
-    await this.db.query(
-      `UPDATE task_workflow_runs SET status=$2,version=$3,updated_at=now()
-        WHERE id=$1 AND version=$4`,
-      [node.workflow_run_id, nextRunStatus, nextRunVersion.toString(), run.version],
-    );
+    const projection = await refreshWorkflowTaskProjection(this.db, {
+      taskId,
+      workflowRunId: node.workflow_run_id,
+      eventType: `task.${input.eventType}`,
+      payload: {
+        workflowNodeId,
+        assignmentId: input.assignmentId,
+        nodeStatus: nextStatus,
+        dispatchEventId: input.eventId,
+      },
+    });
     return result(taskId, workflowNodeId, input, nextStatus, nextVersion,
-      nextRunStatus, nextRunVersion, false);
+      projection.runStatus, projection.runVersion, false);
   }
 
-  private async readRun(workflowRunId: string, lock = false): Promise<RunRow> {
-    const runResult = await this.db.query<RunRow>(
-      `SELECT status,version::text FROM task_workflow_runs WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
+  private async readRun(workflowRunId: string): Promise<{ status: WorkflowRunStatus; version: string }> {
+    const runResult = await this.db.query<{ status: WorkflowRunStatus; version: string }>(
+      "SELECT status,version::text FROM task_workflow_runs WHERE id=$1",
       [workflowRunId],
     );
     const run = runResult.rows[0];

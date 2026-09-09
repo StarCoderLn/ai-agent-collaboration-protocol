@@ -33,9 +33,10 @@ const transitions: Readonly<Record<TaskStatus, Readonly<Partial<Record<TaskTrans
   draft: { submit: "planning" },
   planning: { workflow_quote_confirmed: "awaiting_escrow" },
   awaiting_escrow: { escrow_confirmed: "matching" },
-  // 正式工作流的细粒度执行状态由 task_workflow_runs/nodes 承载；tasks.status 在该模式
-  // 下只是市场与通知投影，因此最终链上结算可以从 matching 投影直接进入 settled。
-  matching: { assignment_locked: "awaiting_agent_acceptance", workflow_final_accepted: "pending_settlement", workflow_settlement_confirmed: "settled", deadline_elapsed: "timed_out" },
+  // 正式工作流的细粒度执行状态由 task_workflow_runs/nodes 承载；tasks.status 由工作流
+  // 投影模块同步，供市场、通知和争议入口读取。这里仍保留 matching 的资金与争议迁移，
+  // 以兼容已创建但尚未经过新投影事件收敛的历史任务。
+  matching: { assignment_locked: "awaiting_agent_acceptance", workflow_final_accepted: "pending_settlement", workflow_settlement_confirmed: "settled", dispute_opened: "disputed", deadline_elapsed: "timed_out" },
   awaiting_agent_acceptance: { agent_accepted: "executing", assignment_failed: "matching", deadline_elapsed: "timed_out" },
   // 执行中也允许争议：例如 Agent 已声明开始执行但长期不响应。争议一旦创建，
   // 后续资金操作只能由仲裁路径触发，不能继续走普通超时结算。

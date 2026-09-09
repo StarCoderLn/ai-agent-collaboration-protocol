@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { PgWorkflowExecutionRepository } from "./workflow-execution";
 import { readOwnedFormalWorkflow } from "./workflow-repository";
+import { reconcileWorkflowTaskProjection } from "./workflow-task-projection";
 import { PgWorkflowTransitionRepository } from "./workflow-transition-repository";
 import { PgEscrowRepository, type EscrowDatabase } from "../escrow/escrow-repository";
 import { taskKeyForTaskId } from "../escrow/escrow-chain-client";
@@ -45,6 +46,93 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
       await client.query("ROLLBACK");
       client.release();
     }
+  });
+
+  it("节点派发与结果提交会同步任务主状态，并保持重复回调幂等", async () => {
+    const fixture = await insertFixture(client, "serial");
+    const transitions = new PgWorkflowTransitionRepository(client);
+    const execution = new PgWorkflowExecutionRepository(client);
+    await client.query(
+      "UPDATE tasks SET status='matching',status_version=3 WHERE id=$1",
+      [fixture.taskId],
+    );
+    await client.query(
+      "UPDATE task_workflow_nodes SET status='matching',version=1 WHERE id=$1",
+      [fixture.requirementsNodeId],
+    );
+
+    await transitions.apply(fixture.taskId, fixture.requirementsNodeId, {
+      eventId: randomUUID(),
+      assignmentId: fixture.assignmentId,
+      eventType: "assignment_locked",
+    });
+    await transitions.apply(fixture.taskId, fixture.requirementsNodeId, {
+      eventId: randomUUID(),
+      assignmentId: fixture.assignmentId,
+      eventType: "agent_accepted",
+    });
+
+    const payload = resultPayload(fixture, "用于验证任务投影同步的需求文档");
+    const submitted = await execution.submitResults(
+      fixture.taskId,
+      fixture.requirementsNodeId,
+      payload,
+      "task-projection-result",
+      "task-projection-result-fingerprint",
+    );
+    await expect(execution.submitResults(
+      fixture.taskId,
+      fixture.requirementsNodeId,
+      payload,
+      "task-projection-result",
+      "task-projection-result-fingerprint",
+    )).resolves.toEqual(submitted);
+
+    const state = await client.query<{
+      status: string;
+      status_version: string;
+      event_types: string;
+    }>(
+      `SELECT task.status,task.status_version::text,
+              string_agg(event.event_type,',' ORDER BY event.status_version) AS event_types
+         FROM tasks task
+         JOIN task_events event ON event.task_id=task.id
+        WHERE task.id=$1
+        GROUP BY task.id`,
+      [fixture.taskId],
+    );
+    expect(state.rows[0]).toEqual({
+      status: "awaiting_review",
+      status_version: "6",
+      event_types: "task.assignment_locked,task.agent_accepted,task.results_submitted",
+    });
+
+    // 旧版本可能已经持久化节点结果，却没有同步任务投影。运营恢复只在确有分叉时
+    // 写入一次修复事件，重复执行不得继续增加版本或制造重复通知。
+    await client.query("UPDATE tasks SET status='matching' WHERE id=$1", [fixture.taskId]);
+    await expect(reconcileWorkflowTaskProjection(client, {
+      taskId: fixture.taskId,
+      workflowRunId: fixture.runId,
+      reason: "integration-test",
+    })).resolves.toMatchObject({
+      taskStatus: "awaiting_review",
+      taskStatusVersion: 7n,
+      reconciled: true,
+    });
+    await expect(reconcileWorkflowTaskProjection(client, {
+      taskId: fixture.taskId,
+      workflowRunId: fixture.runId,
+      reason: "integration-test-replay",
+    })).resolves.toMatchObject({
+      taskStatus: "awaiting_review",
+      taskStatusVersion: 7n,
+      reconciled: false,
+    });
+    await expect(client.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM task_events
+        WHERE task_id=$1 AND event_type='task.workflow_projection_reconciled'`,
+      [fixture.taskId],
+    )).resolves.toMatchObject({ rows: [{ count: "1" }] });
   });
 
   it("完成进度、返工、重新交付和验收，并只解锁依赖已满足的下游节点", async () => {
@@ -669,7 +757,7 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
         evidenceRoot: settlement.evidence_root,
       },
     });
-    const pending = required((await escrow.listPending(20)).find((event) => event.blockNumber === 102n));
+    const pending = required((await escrow.listPending(31_337n, ESCROW_CONTRACT, 20)).find((event) => event.blockNumber === 102n));
     await expect(escrow.applyCanonicalConfirmation({
       eventId: pending.id,
       canonicalBlockHash: BLOCK_HASH,
