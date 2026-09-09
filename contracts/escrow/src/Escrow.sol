@@ -6,12 +6,14 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IArbitrationCases} from "./interfaces/IArbitrationCases.sol";
 
 /**
  * @title AICP 托管合约
  * @notice 为一个链下 taskId 锁定部署时指定的 USDC，并由受限角色执行验收结算或退款。
  * @dev 每次部署只绑定一个支付代币，调用者不能自行传入 Token 地址，避免任务资金混用。
- *      业务验收、争议与手续费公式位于链下；合约只负责金额守恒、权限、终态和重入保护。
+ *      业务验收与手续费公式位于链下，新版争议由独立案件合约约束最终比例与证据根。
+ *      托管负责金额守恒、权限、终态与重入保护，不计算随机数或保管证据正文。
  */
 contract Escrow is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -53,12 +55,16 @@ contract Escrow is AccessControl, Pausable, ReentrancyGuard {
     mapping(bytes32 taskId => EscrowRecord) private escrows;
     IERC20 public immutable paymentToken;
     address public feeReceiver;
+    // 只可绑定一次，管理员不能在已有案件申诉中途替换裁决合约绕过冻结。
+    IArbitrationCases public arbitrationCases;
 
     error InvalidAddress();
     error InvalidAmount();
     error EscrowAlreadyExists(bytes32 taskId);
     error EscrowNotDeposited(bytes32 taskId);
     error TokenAmountMismatch(uint256 expectedAmount, uint256 receivedAmount);
+    error ArbitrationPending(bytes32 taskId);
+    error ArbitrationMismatch(bytes32 taskId);
 
     event Deposited(bytes32 indexed taskId, address indexed payer, uint256 amount);
     event Released(
@@ -103,6 +109,7 @@ contract Escrow is AccessControl, Pausable, ReentrancyGuard {
         uint256 payerRefundAmount
     );
     event FeeReceiverUpdated(address indexed oldReceiver, address indexed newReceiver);
+    event ArbitrationCasesBound(address indexed caseContract);
 
     constructor(
         address admin,
@@ -145,6 +152,7 @@ contract Escrow is AccessControl, Pausable, ReentrancyGuard {
         whenNotPaused
         nonReentrant
     {
+        _requireNoCase(taskId);
         EscrowRecord storage record = escrows[taskId];
         if (record.state != EscrowState.Deposited) revert EscrowNotDeposited(taskId);
         if (payee == address(0)) revert InvalidAddress();
@@ -197,6 +205,7 @@ contract Escrow is AccessControl, Pausable, ReentrancyGuard {
             totalFeeAmount += payout.feeAmount;
         }
         if (totalGrossAmount > record.amount) revert InvalidAmount();
+        _requireFinalAward(taskId, totalGrossAmount, record.amount, evidenceRoot);
 
         // 先封闭托管状态，再调用外部 Token。SafeERC20 任一转账失败都会让状态和此前
         // 已执行的转账一起回滚，从 EVM 事务层保证“全部成功或全部失败”。
@@ -224,6 +233,7 @@ contract Escrow is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function refund(bytes32 taskId) external onlyRole(OPERATOR_ROLE) whenNotPaused nonReentrant {
+        _requireNoCase(taskId);
         EscrowRecord storage record = escrows[taskId];
         if (record.state != EscrowState.Deposited) revert EscrowNotDeposited(taskId);
         address payer = record.payer;
@@ -249,6 +259,7 @@ contract Escrow is AccessControl, Pausable, ReentrancyGuard {
         if (record.releasedAmount != 0 || decisionHash == bytes32(0) || evidenceRoot == bytes32(0)) {
             revert InvalidAmount();
         }
+        _requireFinalAward(taskId, 0, record.amount, evidenceRoot);
         address payer = record.payer;
         uint256 payerRefundAmount = record.amount;
         record.state = EscrowState.Refunded;
@@ -273,5 +284,30 @@ contract Escrow is AccessControl, Pausable, ReentrancyGuard {
 
     function escrowOf(bytes32 taskId) external view returns (EscrowRecord memory) {
         return escrows[taskId];
+    }
+
+    /// @notice 部署接线时绑定独立案件合约；历史部署不可升级，不修改其既有地址或资金。
+    function bindArbitrationCases(address caseContract) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (caseContract.code.length == 0 || address(arbitrationCases) != address(0)) revert InvalidAddress();
+        arbitrationCases = IArbitrationCases(caseContract);
+        emit ArbitrationCasesBound(caseContract);
+    }
+
+    /// @dev 老的单笔 release/refund 没有案件证据参数，有案件时必须改走可审计的专用入口。
+    function _requireNoCase(bytes32 taskId) private view {
+        if (address(arbitrationCases) == address(0)) return;
+        (bool exists,,,) = arbitrationCases.settlementFor(taskId);
+        if (exists) revert ArbitrationPending(taskId);
+    }
+
+    /// @dev 不信任链下“已终审”标记，现场核对链上 Final、金额比例和原始证据承诺。
+    function _requireFinalAward(bytes32 taskId, uint256 gross, uint256 total, bytes32 root) private view {
+        if (address(arbitrationCases) == address(0)) return;
+        (bool exists, bool finalDecision, uint16 bps, bytes32 expectedRoot) = arbitrationCases.settlementFor(taskId);
+        if (!exists) return;
+        if (!finalDecision) revert ArbitrationPending(taskId);
+        // 商与余数分开计算，避免 uint256 大额乘以 10_000 时溢出。
+        uint256 expectedGross = (total / 10_000) * bps + (total % 10_000) * bps / 10_000;
+        if (gross != expectedGross || root != expectedRoot) revert ArbitrationMismatch(taskId);
     }
 }

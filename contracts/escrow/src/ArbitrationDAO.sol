@@ -10,8 +10,9 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 /**
  * @title AICP DAO 仲裁成员质押
  * @notice 用户通过锁定 YD 获得 DAO 仲裁候选资格，退出需要等待冷静期。
- * @dev 争议证据、利益冲突排除、随机分案和投票留在受审计的业务层；合约只负责最适合
- *      链上强制执行的成员准入与退出资金。这样不会把敏感任务内容公开，同时平台也不能
+ * @dev 本合约只负责成员准入与退出资金。旧版案件留在业务层，新版案件由独立
+ *      ArbitrationCases 管理证据承诺、VRF 分案与投票，不把案件状态混入成员账本。
+ *      这样不会把敏感任务内容公开，同时平台也不能
  *      在没有真实 YD 质押的情况下把普通钱包伪装成 DAO 仲裁员。
  */
 contract ArbitrationDAO is AccessControl, Pausable, ReentrancyGuard {

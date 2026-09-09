@@ -85,4 +85,45 @@ contract ArbitrationDAOTest is Test {
         vm.prank(member);
         dao.stake(ONE_YD);
     }
+
+    function testLoweringMinimumTo100EnforcesNewBoundaryWithoutMovingExistingStake() public {
+        // 复现已有 1000 YD 部署降门槛：配置交易只改资格条件，不退还或扣除原成员资金。
+        vm.prank(member);
+        dao.stake(1_000 * ONE_YD);
+        uint256 previousBalance = yd.balanceOf(address(dao));
+        vm.prank(config);
+        dao.setMinimumStake(100 * ONE_YD);
+        assertEq(dao.minimumStake(), 100 * ONE_YD);
+        assertEq(dao.membershipOf(member).stakedAmount, 1_000 * ONE_YD);
+        assertEq(yd.balanceOf(address(dao)), previousBalance);
+        assertTrue(dao.isEligible(member));
+
+        // 新成员必须实际补足 100 YD；降低门槛不能把不足额质押误判成可分案。
+        address newcomer = makeAddr("newcomer");
+        yd.mint(newcomer, 100 * ONE_YD);
+        vm.startPrank(newcomer);
+        yd.approve(address(dao), 100 * ONE_YD);
+        dao.stake(99 * ONE_YD);
+        assertFalse(dao.isEligible(newcomer));
+        dao.stake(ONE_YD);
+        assertTrue(dao.isEligible(newcomer));
+        vm.stopPrank();
+    }
+
+    function testLoweringMinimumDoesNotCancelExitOrReduceWithdrawal() public {
+        // 已申请退出的人仍不能进入新案件；7 天到期后取回的是原始 1000 YD，不是新门槛。
+        vm.prank(member);
+        dao.stake(1_000 * ONE_YD);
+        vm.prank(member);
+        dao.requestExit();
+        uint64 availableAt = dao.membershipOf(member).exitAvailableAt;
+        vm.prank(config);
+        dao.setMinimumStake(100 * ONE_YD);
+        assertFalse(dao.isEligible(member));
+        assertEq(dao.membershipOf(member).exitAvailableAt, availableAt);
+        vm.warp(availableAt);
+        vm.prank(member);
+        dao.withdraw();
+        assertEq(yd.balanceOf(member), 2_000 * ONE_YD);
+    }
 }
