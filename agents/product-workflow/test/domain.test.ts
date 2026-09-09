@@ -24,6 +24,23 @@ describe("workflow domain contracts", () => {
     expect(new Set(WORKFLOW_AGENT_CATALOG.map((agent) => agent.id))).toHaveLength(9);
   });
 
+  it("keeps platform test pricing affordable while preserving tier order", () => {
+    const pricesByStep = Object.fromEntries(
+      (["requirements", "design", "code"] as const).map((step) => [
+        step,
+        WORKFLOW_AGENT_CATALOG
+          .filter((agent) => agent.step === step)
+          .map((agent) => BigInt(agent.priceMinor)),
+      ]),
+    );
+
+    expect(pricesByStep).toEqual({
+      requirements: [1_500_000n, 2_000_000n, 3_000_000n],
+      design: [2_000_000n, 3_000_000n, 4_000_000n],
+      code: [3_000_000n, 4_000_000n, 5_000_000n],
+    });
+  });
+
   it("rejects an Agent selected for the wrong workflow step", () => {
     const parsed = WorkflowExecutionInputSchema.safeParse({
       schemaVersion: "workflow.execute.v0.1",
