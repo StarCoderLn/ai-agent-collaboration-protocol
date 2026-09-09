@@ -7,6 +7,9 @@
 | 2026-08-20 | v1   | 初始设计 |
 | 2026-08-23 | v2   | 落地持久化角色校验、可恢复资金执行、完整争议审计与 SSE 刷新恢复 |
 | 2026-09-02 | v3   | 增加 YD 链上成员资格、可复现无冲突分案、DAO 多数裁决和原子多 Agent 资金执行 |
+| 2026-09-06 | v4   | 新案使用独立链上状态机与 VRF；旧部署保留 v3，实施状态见 tasks.md |
+| 2026-09-07 | v5   | 创始候选池按社区容量自动交接，候选来源随案件固化并在 DAO 页面公开 |
+| 2026-09-10 | v6   | 同步有期限恢复、不可变文件证据、自动奖励、旧案独立补偿及 Sepolia 闭环 |
 
 ## 项目架构
 
@@ -71,22 +74,38 @@
 
 - `POST /api/tasks/:id/disputes`：发起争议，请求体 `{ reason, initialEvidence? }`。
 - `POST /api/disputes/:id/evidence`：提交证据（双方均可调用，校验截止时间）。
+- `POST /api/disputes/:id/attachments`：暂存经类型、大小和内容校验的附件字节，返回内容寻址引用。
+- `GET /api/disputes/:id/attachments/:objectId`：仅向争议双方和获分案仲裁员下载附件，返回前复算摘要。
 - `GET /api/disputes/:id`：查询争议状态、证据、（仲裁后的）决定。
 - `POST /api/disputes/:id/decision`：仲裁员做出决定（需要仲裁员角色权限），响应含 `decisionId`，状态为 `decided`。
 - `GET /api/dao`：返回当前钱包的链上配置、已同步成员资格和被分配案件。
+- `GET /api/dao/candidate-pool`：匿名返回当前启动/混合/社区候选阶段与容量，不泄露创始钱包名单。
 - `POST /api/dao/membership/sync`：提交成员操作交易哈希，服务端完成链上核验后同步资格。
-- `POST /api/dao/rounds/:id/votes`：仅当前仲裁小组成员提交投票，达到多数时原子生成裁决与资金 outbox。
+- `GET /api/dao/rewards`：分页返回当前钱包已确认的奖励、付款状态与未读数，并支持标记已读。
+- `POST /api/dao/cases/:id/votes`：V1 旧案使用 roundId，由小组成员提交链下投票。
+- `POST /api/dao/cases/:id/actions`：v4 使用 disputeId，准备白名单钱包操作或验证证据回执与原始 calldata；仅规范回滚开放用户重签，不代签。
+- `POST /api/internal/workers/dao-cases`：内部鉴权的确认与自动推进；只有已确认 Final 才创建付款 outbox。
+- `POST /api/internal/workers/dao-cases/retry`：仅重新排队从未签名且阶段仍适用的失败命令。
+- `POST /api/internal/workers/dao-cases/reconcile`：核对已确认回滚交易后保留旧签名并创建下一次尝试，或在完整最终案件语义恢复后解除重组冻结。
+- `POST /api/internal/workers/dao-rewards/reconcile`：重放旧游标范围，只有完整奖励和付款语义在确认链重现才解除冻结。
 - 内部：链上执行完成回调将 `decision.status` 更新为 `executed`（由 [[6.escrow-sync-and-wallet]] 的确认流程触发）。
 
 ## 数据模型
 
 - `disputes(id PK, task_id FK, initiator_id, reason, status, evidence_deadline, created_at)`
-- `dispute_evidence(id PK, dispute_id FK, submitter_id, content_ref, submitted_at)`
+- `dispute_evidence(id PK, dispute_id FK, submitter_id, content_ref, content_hash, anchor_tx_hash, submitted_at)`
+- `dispute_evidence_objects(id PK, dispute_id FK, uploaded_by, metadata, sha256, content, evidence_id, committed_at)`
 - `arbitration_decisions(id PK, dispute_id FK, arbitrator_id, decision_type, payout_breakdown JSONB, reasoning, decided_at, status, tx_hash, executed_at)`
 - `dao_memberships(actor_id PK, chain_id, contract_address, staked_amount_minor, eligible, exit_available_at, sync_tx_hash, sync_block_number)`
 - `dao_arbitration_rounds(id PK, dispute_id UNIQUE, selection_seed, panel_size, quorum, voting_deadline, status)`
 - `dao_arbitration_panel_members(round_id, actor_id, selection_order, selected_stake_minor)`
 - `dao_arbitration_votes(id PK, round_id, actor_id, decision, release_basis_points, reasoning)`
+- `dao_chain_cases(dispute_id PK, chain_id, contract_address, case_key, status, candidate_pool_policy, snapshot, sync_position)`
+- `dao_case_commands` / `dao_case_command_attempts`：保存确定性动作、不可覆盖的原始签名、交易哈希和恢复状态。
+- `dao_case_vote_reasons`：保存受权限保护的投票理由正文与链上理由摘要。
+- `dao_reward_grants` / `dao_reward_grant_attempts`：从权威业务事实生成可恢复的创世奖励分配命令。
+- `dao_reward_transfers` / `dao_reward_attempts` / `dao_reward_sync_cursors`：投影链上奖励、自动付款、通知已读和重组冻结状态。
+- `dao_case_compensations` / `dao_case_compensation_attempts`：已发布的旧案审计结构必须保留；运行时只读兼容既有记录，不再提供新建补偿或付款入口，也不修改旧 Escrow 事实。
 
 ## 安全考虑
 
@@ -98,6 +117,24 @@
 前端实现遵循 `docs/DESIGN.md`：争议相关状态使用 error（红）语义，但克制使用（不加动画/强提示音等），符合规范「专业、克制」的整体基调。仲裁决定的「处理中（decided）」与「已完成（executed）」两个阶段必须用不同图标和文案区分，不能仅凭状态文字的细微差别让用户误判资金已到账（对应 design.md 模块 3 的两阶段展示要求）。
 
 ## 技术决策
+
+### v4 新案边界
+
+- `ArbitrationCases` 管理 `Evidence → AwaitingPanel → AwaitingRandomness → RandomnessReady → Voting → AppealWindow → Final`。申诉产生独立五人轮次；终审达到三票后取全部有效比例中位数。参与不足或全案超时进入 `Recovery`，恢复窗口内由受权角色裁决，窗口结束后任何人可执行部署时公开的兜底比例。
+- 平台提交候选快照，合约现场验证资格及利益冲突。VRF 回调只保存随机数，组建小组另行执行，禁止重抽。
+- `Escrow.bindArbitrationCases` 一次绑定；有案件时拒绝旧 release/refund，专用入口核对 Final、比例和证据根。
+- 私有正文与附件元数据在数据库追加写；新上传附件同时保存实际字节与 SHA-256，提交后禁止修改/删除，授权下载时复算摘要。钱包上链承诺用于识别替换；该机制不能证明内容真实，单库保存也不等于异地备份或灾难恢复。
+- `dao_chain_cases` 是确认投影，`dao_case_commands` 保存逻辑动作，`dao_case_command_attempts` 追加每次签名和执行证据；先提交原始签名再广播，响应丢失只重播同一交易。
+- `ArbitrationRewards` 使用 available/reserved/owed 分账；申诉 USDC 另记锁定保证金与可领取余额。配置不修改已开案条款。
+- YD 奖励默认后台自动发放：`payReward(sourceId,recipient)` 只能支付已记账的固定金额/受益人，重复执行无副作用；用户无需领取或承担发奖 Gas。独立 operator、0042 支付尝试和确认事件索引不与案件投票事务耦合。
+- 创世奖励由独立 grant worker 扫描验证账号、托管事件、任务结算、Agent 准入/交付和有效投票。稳定 `sourceId`、数据库唯一约束和合约 `awarded` 共同去重；按活动 ID 和钱包累计检查 100 YD 上限，超限记录审计状态但不签名。首次成功交付同时生成 15 YD 首次奖励和 20 YD 每次交付奖励。
+- 奖励目录可通过 `DAO_REWARD_CASE_ADDRESS` 先行启用，不改变旧任务的开案路径；正式案件启用后两个地址须相同。禁止为了展示奖励而切换整个任务仲裁协议。
+- 确认的 `RewardPaid` 原子投影为到账记录与未读通知，同一来源/收件人只通知一次；Header 未读入口和 DAO 分页记录共享后端已读状态。首次打开不弹历史通知，在线新到账提示；失败重试不发成功通知。
+- 未迁移时只读检查能力并服务旧案，新案明确拒绝降级；应用不自行执行 DDL。
+- 案件运营恢复已覆盖未签名失败、已确认回滚交易、规范最终裁决恢复和新版全案硬期限兜底；奖励游标只在完整历史语义重现时解冻。恢复角色正式环境应使用独立多签；真实分叉奖励继续交由人工治理。
+- 创始成员不是另一套仲裁权限。部署只配置固定钱包名单，成员仍须满足同一链上质押与利益冲突规则；平台在开案事务中按已同步社区人数固化 `candidate_pool_policy`。worker 在确认区块复核资格后，启动期使用社区加全部创始候选，混合期使用社区加最多 5 名创始候选，社区期排除创始候选，三种阶段最终都把同一份冻结名单交给 VRF。
+
+完整部署与失败限制见 [独立链上仲裁](../../docs/dao-chain-arbitration.md)。以下表格保留 v3 历史决策，不用于描述新案链上权威。
 
 | 决策 | 选项 | 理由 |
 | ---- | ---- | ---- |

@@ -30,7 +30,7 @@
     <img src="https://img.shields.io/badge/viem-2-F5C542" alt="viem 2" />
   </p>
   <p>
-    <img src="https://img.shields.io/badge/status-runnable%20local%20MVP-7C3AED" alt="Runnable local MVP" />
+    <img src="https://img.shields.io/badge/status-local%20MVP%20%2B%20Sepolia%20DAO-7C3AED" alt="Local MVP and Sepolia DAO" />
   </p>
 </div>
 
@@ -199,6 +199,10 @@ DATABASE_URL="$DATABASE_URL" node scripts/local-mvp.mjs
 `.local/anvil/deployment.json`，启动器恢复时会验证 Chain ID、合约代码、USDC 精度和 Escrow
 绑定关系；状态文件与部署清单缺一时会明确失败，不会静默部署一条新链。
 
+状态快照同时保存历史状态，避免重启后无法读取已确认区块的余额；兼容旧快照时会补两个空块，
+不会重置钱包或旧交易。已显式配置本地奖励目录和专属 Gas 账户时，启动器也会恢复自动发奖调度。
+本地发奖验收步骤与测试网限制见 [DAO 奖励与仲裁](docs/dao-chain-arbitration.md)。
+
 需要有意清空链状态时，先关闭本地 MVP，再执行：
 
 ```bash
@@ -270,7 +274,7 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 
 ## 项目状态
 
-当前仓库提供的是**可运行的本地 MVP**，不是已经完成安全审计的生产版本。
+当前仓库提供可运行的本地 MVP，并已完成 DAO 仲裁的 Sepolia 核心闭环验收；尚未达到经安全审计的生产上线状态。
 
 | 范围 | 状态 |
 | --- | --- |
@@ -278,8 +282,8 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 | PRD → 设计 → Coding 正式多 Agent 串行执行与上游制品继承 | 已形成本地闭环 |
 | 文档、HTML、网站、图片、视频与 PDF 分类预览 | 已实现前端预览边界 |
 | Feature 1～13 | 当前 MVP 范围；详细完成证据见各 `specs/*/tasks.md` |
-| Feature 14～16 | 后续运营、沙箱准入与钱包换绑能力，未并入当前 MVP |
-| 公共测试网 USDC Escrow 部署与真实链上闭环 | 待部署验证 |
+| Feature 14、16 | 运营后台与钱包换绑延后；Feature 15 自动准入已完成 |
+| 公共测试网 USDC Escrow 与 DAO 仲裁 | Sepolia 部署、真实 VRF、申诉、结算、恢复和保证金领取已验证 |
 | 生产 `OPERATOR_ROLE` KMS/HSM 签名适配器 | 待实现 |
 | 真实 AWS Lambda/KMS/PostgreSQL 部署 | 待环境验证 |
 | 智能合约审计、监控告警与生产安全评审 | 上线前必须完成 |
@@ -293,6 +297,8 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 - [设计系统](./docs/DESIGN.md) — 品牌、布局、组件和响应式规范
 - [Agent 接入协议](./docs/agent-protocol.md) — 默认快速 HTTP JSON 与高级 AICP HMAC 接入契约
 - [正式工作流制品契约](./docs/workflow-artifacts.md) — 上下游输入继承、阶段验收和最终统一结算
+- [DAO 奖励与链上仲裁](./docs/dao-chain-arbitration.md) — Sepolia 部署、真实案件证据、资金边界和剩余上线条件
+- [DAO 仲裁任务清单](./specs/13.dispute-and-arbitration/tasks.md) — 已完成项、外部验收项和当前权威状态
 - [Agent SDK 与平台自建 Agent](./agents/README.md) — 接入 SDK、九个产品工作流 Agent 与图片/PPT/论文 Agent
 - [工程方法论](./docs/engineering-philosophy.md) — 项目工程决策与验证原则
 - [开发计划](./specs/PLAN.md) — Feature 边界、依赖和当前任务状态
