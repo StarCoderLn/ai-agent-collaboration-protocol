@@ -13,6 +13,7 @@ components[{id,name,parentId,responsibility,states[]}], interactionRules[], resp
 accessibilityRules[], assetPlan[],
 preview{navigation,hero,metrics[],sections[]}.
 preview.navigation is either null or {brand,items[{label,active}],action}; action may be null.
+Every navigation.action and sections[].items[].action must be one plain string or null, never an object.
 preview.hero is {eyebrow,title,description,primaryAction,secondaryAction}; secondaryAction may be null.
 preview.metrics contains 0 to 4 {label,value,detail,tone}. preview.sections contains 3 to 6
 {id,kind,layout,title,description,items[]}; description may be null. kind is cards, list, progress,

@@ -73,6 +73,7 @@ describe("design specification generation prompt", () => {
 	  const prompt = generationPrompt(input);
 
 	  expect(prompt).toContain("Design one believable primary screen, not a wireframe");
+	  expect(prompt).toContain("Every navigation.action and sections[].items[].action must be one plain string or null, never an object");
 	  expect(prompt).toContain("Do not output SVG or HTML");
 	  expect(prompt).not.toContain("app/page.tsx");
 	  expect(prompt).not.toContain("globals.css");
