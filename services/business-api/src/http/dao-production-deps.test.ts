@@ -10,6 +10,7 @@ const ENV_KEYS = [
 	"ARBITRATION_DAO_YD_TOKEN_ADDRESS",
 	"ARBITRATION_DAO_REQUIRED_CONFIRMATIONS",
 	"ARBITRATION_DAO_MINIMUM_STAKE_MINOR",
+	"DAO_FOUNDING_ARBITRATOR_ADDRESSES",
 	"YD_TOKEN_ADDRESS",
 ] as const;
 const originalEnv = Object.fromEntries(
@@ -27,7 +28,8 @@ describe("DAO production configuration", () => {
 			"0x2222222222222222222222222222222222222222";
 		process.env.ARBITRATION_DAO_REQUIRED_CONFIRMATIONS = "2";
 		process.env.ARBITRATION_DAO_MINIMUM_STAKE_MINOR =
-			"1000000000000000000000";
+			"100000000000000000000";
+		delete process.env.DAO_FOUNDING_ARBITRATOR_ADDRESSES;
 		// 产品 YD 地址只用于钱包资产目录。即使它同时存在，DAO 也必须读取自己
 		// 链上合约绑定的地址，避免本地 TestYD 覆盖 Sepolia 产品余额。
 		process.env.YD_TOKEN_ADDRESS =
@@ -49,8 +51,22 @@ describe("DAO production configuration", () => {
 			contractAddress: "0x1111111111111111111111111111111111111111",
 			ydTokenAddress: "0x2222222222222222222222222222222222222222",
 			requiredConfirmations: BigInt(2),
-			minimumStakeMinor: BigInt("1000000000000000000000"),
+			minimumStakeMinor: BigInt("100000000000000000000"),
+			foundingArbitrators: [],
 		});
+	});
+
+	it("loads a fixed founding roster and rejects an undersized bootstrap group", () => {
+		process.env.DAO_FOUNDING_ARBITRATOR_ADDRESSES = Array.from(
+			{ length: 8 },
+			(_, index) => `0x${(index + 1).toString(16).padStart(40, "0")}`,
+		).join(",");
+		expect(loadDaoChainRuntimeConfigFromEnv().foundingArbitrators).toHaveLength(8);
+		process.env.DAO_FOUNDING_ARBITRATOR_ADDRESSES =
+			"0x0000000000000000000000000000000000000001";
+		expect(() => loadDaoChainRuntimeConfigFromEnv()).toThrow(
+			"DAO_FOUNDING_ARBITRATORS_INSUFFICIENT",
+		);
 	});
 
 	it("rejects a DAO deployed on a different chain from escrow", () => {

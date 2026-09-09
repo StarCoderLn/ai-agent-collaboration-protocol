@@ -7,6 +7,10 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { z } from "../agents/product-workflow/node_modules/zod/index.js";
+import {
+  LOCAL_DATABASE_URL,
+  LOCAL_INTERNAL_TOKEN,
+} from "./local-runtime-config.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // 所有 Node 子服务复用启动器自身的可执行文件，既保证版本一致，也避免把开发者机器的
@@ -16,11 +20,13 @@ const TSX = path.join(ROOT, "agents/product-workflow/node_modules/tsx/dist/cli.m
 const SDK_TSC = path.join(ROOT, "agents/agent-sdk/node_modules/typescript/bin/tsc");
 const NEXT_WEB = path.join(ROOT, "web/apps/web/node_modules/next/dist/bin/next");
 const NEXT_BUSINESS = path.join(ROOT, "services/business-api/node_modules/next/dist/bin/next");
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://aicp_test:aicp_test_password@127.0.0.1:55432/aicp_test";
-const INTERNAL_TOKEN = process.env.DISPATCH_INTERNAL_TOKEN ?? "aicp-local-internal-token-2026";
+const DATABASE_URL = process.env.DATABASE_URL ?? LOCAL_DATABASE_URL;
+const INTERNAL_TOKEN = process.env.DISPATCH_INTERNAL_TOKEN ?? LOCAL_INTERNAL_TOKEN;
 const LOCAL_CHAIN_DIRECTORY = path.join(ROOT, ".local/anvil");
 const LOCAL_CHAIN_STATE_PATH = path.join(LOCAL_CHAIN_DIRECTORY, "state.json");
 const LOCAL_CHAIN_DEPLOYMENT_PATH = path.join(LOCAL_CHAIN_DIRECTORY, "deployment.json");
+// 新建本地 DAO 使用已确认的启动期门槛；恢复旧链仍读取部署清单，不在启动时偷偷发交易改配置。
+const LOCAL_DAO_MINIMUM_STAKE_MINOR = (100n * 10n ** 18n).toString();
 const PORTS = Object.freeze({
   anvil: readPort("AICP_ANVIL_PORT", 8545),
   workflow: readPort("AICP_WORKFLOW_AGENT_PORT", 9202),
@@ -42,6 +48,7 @@ const children = [];
 let startupComplete = false;
 let shuttingDown = false;
 let shutdownPromise;
+let localRewardEnabled = false;
 
 const ServiceStatusSchema = z.object({ status: z.enum(["ok", "up"]) }).passthrough();
 const WorkflowStatusSchema = ServiceStatusSchema.extend({ service: z.literal("product-workflow-agents") });
@@ -105,6 +112,12 @@ async function main() {
 
   const { deployment, mode } = await startPersistentLocalChain();
   const { escrowAddress, paymentTokenAddress, ydTokenAddress, arbitrationDaoAddress, daoMinimumStakeMinor } = deployment;
+
+  // Next.js 从 API 工程的 .env.local 读取本地奖励目录，启动器也读取相同开关以恢复调度。
+  // 不向其他服务散播文件中的凭据；显式进程变量优先，缺失文件代表未启用而非自动部署。
+  const apiLocalEnv = await readFile(path.join(ROOT, "services/business-api/.env.local"), "utf8")
+    .catch((error) => { if (error.code === "ENOENT") return ""; throw error; });
+  localRewardEnabled = isLocalRewardWorkerEnabled({ ...parseEnv(apiLocalEnv), ...process.env });
 
   // 只有 genesis 链需要删除同地址旧链留下的同步游标；恢复链沿用原区块高度，重置游标
   // 会让同步器从头扫描并增加重复事件处理压力，甚至掩盖错误恢复配置。
@@ -237,7 +250,7 @@ async function main() {
   console.log(`Escrow 合约：${escrowAddress}`);
   console.log(`测试 USDC：${paymentTokenAddress}（默认 Anvil 账户已获得 100,000 USDC）`);
   console.log(`本地 DAO TestYD：${ydTokenAddress}（默认 Anvil 账户已获得 10,000 TestYD）`);
-  console.log(`DAO 仲裁质押：${arbitrationDaoAddress}（最低 1,000 YD）`);
+  console.log(`DAO 仲裁质押：${arbitrationDaoAddress}（最低 ${formatLocalYd(daoMinimumStakeMinor)} YD）`);
   console.log(`MetaMask 网络：Anvil 31337 / ${URLS.anvil} / 默认账户 ${ANVIL_ACCOUNT}`);
   console.log("按 Ctrl+C 会关闭本启动器创建的全部进程。\n");
   process.on("SIGINT", () => { void shutdown(0); });
@@ -280,6 +293,10 @@ async function startPersistentLocalChain() {
 
   if (restoredDeployment !== undefined) {
     await validateLocalDeployment(restoredDeployment, rpc);
+    // 旧版快照只保存最新状态，恢复后 latest-1 的 eth_call 会报 BlockOutOfRange。
+    // 本地两次确认需要可读的历史状态；补两个空块完成旧快照兼容，不重置余额或历史交易。
+    // 从此启动参数同时保存历史状态，之后重启可继续读取这些已确认区块。
+    await rpc("anvil_mine", ["0x2"]);
     if (restoredDeployment.version === 2) return { deployment: restoredDeployment, mode };
 
     // v1 持久化链包含真实历史任务，不能为了升级合约删除 state.json。新部署的 Escrow
@@ -328,6 +345,7 @@ function buildAnvilArguments({ host, port, chainId, statePath }) {
     "--chain-id", String(chainId),
     "--state", statePath,
     "--state-interval", "1",
+    "--preserve-historical-states",
   ];
 }
 
@@ -464,7 +482,7 @@ async function deployLocalMoneyContracts(existingPaymentTokenAddress) {
     paymentTokenAddress,
   ]);
   const ydTokenAddress = await deployContract("test/TestYD.sol:TestYD", []);
-  const daoMinimumStakeMinor = "1000000000000000000000";
+  const daoMinimumStakeMinor = LOCAL_DAO_MINIMUM_STAKE_MINOR;
   const arbitrationDaoAddress = await deployContract("src/ArbitrationDAO.sol:ArbitrationDAO", [
     ANVIL_ACCOUNT,
     ANVIL_ACCOUNT,
@@ -558,9 +576,30 @@ async function runLocalSettlementAdvancer() {
   while (!shuttingDown) {
     try {
       await advanceLocalSettlementOnce(runInternalWorker, mineLocalConfirmationBlocks);
+      // 新版案件显式启用后才运行推进器；本地回调仍须独立的 VRF 测试协调器，不会由
+      // 启动脚本伪造随机数。只为真实广播交易补确认区块，不重置链或重建既有部署。
+      if (process.env.ARBITRATION_CASES_CONTRACT_ADDRESS) {
+        const result = await runInternalWorker("/api/internal/workers/dao-cases");
+        const parsed = z.object({ submitted: z.number().int().nonnegative() }).parse(result);
+        if (parsed.submitted > 0) await mineLocalConfirmationBlocks();
+      }
     } catch {
       // 服务刚重载或链短暂不可用时保留 outbox 的重试语义；不输出响应和内部 token。
       if (!shuttingDown) console.error("本地结算自动推进失败，将在下一轮重试");
+    }
+    // 发奖单独隔离失败，不因奖励池/收款失败跳过原有任务结算与仲裁推进。
+    if (localRewardEnabled) {
+      try {
+        const result = await runInternalWorker("/api/internal/workers/dao-rewards");
+        if (result.status === "submitted" || result.status === "confirming") {
+          const hash = z.string().regex(/^0x[0-9a-fA-F]{64}$/).safeParse(result.txHash);
+          // 广播响应丢失仍可能已经上链；必须看到真实回执再补确认，不能只凭“待确认”挖块。
+          if (hash.success) {
+            const receipt = await rpc("eth_getTransactionReceipt", [hash.data]);
+            if (z.object({ blockNumber: z.string().regex(/^0x[0-9a-fA-F]+$/) }).safeParse(receipt).success) await mineLocalConfirmationBlocks();
+          }
+        }
+      } catch { /* 下轮恢复同一份持久化签名；不记录可能含凭据的异常对象。 */ }
     }
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
@@ -604,6 +643,12 @@ function parseEnv(source) {
     if (matched?.[1] !== undefined && matched[2] !== undefined) result[matched[1]] = matched[2].replace(/^['"]|['"]$/g, "");
   }
   return result;
+}
+
+/** 奖励独立启用不依赖新仲裁开关；同时必须显式提供 Gas operator，避免只读目录触发付款。 */
+function isLocalRewardWorkerEnabled(env) {
+  return Boolean((env.DAO_REWARD_CASE_ADDRESS || env.ARBITRATION_CASES_CONTRACT_ADDRESS)?.trim()
+    && env.DAO_REWARD_OPERATOR_ADDRESS?.trim());
 }
 
 function required(record, name) { const value = record[name]; if (typeof value !== "string" || value === "") throw new Error(`${name} is missing from agents/paper-writing/.env`); return value; }
@@ -743,7 +788,18 @@ async function shutdown(code) {
   return shutdownPromise;
 }
 
+/** YD 固定 18 位精度；日志也使用整数运算，避免浮点舍入显示成与链上不同的门槛。 */
+function formatLocalYd(minor) {
+  const amount = BigInt(minor);
+  const whole = amount / 10n ** 18n;
+  const fraction = (amount % 10n ** 18n).toString().padStart(18, "0").replace(/0+$/, "");
+  return fraction === "" ? whole.toString() : `${whole}.${fraction}`;
+}
+
 export {
+  LOCAL_DAO_MINIMUM_STAKE_MINOR,
+  isLocalRewardWorkerEnabled,
+  formatLocalYd,
   advanceLocalSettlementOnce,
   assertPortsAvailable,
   buildAnvilArguments,

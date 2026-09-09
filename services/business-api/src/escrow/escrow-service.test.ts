@@ -49,6 +49,9 @@ describe("EscrowService worker", () => {
       reconciled: 1,
     });
     expect(repository.advanceCursor).toHaveBeenCalledWith(expect.objectContaining({ token: "lease-1", nextBlock: 21n }));
+    expect(repository.listPending).toHaveBeenCalledWith(31_337n, CONTRACT, 100);
+    expect(repository.listCanonicalRechecks).toHaveBeenCalledWith(31_337n, CONTRACT, 100);
+    expect(repository.listReconciliationCandidates).toHaveBeenCalledWith(31_337n, CONTRACT, 100);
     expect(repository.applyCanonicalConfirmation).toHaveBeenCalledWith(expect.objectContaining({ eventId: "event-1", confirmations: 12n }));
   });
 

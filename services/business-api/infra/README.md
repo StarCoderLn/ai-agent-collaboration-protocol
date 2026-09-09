@@ -10,11 +10,11 @@ AWS Lambda + Function URL。方案选型见 `specs/2.agent-registration/tasks.md
 管理的 secret 中，不进入定时事件正文。仓储优先选择从未计算或最久未更新的 Agent，
 因此超过单批 100 个时会分轮覆盖，而不是永远只刷新 ID 最小的一批。
 
-> **生产资金执行阻塞项：** 当前仓库只实现非生产 `local-unlocked` Escrow operator。
-> `createProductionEscrowExecutionDeps()` 在生产环境会主动拒绝该模式，CDK 也没有注入
-> operator 私钥。上线前必须实现 KMS/HSM `EscrowOperatorClient`、授予最小签名权限并在
-> 目标网络验证 raw transaction、重试和轮换；Agent 凭证加密使用的 KMS key 不能代替
-> 链上资金签名 key。
+> **生产资金执行阻塞项：** 当前仓库支持 Anvil 的 `local-unlocked` operator，以及已用于
+> 本机 Sepolia 验收的 Web3 Secret Storage 加密 keystore operator；生产环境会拒绝
+> `local-unlocked`，但 CDK 尚未配置 KMS/HSM 链上签名器。上线前必须实现托管式
+> `EscrowOperatorClient`、授予最小签名权限并在目标环境验证 raw transaction、重试、轮换
+> 与恢复；Agent 凭证加密使用的 KMS key 不能代替链上资金签名 key。
 
 ## 前置条件
 

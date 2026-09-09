@@ -3,6 +3,8 @@ dist/
 .next/
 next-env.d.ts
 *.tsbuildinfo
+# 本机部署地址与凭据不进入仓库；共享配置说明保留在 .env.example。
+.env*.local
 infra/cdk.out/
 infra/.dist/
 infra/cdk.context.json

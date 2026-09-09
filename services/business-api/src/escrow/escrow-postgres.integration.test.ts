@@ -9,6 +9,8 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const integration = DATABASE_URL === undefined ? describe.skip : describe;
 const CHAIN_ID = 31_337n;
 const CONTRACT = `0x${"33".repeat(20)}`;
+const FOREIGN_CHAIN_ID = 31_338n;
+const FOREIGN_CONTRACT = `0x${"34".repeat(20)}`;
 const PUBLISHER = `0x${"44".repeat(20)}`;
 const BLOCK_HASH = `0x${"55".repeat(32)}`;
 
@@ -53,7 +55,7 @@ integration("escrow PostgreSQL synchronization", () => {
 
     await expect(repository.observe(event)).resolves.toBe(true);
     await expect(repository.observe(event)).resolves.toBe(false);
-    const pending = await repository.listPending(10);
+    const pending = await repository.listPending(CHAIN_ID, CONTRACT, 10);
     expect(pending).toHaveLength(1);
     await expect(repository.applyCanonicalConfirmation({
       eventId: required(pending[0]).id,
@@ -93,7 +95,7 @@ integration("escrow PostgreSQL synchronization", () => {
     const repository = new PgEscrowRepository(pool);
     await repository.prepareIntent({ taskId, publisherId: PUBLISHER, chainId: CHAIN_ID, contractAddress: CONTRACT, taskKey: taskKeyForTaskId(taskId) });
     await repository.observe(depositEvent(taskId, 3n, 11n, `0x${"77".repeat(32)}`));
-    const event = required((await repository.listPending(10))[0]);
+    const event = required((await repository.listPending(CHAIN_ID, CONTRACT, 10))[0]);
 
     await expect(repository.applyCanonicalConfirmation({
       eventId: event.id,
@@ -127,7 +129,7 @@ integration("escrow PostgreSQL synchronization", () => {
     const repository = new PgEscrowRepository(pool);
     await repository.prepareIntent({ taskId, publisherId: PUBLISHER, chainId: CHAIN_ID, contractAddress: CONTRACT, taskKey: taskKeyForTaskId(taskId) });
     await repository.observe(depositEvent(taskId, 2n, 12n, `0x${"88".repeat(32)}`));
-    const event = required((await repository.listPending(10))[0]);
+    const event = required((await repository.listPending(CHAIN_ID, CONTRACT, 10))[0]);
 
     await expect(repository.applyCanonicalConfirmation({
       eventId: event.id,
@@ -156,6 +158,59 @@ integration("escrow PostgreSQL synchronization", () => {
       chainId: CHAIN_ID, contractAddress: CONTRACT, token: second.token, nextBlock: 6n,
       lastBlockHash: BLOCK_HASH, now: new Date(now.getTime() + 1_002),
     })).resolves.toBeUndefined();
+  });
+
+  it("keeps pending checks, canonical rechecks, and reconciliation inside one chain contract", async () => {
+    const repository = new PgEscrowRepository(pool);
+    const scopes = [
+      { chainId: CHAIN_ID, contractAddress: CONTRACT, blockNumber: 20n, txHash: `0x${"a1".repeat(32)}` },
+      { chainId: FOREIGN_CHAIN_ID, contractAddress: CONTRACT, blockNumber: 21n, txHash: `0x${"a2".repeat(32)}` },
+      { chainId: CHAIN_ID, contractAddress: FOREIGN_CONTRACT, blockNumber: 22n, txHash: `0x${"a3".repeat(32)}` },
+    ] as const;
+    const taskIdsByScope = new Map<string, string>();
+
+    for (const scope of scopes) {
+      const taskId = await insertAwaitingEscrowTask(pool, taskIds, agentIds, 2n);
+      taskIdsByScope.set(`${scope.chainId}:${scope.contractAddress}`, taskId);
+      await repository.prepareIntent({
+        taskId,
+        publisherId: PUBLISHER,
+        chainId: scope.chainId,
+        contractAddress: scope.contractAddress,
+        taskKey: taskKeyForTaskId(taskId),
+      });
+      await repository.observe({
+        ...depositEvent(taskId, 2n, scope.blockNumber, scope.txHash),
+        chainId: scope.chainId,
+        contractAddress: scope.contractAddress,
+      });
+    }
+
+    const targetPending = await repository.listPending(CHAIN_ID, CONTRACT, 10);
+    expect(targetPending).toHaveLength(1);
+    expect(targetPending[0]?.blockNumber).toBe(20n);
+
+    for (const scope of scopes) {
+      const event = required((await repository.listPending(scope.chainId, scope.contractAddress, 10))[0]);
+      await repository.applyCanonicalConfirmation({
+        eventId: event.id,
+        canonicalBlockHash: BLOCK_HASH,
+        confirmations: 12n,
+        now: new Date("2026-08-23T01:00:00Z"),
+      });
+    }
+    await pool.query(
+      "UPDATE escrow_sync SET canonical_checked_at=now() - interval '6 minutes' WHERE task_id=ANY($1::uuid[])",
+      [[...taskIdsByScope.values()]],
+    );
+
+    const rechecks = await repository.listCanonicalRechecks(CHAIN_ID, CONTRACT, 10);
+    expect(rechecks).toHaveLength(1);
+    expect(rechecks[0]?.blockNumber).toBe(20n);
+    const reconciliation = await repository.listReconciliationCandidates(CHAIN_ID, CONTRACT, 10);
+    expect(reconciliation.map((candidate) => candidate.taskId)).toEqual([
+      taskIdsByScope.get(`${CHAIN_ID}:${CONTRACT}`),
+    ]);
   });
 
   it("keeps a failed refund retryable and escalates only after the configured limit", async () => {

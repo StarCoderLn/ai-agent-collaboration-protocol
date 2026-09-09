@@ -109,7 +109,7 @@ export interface EscrowRepository {
   ): Promise<void>;
   releaseCursor(chainId: bigint, contractAddress: string, token: string): Promise<void>;
   observe(event: ObservedEscrowEvent): Promise<boolean>;
-  listPending(limit: number): Promise<readonly ConfirmableEscrowEvent[]>;
+  listPending(chainId: bigint, contractAddress: string, limit: number): Promise<readonly ConfirmableEscrowEvent[]>;
   recordPendingCheck(
     input: Readonly<{
       eventId: string;
@@ -126,13 +126,13 @@ export interface EscrowRepository {
       now: Date;
     }>,
   ): Promise<"confirmed" | "orphaned" | "needs_review" | "replayed">;
-  listCanonicalRechecks(limit: number): Promise<readonly ConfirmableEscrowEvent[]>;
+  listCanonicalRechecks(chainId: bigint, contractAddress: string, limit: number): Promise<readonly ConfirmableEscrowEvent[]>;
   recordCanonicalRecheck(
     eventId: string,
     canonicalHash: string | null,
     now: Date,
   ): Promise<"canonical" | "needs_review">;
-  listReconciliationCandidates(limit: number): Promise<readonly ReconciliationCandidate[]>;
+  listReconciliationCandidates(chainId: bigint, contractAddress: string, limit: number): Promise<readonly ReconciliationCandidate[]>;
   recordReconciliation(
     taskId: string,
     expected: ReconciliationCandidate,
@@ -572,15 +572,16 @@ export class PgEscrowRepository implements EscrowRepository {
     }));
   }
 
-  async listPending(limit: number): Promise<readonly ConfirmableEscrowEvent[]> {
+  async listPending(chainId: bigint, contractAddress: string, limit: number): Promise<readonly ConfirmableEscrowEvent[]> {
     const result = await this.db.query<{
       id: string;
       block_number: string;
       block_hash: string;
     }>(
       `SELECT id::text,block_number::text,block_hash FROM escrow_sync
-        WHERE status='pending_confirmation' ORDER BY block_number,log_index LIMIT $1`,
-      [limit],
+        WHERE chain_id=$1 AND contract_address=$2 AND status='pending_confirmation'
+        ORDER BY block_number,log_index LIMIT $3`,
+      [chainId.toString(), contractAddress, limit],
     );
     return result.rows.map((row) => ({
       id: row.id,
@@ -681,16 +682,17 @@ export class PgEscrowRepository implements EscrowRepository {
     });
   }
 
-  async listCanonicalRechecks(limit: number): Promise<readonly ConfirmableEscrowEvent[]> {
+  async listCanonicalRechecks(chainId: bigint, contractAddress: string, limit: number): Promise<readonly ConfirmableEscrowEvent[]> {
     const result = await this.db.query<{
       id: string;
       block_number: string;
       block_hash: string;
     }>(
       `SELECT id::text,block_number::text,block_hash FROM escrow_sync
-        WHERE status='confirmed' AND (canonical_checked_at IS NULL OR canonical_checked_at < now() - interval '5 minutes')
-        ORDER BY canonical_checked_at NULLS FIRST,block_number DESC LIMIT $1`,
-      [limit],
+        WHERE chain_id=$1 AND contract_address=$2 AND status='confirmed'
+          AND (canonical_checked_at IS NULL OR canonical_checked_at < now() - interval '5 minutes')
+        ORDER BY canonical_checked_at NULLS FIRST,block_number DESC LIMIT $3`,
+      [chainId.toString(), contractAddress, limit],
     );
     return result.rows.map((row) => ({
       id: row.id,
@@ -730,13 +732,15 @@ export class PgEscrowRepository implements EscrowRepository {
     });
   }
 
-  async listReconciliationCandidates(limit: number): Promise<readonly ReconciliationCandidate[]> {
+  async listReconciliationCandidates(chainId: bigint, contractAddress: string, limit: number): Promise<readonly ReconciliationCandidate[]> {
     const result = await this.db.query<IntentRow>(
       `SELECT task_id::text,chain_id::text,contract_address,task_key,payer_wallet,amount_minor::text,
               released_amount_minor::text,status,deposit_tx_hash,failure_reason,updated_at
-         FROM escrow_intents WHERE status IN ('confirmed','partially_released','released','refunded')
-        ORDER BY updated_at LIMIT $1`,
-      [limit],
+         FROM escrow_intents
+        WHERE chain_id=$1 AND contract_address=$2
+          AND status IN ('confirmed','partially_released','released','refunded')
+        ORDER BY updated_at LIMIT $3`,
+      [chainId.toString(), contractAddress, limit],
     );
     return result.rows.map((row) => {
       const intent = mapIntent(row);

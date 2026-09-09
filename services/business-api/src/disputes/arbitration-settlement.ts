@@ -2,6 +2,7 @@ import { AbiCoder, getAddress, keccak256, toUtf8Bytes } from "ethers";
 
 import type { QueryExecutor } from "../db/pool";
 import { calculatePlatformFee } from "../platform/task-state";
+import { evidenceContentHash } from "../dao/dao-case-contract";
 
 export type ArbitrationSettlementContext = Readonly<{
   workflowRunId: string;
@@ -46,6 +47,7 @@ export type ArbitrationSettlementPlan = Readonly<{
 
 type DecisionAuthority =
   | Readonly<{ source: "dao"; roundId: string; voteIds: readonly string[] }>
+  | Readonly<{ source: "chain_dao"; chainId: string; contractAddress: string; caseKey: string; blockNumber: string; blockHash: string; evidenceRoot: string }>
   | Readonly<{ source: "platform"; arbitratorId: string }>;
 
 /**
@@ -95,10 +97,15 @@ export async function loadArbitrationSettlementContext(
   }
 
   const evidence = await db.query<EvidenceRow>(
-    `SELECT id::text,submitted_by,party,description,attachments
+    `SELECT id::text,submitted_by,party,description,attachments,to_jsonb(dispute_evidence)->>'content_hash' AS content_hash
        FROM dispute_evidence WHERE dispute_id=$1 ORDER BY created_at,id`,
     [disputeId],
   );
+  for (const row of evidence.rows) {
+    if (row.content_hash != null && row.content_hash !== evidenceContentHash({
+      disputeId, evidenceId: row.id, submitter: row.submitted_by, description: row.description, attachments: row.attachments,
+    })) throw new ArbitrationSettlementError("EVIDENCE_INTEGRITY_MISMATCH", "证据与原始承诺不一致，已阻止资金结算");
+  }
   return {
     workflowRunId: terms.workflow_run_id,
     escrowAmountMinor: BigInt(terms.escrow_amount_minor),
@@ -197,7 +204,9 @@ export function buildArbitrationSettlementPlan(input: Readonly<{
       bodyOrFileRef: line.bodyOrFileRef,
     })),
   });
-  const evidenceRoot = keccak256(coder.encode(
+  // 链上案件的证据根由当事人的追加承诺形成，资金执行必须使用该权威根；不能在结算时
+  // 重新哈希数据库当前内容替换它，否则即使已被篡改的正文也会得到一份新的“有效证明”。
+  const evidenceRoot = input.authority.source === "chain_dao" ? input.authority.evidenceRoot : keccak256(coder.encode(
     ["bytes32", "bytes32"],
     [artifactRoot, digest(context.evidence)],
   ));
@@ -281,4 +290,5 @@ type EvidenceRow = {
   party: string;
   description: string;
   attachments: unknown;
+  content_hash: string | null;
 };

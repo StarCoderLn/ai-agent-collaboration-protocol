@@ -4,6 +4,9 @@ import test from "node:test";
 process.env.AICP_LOCAL_MVP_TEST_MODE = "true";
 
 const {
+  LOCAL_DAO_MINIMUM_STAKE_MINOR,
+  isLocalRewardWorkerEnabled,
+  formatLocalYd,
   advanceLocalSettlementOnce,
   assertPortsAvailable,
   buildAnvilArguments,
@@ -27,8 +30,26 @@ const VALID_DEPLOYMENT = Object.freeze({
   escrowAddress: ESCROW_ADDRESS,
   ydTokenAddress: YD_TOKEN_ADDRESS,
   arbitrationDaoAddress: DAO_ADDRESS,
-  daoMinimumStakeMinor: "1000000000000000000000",
+  daoMinimumStakeMinor: "100000000000000000000",
   createdAt: "2026-08-30T10:00:00.000Z",
+});
+
+test("奖励独立目录恢复调度，不要求同时启用新案件，也不在缺少 operator 时付款", () => {
+  assert.equal(isLocalRewardWorkerEnabled({ DAO_REWARD_CASE_ADDRESS: DAO_ADDRESS, DAO_REWARD_OPERATOR_ADDRESS: ESCROW_ADDRESS }), true);
+  assert.equal(isLocalRewardWorkerEnabled({ ARBITRATION_CASES_CONTRACT_ADDRESS: DAO_ADDRESS, DAO_REWARD_OPERATOR_ADDRESS: ESCROW_ADDRESS }), true);
+  assert.equal(isLocalRewardWorkerEnabled({ DAO_REWARD_CASE_ADDRESS: DAO_ADDRESS }), false);
+  assert.equal(isLocalRewardWorkerEnabled({ DAO_REWARD_OPERATOR_ADDRESS: ESCROW_ADDRESS }), false);
+  assert.equal(isLocalRewardWorkerEnabled({ DAO_REWARD_CASE_ADDRESS: " ", DAO_REWARD_OPERATOR_ADDRESS: ESCROW_ADDRESS }), false);
+});
+
+test("新 DAO 默认 100 YD，恢复旧部署不暗改门槛，日志按实际金额显示", () => {
+  // 1000 YD 是历史部署兼容样例，不是新的产品默认值；恢复启动不能代替管理员发配置交易。
+  assert.equal(LOCAL_DAO_MINIMUM_STAKE_MINOR, "100000000000000000000");
+  const legacy = parseLocalDeployment(JSON.stringify({ ...VALID_DEPLOYMENT, daoMinimumStakeMinor: "1000000000000000000000" }));
+  assert.equal(legacy.daoMinimumStakeMinor, "1000000000000000000000");
+  assert.equal(formatLocalYd(LOCAL_DAO_MINIMUM_STAKE_MINOR), "100");
+  assert.equal(formatLocalYd(legacy.daoMinimumStakeMinor), "1000");
+  assert.equal(formatLocalYd("100000000000000000001"), "100.000000000000000001");
 });
 
 test("本地链状态与部署清单必须成对出现", () => {
@@ -47,6 +68,7 @@ test("Anvil 启动参数持续保存并恢复项目私有状态", () => {
       "--chain-id", "31337",
       "--state", "/project/.local/anvil/state.json",
       "--state-interval", "1",
+      "--preserve-historical-states",
     ],
   );
 });

@@ -179,7 +179,11 @@ export class EscrowService {
     head: bigint,
     now: Date,
   ): Promise<Readonly<{ confirmed: number; orphaned: number; needsReview: number }>> {
-    const pending = await this.repository.listPending(this.config.eventBatchSize);
+    const pending = await this.repository.listPending(
+      this.chain.chainId,
+      this.chain.contractAddress,
+      this.config.eventBatchSize,
+    );
     let confirmed = 0;
     let orphaned = 0;
     let needsReview = 0;
@@ -210,7 +214,11 @@ export class EscrowService {
   }
 
   private async recheckCanonicalBlocks(now: Date): Promise<number> {
-    const events = await this.repository.listCanonicalRechecks(this.config.recheckBatchSize);
+    const events = await this.repository.listCanonicalRechecks(
+      this.chain.chainId,
+      this.chain.contractAddress,
+      this.config.recheckBatchSize,
+    );
     let needsReview = 0;
     for (const event of events) {
       const hash = await this.chain.getBlockHash(event.blockNumber);
@@ -220,7 +228,11 @@ export class EscrowService {
   }
 
   private async reconcile(): Promise<number> {
-    const candidates = await this.repository.listReconciliationCandidates(this.config.reconciliationBatchSize);
+    const candidates = await this.repository.listReconciliationCandidates(
+      this.chain.chainId,
+      this.chain.contractAddress,
+      this.config.reconciliationBatchSize,
+    );
     let matches = 0;
     for (const candidate of candidates) {
       const actual = await this.chain.getEscrow(candidate.taskKey);

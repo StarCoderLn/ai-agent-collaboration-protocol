@@ -13,6 +13,8 @@ import {
 } from "../disputes/arbitration-settlement";
 import { emitTaskEvent } from "../tasks/task-event-repository";
 import type { DaoMembershipChainClient, DaoMembershipSnapshot } from "./dao-chain-client";
+import { createCandidatePoolSnapshot, normalizeFoundingArbitrators } from "./dao-candidate-pool";
+import { hasDaoCaseSchema } from "./dao-case-schema";
 
 const transactionHashSchema = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 const voteSchema = z.object({
@@ -51,14 +53,18 @@ export class DaoService {
     private readonly pool: PoolLike,
     private readonly db: QueryExecutor,
     private readonly chain: DaoMembershipChainClient,
-    private readonly config: Readonly<{ minimumStakeMinor: bigint }>,
+    private readonly config: Readonly<{
+      minimumStakeMinor: bigint;
+      foundingArbitrators?: readonly string[];
+    }>,
   ) {
     if (config.minimumStakeMinor <= 0n) throw new Error("INVALID_DAO_SERVICE_CONFIG");
   }
 
   async overview(actorId: string): Promise<Readonly<Record<string, unknown>>> {
     const actor = normalizeAddress(actorId);
-    const [membership, cases] = await Promise.all([
+    const chainSchemaAvailable = await hasDaoCaseSchema(this.db);
+    const [membership, cases, chainCases, candidatePool] = await Promise.all([
       this.db.query<MembershipRow>(
         `SELECT actor_id,staked_amount_minor::text,eligible,exit_available_at,sync_tx_hash,
                 sync_block_number::text,synced_at
@@ -81,6 +87,12 @@ export class DaoService {
                    round.created_at DESC`,
         [actor],
       ),
+      chainSchemaAvailable ? this.db.query<{ dispute_id: string; task_id: string; title: string; status: string; snapshot: unknown }>(
+        `SELECT chain.dispute_id::text,dispute.task_id::text,task.title,chain.status,chain.snapshot
+         FROM dao_chain_cases chain JOIN disputes dispute ON dispute.id=chain.dispute_id JOIN tasks task ON task.id=dispute.task_id
+         WHERE chain.snapshot->'panel' ? $1 OR chain.snapshot->'firstPanel' ? $1 ORDER BY chain.updated_at DESC`, [actor],
+      ) : Promise.resolve({ rows: [] }),
+      this.candidatePoolOverview(),
     ]);
     return {
       chainId: this.chain.chainId.toString(),
@@ -89,7 +101,33 @@ export class DaoService {
       minimumStakeMinor: this.config.minimumStakeMinor.toString(),
       membership: membership.rows[0] === undefined ? null : serializeMembership(membership.rows[0]),
       cases: cases.rows.map(serializeCase),
+      chainCases: chainCases.rows.map((row) => ({ disputeId: row.dispute_id, taskId: row.task_id, taskTitle: row.title, status: row.status })),
+      candidatePool,
     };
+  }
+
+  /**
+   * 页面展示的是数据库最近同步的候选池容量，不把它冒充链上实时资格；worker 在真正
+   * 请求 VRF 前仍会固定确认区块逐一复核。这里用于公开启动期与社区交接进度。
+   */
+  async candidatePoolOverview(): Promise<Readonly<Record<string, unknown>>> {
+    const founding = normalizeFoundingArbitrators(this.config.foundingArbitrators ?? []);
+    const eligible = (await this.db.query<{ actor_id: string }>(
+      "SELECT actor_id FROM dao_memberships WHERE chain_id=$1 AND eligible=TRUE AND exit_available_at IS NULL ORDER BY actor_id",
+      [this.chain.chainId.toString()],
+    )).rows.map((row) => row.actor_id);
+    const snapshot = createCandidatePoolSnapshot(founding, eligible);
+    const foundingSet = new Set(snapshot.foundingArbitrators);
+    return {
+      phase: snapshot.phase,
+      foundingConfiguredCount: snapshot.foundingArbitrators.length,
+      foundingEligibleCount: new Set(eligible.filter((actor) => foundingSet.has(actor))).size,
+      communityEligibleCount: snapshot.communityEligibleAtOpen,
+      mixedThreshold: snapshot.mixedThreshold,
+      handoffThreshold: snapshot.handoffThreshold,
+      selection: "chainlink_vrf",
+      measuredFrom: "confirmed_membership_sync",
+    } as const;
   }
 
   async syncMembership(actorId: string, raw: unknown, now: Date): Promise<Readonly<Record<string, unknown>>> {
@@ -365,13 +403,18 @@ function resolveOutcome(votes: readonly VoteRow[], quorum: number): ResolvedOutc
   };
 }
 
-async function finalizeDaoDecision(
+export async function finalizeDaoDecision(
   db: QueryExecutor,
-  round: LockedRoundRow,
+  round: Readonly<Pick<LockedRoundRow, "round_id" | "task_id" | "dispute_id">>,
   outcome: ResolvedOutcome,
   allVotes: readonly VoteRow[],
   now: Date,
+  chainProof?: Readonly<{ chainId: string; contractAddress: string; caseKey: string; blockNumber: string; blockHash: string; evidenceRoot: string }>,
 ): Promise<Readonly<Record<string, unknown>>> {
+  if (chainProof === undefined && await hasDaoCaseSchema(db)) {
+    const chainCase = await db.query("SELECT 1 FROM dao_chain_cases WHERE dispute_id=$1", [round.dispute_id]);
+    if (chainCase.rows.length > 0) throw new DaoServiceError(409, "DAO_CHAIN_DECISION_REQUIRED", "新版案件只能消费已确认的链上终审裁决");
+  }
   // 裁决、资金计划和 outbox 必须在同一数据库事务中生成。链上 worker 只消费已固化计划，
   // 不得在广播时重新读取可变报价或重新统计投票，否则审计记录可能与实际转账分叉。
   const decisionId = randomUUID();
@@ -391,7 +434,9 @@ async function finalizeDaoDecision(
     releaseBasisPoints: outcome.releaseBasisPoints,
     responsibility: outcome.responsibility,
     reason: outcome.reasoning,
-    authority: { source: "dao", roundId: round.round_id, voteIds: allVotes.map((vote) => vote.id) },
+    authority: chainProof === undefined
+      ? { source: "dao", roundId: round.round_id, voteIds: allVotes.map((vote) => vote.id) }
+      : { source: "chain_dao", ...chainProof },
   });
   await db.query(
     `INSERT INTO arbitration_decisions(
@@ -425,7 +470,8 @@ async function finalizeDaoDecision(
     );
   }
   await db.query("UPDATE disputes SET status='decided',updated_at=$2 WHERE id=$1", [round.dispute_id, now]);
-  await db.query(
+  // 新版案件不创建旧投票轮次，只有旧案更新此镜像；裁决和 outbox 的金额规则继续共用。
+  if (chainProof === undefined) await db.query(
     "UPDATE dao_arbitration_rounds SET status='decided',evidence_root=$2,decided_at=$3 WHERE id=$1",
     [round.round_id, plan.evidenceRoot, now],
   );

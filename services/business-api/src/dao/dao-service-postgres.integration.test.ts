@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { readFile, readdir } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { Pool, type PoolClient } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { PoolLike } from "../db/pool";
 import { PgDisputeRepository } from "../disputes/dispute-repository";
@@ -11,6 +13,12 @@ import type { EscrowOperatorClient } from "../escrow/escrow-operator-client";
 import { PgEscrowRepository, type EscrowDatabase } from "../escrow/escrow-repository";
 import type { DaoMembershipChainClient } from "./dao-chain-client";
 import { createDaoRoundForDispute, DaoService } from "./dao-service";
+import { projectChainCase, registerChainCase, retryUnsignedCaseCommand } from "./dao-chain-case-repository";
+import { daoCaseInterface, daoCaseKey, evidenceContentHash, type ChainCaseSnapshot } from "./dao-case-contract";
+import { inspectDaoEvidence } from "./dao-case-actions";
+import { DaoCaseRecoveryService } from "./dao-case-recovery";
+import { DaoCaseWorker, type DaoCaseOperator } from "./dao-case-worker";
+import type { DaoCaseChainClient, EvidenceTransactionStatus } from "./dao-case-chain-client";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const integration = DATABASE_URL === undefined ? describe.skip : describe;
@@ -155,7 +163,7 @@ integration("DAO arbitration PostgreSQL contract", () => {
           evidenceRoot: job?.evidence_root ?? "",
         },
       });
-      const pending = required((await escrow.listPending(10)).find((event) => event.blockNumber === 201n));
+      const pending = required((await escrow.listPending(31_337n, CONTRACT, 10)).find((event) => event.blockNumber === 201n));
       await expect(escrow.applyCanonicalConfirmation({
         eventId: pending.id,
         canonicalBlockHash: BLOCK_HASH,
@@ -269,7 +277,7 @@ integration("DAO arbitration PostgreSQL contract", () => {
           evidenceRoot: refundJob.evidence_root,
         },
       });
-      const pending = required((await escrow.listPending(10)).find((event) => event.blockNumber === 202n));
+      const pending = required((await escrow.listPending(31_337n, CONTRACT, 10)).find((event) => event.blockNumber === 202n));
       await expect(escrow.applyCanonicalConfirmation({
         eventId: pending.id,
         canonicalBlockHash: BLOCK_HASH,
@@ -341,6 +349,676 @@ integration("DAO arbitration PostgreSQL contract", () => {
         (sum, payout) => sum + BigInt(payout.grossAmountMinor),
         0n,
       )).toBe(30_000_001n);
+    });
+  });
+  it("链上首审申诉期没有付款任务，平台不能绕过，终审只生成一次结算", async () => {
+    await withRollbackClient(pool, async (client) => {
+      const fixture = await insertFixture(client);
+      const config = { chainId: 31337n, contractAddress: DAO };
+      await registerChainCase(client, fixture.disputeId, fixture.taskId, config);
+      const snapshot: ChainCaseSnapshot = {
+        status: "appeal_window", taskKey: taskKeyForTaskId(fixture.taskId), evidenceRoot: BLOCK_HASH,
+        round: 1, evidenceDeadline: "1788000000", deadline: "1789000000", releaseBasisPoints: 5000,
+        firstReleaseBasisPoints: 5000, appellant: PUBLISHER, rewardPerVoteMinor: "10", appealBondMinor: "20", appealFeeMinor: "1",
+        bondPolicy: 1, requestId: "42", candidatesHash: BLOCK_HASH, panel: [...NEUTRAL_MEMBERS],
+        firstPanel: [...NEUTRAL_MEMBERS], voters: [...NEUTRAL_MEMBERS], voteCount: 3,
+        blockNumber: "100", blockHash: BLOCK_HASH, blockTimestamp: "1788500000",
+      };
+      await projectChainCase(client, fixture.disputeId, snapshot, config, fixture.now);
+      expect((await client.query("SELECT 1 FROM escrow_execution_jobs WHERE task_id=$1", [fixture.taskId])).rows).toHaveLength(0);
+      const repository = new PgDisputeRepository(client);
+      await expect(repository.decide(fixture.disputeId, PUBLISHER, {
+        type: "refund", releaseAmountMinor: 0n, refundAmountMinor: 60_000_000n,
+        agentResponsibility: "agent_at_fault", reason: "尝试跳过申诉期直接退款，不应执行。",
+      }, fixture.now)).rejects.toMatchObject({ code: "DAO_CHAIN_DECISION_REQUIRED" });
+      const read = await repository.read(fixture.disputeId, NEUTRAL_MEMBERS[0]);
+      expect(read.body).toMatchObject({ viewerRole: "arbitrator", viewerCanPlatformDecide: false, chainArbitration: { status: "appeal_window" } });
+      const final = { ...snapshot, status: "final" as const, blockNumber: "101" };
+      await projectChainCase(client, fixture.disputeId, final, config, fixture.now);
+      await projectChainCase(client, fixture.disputeId, final, config, fixture.now);
+      const jobs = await client.query<{ evidence_root: string; workflow_payouts: { grossAmountMinor: string }[] }>(
+        "SELECT evidence_root,workflow_payouts FROM escrow_execution_jobs WHERE task_id=$1", [fixture.taskId]);
+      expect(jobs.rows).toHaveLength(1);
+      expect(jobs.rows[0]?.evidence_root).toBe(BLOCK_HASH);
+      expect(jobs.rows[0]?.workflow_payouts.reduce((sum, line) => sum + BigInt(line.grossAmountMinor), 0n)).toBe(30_000_000n);
+      expect((await client.query("SELECT funds_frozen FROM disputes WHERE id=$1", [fixture.disputeId])).rows[0]?.funds_frozen).toBe(true);
+      await expect(projectChainCase(client, fixture.disputeId, { ...snapshot, blockNumber: "102" }, config, fixture.now))
+        .rejects.toThrow("DAO_FINAL_DECISION_REORGED");
+      await expect(projectChainCase(client, fixture.disputeId, { ...snapshot, status: "none", blockNumber: "103" }, config, fixture.now))
+        .rejects.toThrow("DAO_FINAL_DECISION_REORGED");
+    });
+  });
+
+  it("开案固化混合候选阶段，后来达到社区阈值也不会替换本案创始后备", async () => {
+    await withIsolatedCaseSchema(pool, async (client) => {
+      const fixture = await insertFixture(client);
+      const founding = testAddresses(0x600, 8);
+      const firstCommunity = testAddresses(0x700, 4);
+      await insertEligibleMemberships(client, founding, fixture.now);
+      // 夹具已有三名中立成员和一名任务参与者；加四名后，开案时共有八名社区成员。
+      await insertEligibleMemberships(client, firstCommunity, fixture.now);
+      await registerChainCase(client, fixture.disputeId, fixture.taskId, {
+        chainId: 31337n,
+        contractAddress: DAO,
+        foundingArbitrators: founding,
+      });
+      expect((await client.query<{ candidate_pool_policy: { phase: string; communityEligibleAtOpen: number } }>(
+        "SELECT candidate_pool_policy FROM dao_chain_cases WHERE dispute_id=$1",
+        [fixture.disputeId],
+      )).rows[0]?.candidate_pool_policy).toMatchObject({ phase: "mixed", communityEligibleAtOpen: 8 });
+
+      // 开案后再增加四名社区成员，使当前总数达到十二；本案仍必须沿用已固化的 mixed。
+      const laterCommunity = testAddresses(0x800, 4);
+      await insertEligibleMemberships(client, laterCommunity, fixture.now);
+      await client.query(
+        "UPDATE dao_case_commands SET status='confirmed' WHERE dispute_id=$1 AND command_key='open'",
+        [fixture.disputeId],
+      );
+      const eligibleMembers = vi.fn(async (candidates: readonly string[]) => candidates);
+      const snapshot: ChainCaseSnapshot = {
+        status: "awaiting_panel", taskKey: taskKeyForTaskId(fixture.taskId), evidenceRoot: BLOCK_HASH,
+        round: 1, evidenceDeadline: "0", deadline: "0", releaseBasisPoints: 0, firstReleaseBasisPoints: 0,
+        appellant: PUBLISHER, rewardPerVoteMinor: "10", appealBondMinor: "20", appealFeeMinor: "1", bondPolicy: 1,
+        requestId: "0", candidatesHash: BLOCK_HASH, panel: [], firstPanel: [], voteCount: 0, voters: [],
+        blockNumber: "100", blockHash: BLOCK_HASH, blockTimestamp: "1788500000",
+      };
+      const chain: DaoCaseChainClient = {
+        chainId: 31337n, contractAddress: DAO, read: async () => snapshot, eligibleMembers,
+        verifyEscrowBinding: async () => undefined, hasVoted: async () => false,
+        paymentToken: async () => CONTRACT, verifyEvidence: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+        inspectEvidenceTransaction: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+      };
+      const operator: DaoCaseOperator = {
+        prepareContractCall: async () => ({ txHash: BLOCK_HASH, rawTransaction: "0x02abcd" }),
+        broadcast: async () => BLOCK_HASH,
+        receipt: async () => "pending",
+      };
+      await expect(new DaoCaseWorker(asDirectPool(client), chain, operator).run()).resolves.toMatchObject({ submitted: 1 });
+      const command = (await client.query<{ calldata: string }>(
+        "SELECT calldata FROM dao_case_commands WHERE dispute_id=$1 AND command_key='1:requestPanel'",
+        [fixture.disputeId],
+      )).rows[0];
+      const decoded = daoCaseInterface.decodeFunctionData("requestPanel", required(command).calldata);
+      const candidates = Array.from(decoded[1] as readonly string[]).map((actor) => actor.toLowerCase());
+      expect(candidates.filter((actor) => founding.includes(actor))).toEqual(founding.slice(0, 5));
+      expect(candidates).toEqual(expect.arrayContaining([...NEUTRAL_MEMBERS, ...firstCommunity, ...laterCommunity]));
+      expect(candidates).not.toContain(PROVIDERS[0]);
+    });
+  });
+
+  it("新版合约超过全案硬期限后持久化唯一恢复命令", async () => {
+    await withIsolatedCaseSchema(pool, async (client) => {
+      const fixture = await insertFixture(client);
+      await registerChainCase(client, fixture.disputeId, fixture.taskId, { chainId: 31337n, contractAddress: DAO });
+      await client.query(
+        "UPDATE dao_case_commands SET status='confirmed' WHERE dispute_id=$1 AND command_key='open'",
+        [fixture.disputeId],
+      );
+      const snapshot: ChainCaseSnapshot = {
+        status: "awaiting_randomness", taskKey: taskKeyForTaskId(fixture.taskId), evidenceRoot: BLOCK_HASH,
+        round: 1, evidenceDeadline: "50", deadline: "0", releaseBasisPoints: 0, firstReleaseBasisPoints: 0,
+        appellant: PUBLISHER, rewardPerVoteMinor: "10", appealBondMinor: "20", appealFeeMinor: "1", bondPolicy: 1,
+        timeoutFallbackBasisPoints: null, recoveryEligibleAt: "100", requestId: "42", candidatesHash: BLOCK_HASH,
+        panel: [], firstPanel: [], voteCount: 0, voters: [], blockNumber: "100", blockHash: BLOCK_HASH,
+        blockTimestamp: "100",
+      };
+      const chain: DaoCaseChainClient = {
+        chainId: 31337n, contractAddress: DAO, read: async () => snapshot, eligibleMembers: async () => [],
+        verifyEscrowBinding: async () => undefined, hasVoted: async () => false, paymentToken: async () => CONTRACT,
+        verifyEvidence: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+        inspectEvidenceTransaction: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+      };
+      const operator: DaoCaseOperator = {
+        prepareContractCall: async () => ({ txHash: BLOCK_HASH, rawTransaction: "0x02abcd" }),
+        broadcast: async () => BLOCK_HASH,
+        receipt: async () => "pending",
+      };
+      await expect(new DaoCaseWorker(asDirectPool(client), chain, operator).run()).resolves.toMatchObject({ submitted: 1 });
+      const command = (await client.query<{ calldata: string }>(
+        "SELECT calldata FROM dao_case_commands WHERE dispute_id=$1 AND command_key='1:enterRecovery'",
+        [fixture.disputeId],
+      )).rows[0];
+      expect(daoCaseInterface.decodeFunctionData("enterRecovery", required(command).calldata)[0]).toBe(
+        daoCaseKey(fixture.disputeId),
+      );
+    });
+  });
+
+  it("独立真实连接并发投影 Final 只生成一份裁决与资金 outbox", async () => {
+    await withIsolatedCaseSchema(pool, async (observer, first, second) => {
+      const fixture = await insertFixture(observer);
+      const config = { chainId: 31337n, contractAddress: DAO };
+      await registerChainCase(observer, fixture.disputeId, fixture.taskId, config);
+      const final: ChainCaseSnapshot = {
+        status: "final", taskKey: taskKeyForTaskId(fixture.taskId), evidenceRoot: BLOCK_HASH,
+        round: 2, evidenceDeadline: "1788000000", deadline: "1789000000", releaseBasisPoints: 5000,
+        firstReleaseBasisPoints: 10000, appellant: PUBLISHER, rewardPerVoteMinor: "10", appealBondMinor: "20", appealFeeMinor: "1",
+        bondPolicy: 1, requestId: "42", candidatesHash: BLOCK_HASH, panel: [...NEUTRAL_MEMBERS],
+        firstPanel: [...NEUTRAL_MEMBERS], voters: [...NEUTRAL_MEMBERS], voteCount: 3,
+        blockNumber: "100", blockHash: BLOCK_HASH, blockTimestamp: "1789500000",
+      };
+      const firstPid = required((await first.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]).pid;
+      const secondPid = required((await second.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]).pid;
+      expect(firstPid).not.toBe(secondPid);
+      await first.query("BEGIN");
+      await second.query("BEGIN");
+      // 先持有同一聚合的真实任务锁，使另一连接在投影入口等待；不是靠 Promise.all 猜测重叠。
+      await first.query("SELECT id FROM tasks WHERE id=$1 FOR UPDATE", [fixture.taskId]);
+      const secondProjection = projectChainCase(second, fixture.disputeId, final, config, fixture.now);
+      // 立即观察 rejected，失败路径清理后再向测试抛出，避免悬空 rejection。
+      const secondResult = secondProjection.then(() => null, (error: unknown) => error);
+      try {
+        let blocked = false;
+        for (let attempt = 0; attempt < 100; attempt++) {
+          const locks = await observer.query<{ blocked: boolean }>(
+            "SELECT $1::int=ANY(pg_blocking_pids($2::int)) AS blocked", [firstPid, secondPid]);
+          if (locks.rows[0]?.blocked === true) { blocked = true; break; }
+          await delay(10);
+        }
+        expect(blocked).toBe(true);
+        await projectChainCase(first, fixture.disputeId, final, config, fixture.now);
+        await first.query("COMMIT");
+        expect(await secondResult).toBeNull();
+        await second.query("COMMIT");
+      } finally {
+        await first.query("ROLLBACK");
+        await secondResult;
+        await second.query("ROLLBACK");
+      }
+      const decisions = await observer.query<{ release_amount_minor: string; refund_amount_minor: string }>(
+        "SELECT release_amount_minor::text,refund_amount_minor::text FROM arbitration_decisions WHERE dispute_id=$1", [fixture.disputeId]);
+      const jobs = await observer.query<{ workflow_payouts: { grossAmountMinor: string }[]; status: string }>(
+        "SELECT workflow_payouts,status FROM escrow_execution_jobs WHERE task_id=$1 AND source='arbitration'", [fixture.taskId]);
+      expect(decisions.rows).toEqual([{ release_amount_minor: "30000000", refund_amount_minor: "30000000" }]);
+      expect(jobs.rows).toHaveLength(1);
+      expect(jobs.rows[0]?.status).toBe("pending");
+      expect(jobs.rows[0]?.workflow_payouts.reduce((total, payout) => total + BigInt(payout.grossAmountMinor), 0n)).toBe(30_000_000n);
+      expect((await observer.query("SELECT funds_frozen FROM disputes WHERE id=$1", [fixture.disputeId])).rows).toEqual([{ funds_frozen: true }]);
+    });
+  }, 30_000);
+
+  it("确认旧签名回滚后保留原始尝试并以同一逻辑命令生成下一次签名", async () => {
+    await withIsolatedCaseSchema(pool, async (observer) => {
+      const fixture = await insertFixture(observer);
+      await registerChainCase(observer, fixture.disputeId, fixture.taskId, { chainId: 31337n, contractAddress: DAO });
+      const firstHash = `0x${"72".repeat(32)}`;
+      const secondHash = `0x${"73".repeat(32)}`;
+      const snapshot: ChainCaseSnapshot = {
+        status: "none", taskKey: BLOCK_HASH, evidenceRoot: BLOCK_HASH, round: 0,
+        evidenceDeadline: "0", deadline: "0", releaseBasisPoints: 0, firstReleaseBasisPoints: 0,
+        appellant: PUBLISHER, rewardPerVoteMinor: "0", appealBondMinor: "0", appealFeeMinor: "0", bondPolicy: 0,
+        requestId: "0", candidatesHash: BLOCK_HASH, panel: [], firstPanel: [], voteCount: 0, voters: [],
+        blockNumber: "1", blockHash: BLOCK_HASH, blockTimestamp: "100",
+      };
+      let receipt: "pending" | "confirmed" | "reverted" = "pending";
+      let preparations = 0;
+      const chain: DaoCaseChainClient = {
+        chainId: 31337n, contractAddress: DAO, read: async () => snapshot,
+        eligibleMembers: async () => [], verifyEscrowBinding: async () => undefined, hasVoted: async () => false,
+        paymentToken: async () => CONTRACT, verifyEvidence: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+        inspectEvidenceTransaction: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+      };
+      const operator: DaoCaseOperator = {
+        prepareContractCall: async () => {
+          preparations++;
+          return preparations === 1
+            ? { txHash: firstHash, rawTransaction: "0x02aaaa" }
+            : { txHash: secondHash, rawTransaction: "0x02bbbb" };
+        },
+        broadcast: async (prepared) => prepared.txHash,
+        receipt: async (hash) => hash === firstHash ? receipt : "pending",
+      };
+      const directPool = asDirectPool(observer);
+      const worker = new DaoCaseWorker(directPool, chain, operator);
+      await expect(worker.run()).resolves.toMatchObject({ submitted: 1 });
+      receipt = "reverted";
+      await expect(worker.run()).resolves.toMatchObject({ submitted: 0 });
+
+      const command = required((await observer.query<{ id: string }>(
+        "SELECT id::text FROM dao_case_commands WHERE dispute_id=$1 AND command_key='open'",
+        [fixture.disputeId],
+      )).rows[0]);
+      const service = new DaoCaseRecoveryService(directPool, chain, operator);
+      const recovery = {
+        commandId: command.id,
+        expectedErrorCode: "DAO_COMMAND_REVERTED",
+        expectedTxHash: firstHash,
+        resolutionCode: "configuration_repaired" as const,
+      };
+      receipt = "pending";
+      await expect(service.retryReverted(recovery)).rejects.toMatchObject({ code: "DAO_COMMAND_RECEIPT_PENDING" });
+      receipt = "confirmed";
+      await expect(service.retryReverted(recovery)).rejects.toMatchObject({ code: "DAO_COMMAND_ALREADY_CONFIRMED" });
+      receipt = "reverted";
+      const freeze = required((await observer.query<{ id: string }>(
+        "INSERT INTO reconciliation_alerts(task_id,discrepancy_summary,operations_frozen) VALUES($1,'{}'::jsonb,TRUE) RETURNING id::text",
+        [fixture.taskId],
+      )).rows[0]);
+      await expect(service.retryReverted(recovery)).rejects.toMatchObject({ code: "DAO_OPERATIONS_FROZEN" });
+      await observer.query("UPDATE reconciliation_alerts SET resolved_at=now(),operations_frozen=FALSE WHERE id=$1", [freeze.id]);
+      await expect(service.retryReverted(recovery)).resolves.toMatchObject({ commandId: command.id, status: "pending", nextAttemptNo: 2 });
+      await expect(service.retryReverted(recovery)).rejects.toMatchObject({ code: "DAO_COMMAND_STATE_CHANGED" });
+      expect((await observer.query(
+        "SELECT status,tx_hash,raw_transaction FROM dao_case_commands WHERE id=$1",
+        [command.id],
+      )).rows).toEqual([{ status: "pending", tx_hash: null, raw_transaction: null }]);
+      expect((await observer.query(
+        "SELECT attempt_no,tx_hash,raw_transaction,status FROM dao_case_command_attempts WHERE command_id=$1 ORDER BY attempt_no",
+        [command.id],
+      )).rows).toEqual([{ attempt_no: 1, tx_hash: firstHash, raw_transaction: "0x02aaaa", status: "reverted" }]);
+
+      await expect(worker.run()).resolves.toMatchObject({ submitted: 1 });
+      expect(preparations).toBe(2);
+      expect((await observer.query(
+        "SELECT attempt_no,tx_hash,raw_transaction,status FROM dao_case_command_attempts WHERE command_id=$1 ORDER BY attempt_no",
+        [command.id],
+      )).rows).toEqual([
+        { attempt_no: 1, tx_hash: firstHash, raw_transaction: "0x02aaaa", status: "reverted" },
+        { attempt_no: 2, tx_hash: secondHash, raw_transaction: "0x02bbbb", status: "submitted" },
+      ]);
+      expect((await observer.query(
+        "SELECT count(*)::int AS count FROM audit_logs WHERE action='dao.case_command.retry_reverted' AND target_id=$1",
+        [command.id],
+      )).rows).toEqual([{ count: 1 }]);
+    });
+  }, 30_000);
+
+  it("只在规范最终裁决恢复时解除重组冻结并恢复被冻结的结算 outbox", async () => {
+    await withIsolatedCaseSchema(pool, async (observer) => {
+      const fixture = await insertFixture(observer);
+      const config = { chainId: 31337n, contractAddress: DAO };
+      await registerChainCase(observer, fixture.disputeId, fixture.taskId, config);
+      const final: ChainCaseSnapshot = {
+        status: "final", taskKey: taskKeyForTaskId(fixture.taskId), evidenceRoot: BLOCK_HASH,
+        round: 2, evidenceDeadline: "1788000000", deadline: "1789000000", releaseBasisPoints: 5000,
+        firstReleaseBasisPoints: 10000, appellant: PUBLISHER, rewardPerVoteMinor: "10",
+        appealBondMinor: "20", appealFeeMinor: "1", bondPolicy: 1, requestId: "42",
+        candidatesHash: BLOCK_HASH, panel: [...NEUTRAL_MEMBERS], firstPanel: [...NEUTRAL_MEMBERS],
+        voters: [...NEUTRAL_MEMBERS], voteCount: 3, blockNumber: "100", blockHash: BLOCK_HASH,
+        blockTimestamp: "1789500000",
+      };
+      await projectChainCase(observer, fixture.disputeId, final, config, fixture.now);
+      const alert = required((await observer.query<{ id: string }>(
+        `INSERT INTO reconciliation_alerts(task_id,discrepancy_summary,operations_frozen)
+         VALUES($1,$2::jsonb,TRUE) RETURNING id::text`,
+        [fixture.taskId, JSON.stringify({ code: "DAO_FINAL_DECISION_REORGED", disputeId: fixture.disputeId })],
+      )).rows[0]);
+      await observer.query(
+        "UPDATE escrow_execution_jobs SET status='dead_letter',last_error_code='ESCROW_OPERATIONS_FROZEN' WHERE task_id=$1",
+        [fixture.taskId],
+      );
+      let canonical = { ...final, releaseBasisPoints: 4000, blockNumber: "110", blockHash: `0x${"74".repeat(32)}` };
+      const chain: DaoCaseChainClient = {
+        chainId: 31337n, contractAddress: DAO, read: async () => canonical,
+        eligibleMembers: async () => [], verifyEscrowBinding: async () => undefined, hasVoted: async () => false,
+        paymentToken: async () => CONTRACT, verifyEvidence: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+        inspectEvidenceTransaction: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+      };
+      const operator: DaoCaseOperator = {
+        prepareContractCall: async () => { throw new Error("UNEXPECTED_PREPARE"); },
+        broadcast: async () => { throw new Error("UNEXPECTED_BROADCAST"); },
+        receipt: async () => { throw new Error("UNEXPECTED_RECEIPT"); },
+      };
+      const service = new DaoCaseRecoveryService(asDirectPool(observer), chain, operator);
+      const input = { disputeId: fixture.disputeId, expectedAlertId: alert.id,
+        resolutionCode: "canonical_final_restored" as const };
+      await expect(service.resolveFinalReorg(input, fixture.now)).rejects.toMatchObject({ code: "DAO_CANONICAL_FINAL_MISMATCH" });
+      expect((await observer.query("SELECT resolved_at,operations_frozen FROM reconciliation_alerts WHERE id=$1", [alert.id])).rows)
+        .toEqual([{ resolved_at: null, operations_frozen: true }]);
+
+      canonical = { ...final, blockNumber: "111", blockHash: `0x${"75".repeat(32)}` };
+      await expect(service.resolveFinalReorg(input, fixture.now)).resolves.toMatchObject({
+        disputeId: fixture.disputeId, alertId: alert.id, status: "resolved", restoredJobs: 1,
+      });
+      expect((await observer.query("SELECT resolved_at IS NOT NULL AS resolved,operations_frozen FROM reconciliation_alerts WHERE id=$1", [alert.id])).rows)
+        .toEqual([{ resolved: true, operations_frozen: false }]);
+      expect((await observer.query("SELECT status,last_error_code FROM escrow_execution_jobs WHERE task_id=$1", [fixture.taskId])).rows)
+        .toEqual([{ status: "pending", last_error_code: null }]);
+      expect((await observer.query("SELECT synced_block_number::text,synced_block_hash FROM dao_chain_cases WHERE dispute_id=$1", [fixture.disputeId])).rows)
+        .toEqual([{ synced_block_number: "111", synced_block_hash: canonical.blockHash }]);
+      expect((await observer.query(
+        "SELECT action,after_summary FROM audit_logs WHERE target_type='reconciliation_alert' AND target_id=$1",
+        [alert.id],
+      )).rows).toEqual([{ action: "dao.final_reorg.resolve", after_summary: {
+        resolutionCode: "canonical_final_restored", canonicalBlockHash: canonical.blockHash,
+        canonicalBlockNumber: "111", restoredJobs: 1,
+      } }]);
+    });
+  }, 30_000);
+
+  it("新版证据正文不能修改或删除，重复提交锚定不能替换原交易", async () => {
+    await withRollbackClient(pool, async (client) => {
+      const fixture = await insertFixture(client);
+      const id = randomUUID();
+      const hash = evidenceContentHash({ disputeId: fixture.disputeId, evidenceId: id, submitter: PUBLISHER, description: "原始提交证据", attachments: [] });
+      await client.query("INSERT INTO dispute_evidence(id,dispute_id,submitted_by,party,description,content_hash) VALUES ($1,$2,$3,'publisher','原始提交证据',$4)", [id, fixture.disputeId, PUBLISHER, hash]);
+      await client.query("SAVEPOINT evidence_change");
+      await expect(client.query("UPDATE dispute_evidence SET description='替换正文' WHERE id=$1", [id])).rejects.toThrow("COMMITTED_EVIDENCE_IS_APPEND_ONLY");
+      await client.query("ROLLBACK TO SAVEPOINT evidence_change");
+      await expect(client.query("DELETE FROM dispute_evidence WHERE id=$1", [id])).rejects.toThrow("COMMITTED_EVIDENCE_IS_APPEND_ONLY");
+      await client.query("ROLLBACK TO SAVEPOINT evidence_change");
+      await client.query("UPDATE dispute_evidence SET anchor_tx_hash=$2 WHERE id=$1", [id, BLOCK_HASH]);
+      await client.query("SAVEPOINT anchor_change");
+      await expect(client.query("UPDATE dispute_evidence SET anchor_tx_hash=NULL WHERE id=$1", [id])).rejects.toThrow("EVIDENCE_ANCHOR_IS_IMMUTABLE");
+      await client.query("ROLLBACK TO SAVEPOINT anchor_change");
+    });
+  });
+
+  it("证据交易只有规范回滚且举证期仍开放时允许用户重新签名", async () => {
+    await withRollbackClient(pool, async (client) => {
+      const fixture = await insertFixture(client);
+      await registerChainCase(client, fixture.disputeId, fixture.taskId, { chainId: 31337n, contractAddress: DAO });
+      const evidenceId = randomUUID();
+      const contentHash = evidenceContentHash({
+        disputeId: fixture.disputeId, evidenceId, submitter: PUBLISHER,
+        description: "需要链上锚定的原始证据", attachments: [],
+      });
+      await client.query(
+        "INSERT INTO dispute_evidence(id,dispute_id,submitted_by,party,description,attachments,content_hash) VALUES ($1,$2,$3,'publisher','需要链上锚定的原始证据','[]'::jsonb,$4)",
+        [evidenceId, fixture.disputeId, PUBLISHER, contentHash],
+      );
+      let transaction: EvidenceTransactionStatus = { status: "pending" };
+      let blockTimestamp = "100";
+      const chain: DaoCaseChainClient = {
+        chainId: 31337n, contractAddress: DAO,
+        read: async () => ({
+          status: "evidence", taskKey: taskKeyForTaskId(fixture.taskId), evidenceRoot: BLOCK_HASH, round: 1,
+          evidenceDeadline: "150", deadline: "0", releaseBasisPoints: 0, firstReleaseBasisPoints: 0,
+          appellant: PUBLISHER, rewardPerVoteMinor: "0", appealBondMinor: "0", appealFeeMinor: "0", bondPolicy: 0,
+          requestId: "0", candidatesHash: BLOCK_HASH, panel: [], firstPanel: [], voteCount: 0, voters: [],
+          blockNumber: "1", blockHash: BLOCK_HASH, blockTimestamp,
+        }),
+        eligibleMembers: async () => [], verifyEscrowBinding: async () => undefined, hasVoted: async () => false,
+        paymentToken: async () => CONTRACT, verifyEvidence: async () => { throw new Error("UNEXPECTED_LEGACY_EVIDENCE_CALL"); },
+        inspectEvidenceTransaction: async () => transaction,
+      };
+      const input = { action: "inspectEvidence", evidenceId, txHash: BLOCK_HASH };
+      await expect(inspectDaoEvidence(client, chain, fixture.disputeId, PUBLISHER, input)).resolves.toMatchObject({
+        status: "pending", retryAllowed: false,
+      });
+      transaction = { status: "reverted" };
+      await expect(inspectDaoEvidence(client, chain, fixture.disputeId, PUBLISHER, input)).resolves.toMatchObject({
+        status: "reverted", retryAllowed: true,
+      });
+      blockTimestamp = "150";
+      await expect(inspectDaoEvidence(client, chain, fixture.disputeId, PUBLISHER, input)).resolves.toMatchObject({
+        status: "reverted", retryAllowed: false,
+      });
+      blockTimestamp = "100";
+      transaction = { status: "confirmed", contentHash };
+      await expect(inspectDaoEvidence(client, chain, fixture.disputeId, PUBLISHER, input)).resolves.toMatchObject({
+        status: "anchored", retryAllowed: false,
+      });
+      expect((await client.query("SELECT anchor_tx_hash FROM dispute_evidence WHERE id=$1", [evidenceId])).rows)
+        .toEqual([{ anchor_tx_hash: BLOCK_HASH }]);
+    });
+  });
+
+  it("广播响应丢失后新 worker 复用持久化签名，不再申请 nonce 或生成第二笔开案交易", async () => {
+    await withRollbackClient(pool, async (client) => {
+      const fixture = await insertFixture(client);
+      await registerChainCase(client, fixture.disputeId, fixture.taskId, { chainId: 31337n, contractAddress: DAO });
+      const chain: DaoCaseChainClient = {
+        chainId: 31337n, contractAddress: DAO,
+        read: async () => ({ status: "none", taskKey: BLOCK_HASH, evidenceRoot: BLOCK_HASH, round: 0, evidenceDeadline: "0", deadline: "0",
+          releaseBasisPoints: 0, firstReleaseBasisPoints: 0, appellant: PUBLISHER, rewardPerVoteMinor: "0", appealBondMinor: "0", appealFeeMinor: "0", bondPolicy: 0,
+          requestId: "0", candidatesHash: BLOCK_HASH, panel: [], firstPanel: [], voteCount: 0, voters: [], blockNumber: "1", blockHash: BLOCK_HASH, blockTimestamp: "100" }),
+        eligibleMembers: async () => [], verifyEscrowBinding: async () => undefined, hasVoted: async () => false,
+        paymentToken: async () => CONTRACT, verifyEvidence: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+        inspectEvidenceTransaction: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+      };
+      let lostResponse = true;
+      let receipt: "pending" | "confirmed" = "pending";
+      const prepare = vi.fn(async () => ({ txHash: BLOCK_HASH, rawTransaction: "0x02abcd" }));
+      const broadcast = vi.fn(async () => {
+        const persisted = await client.query("SELECT tx_hash,raw_transaction FROM dao_case_commands WHERE dispute_id=$1", [fixture.disputeId]);
+        expect(persisted.rows[0]).toEqual({ tx_hash: BLOCK_HASH, raw_transaction: "0x02abcd" });
+        if (lostResponse) throw new Error("RPC_RESPONSE_LOST");
+        return BLOCK_HASH;
+      });
+      const operator: DaoCaseOperator = { prepareContractCall: prepare, broadcast, receipt: async () => receipt };
+      await new DaoCaseWorker(asNestedPool(client), chain, operator).run();
+      expect((await client.query("SELECT status FROM dao_case_commands WHERE dispute_id=$1", [fixture.disputeId])).rows[0]?.status).toBe("prepared");
+      lostResponse = false;
+      await new DaoCaseWorker(asNestedPool(client), chain, operator).run();
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(broadcast).toHaveBeenCalledTimes(2);
+      receipt = "confirmed";
+      await new DaoCaseWorker(asNestedPool(client), chain, operator).run();
+      expect((await client.query("SELECT status FROM dao_case_commands WHERE dispute_id=$1", [fixture.disputeId])).rows[0]?.status).toBe("confirmed");
+      expect(broadcast).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("另一真实连接持有案件 operator 锁时不签名广播，释放后只执行一次", async () => {
+    await withRollbackClient(pool, async (client) => {
+      const fixture = await caseLockFixture(client);
+      const competitor = await pool.connect();
+      try {
+        // session advisory lock 可重入，因此竞争者必须是另一个真实连接，不能复用回滚夹具。
+        const sessions = await Promise.all([
+          client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid"),
+          competitor.query<{ pid: number }>("SELECT pg_backend_pid() AS pid"),
+        ]);
+        expect(sessions[0]?.rows[0]?.pid).not.toBe(sessions[1]?.rows[0]?.pid);
+        await competitor.query("SELECT pg_advisory_lock(hashtextextended($1,0))", [fixture.lockKey]);
+        await expect(fixture.worker.run()).resolves.toMatchObject({ submitted: 0 });
+        expect(fixture.prepare).not.toHaveBeenCalled();
+        expect(fixture.broadcast).not.toHaveBeenCalled();
+        await competitor.query("SELECT pg_advisory_unlock(hashtextextended($1,0))", [fixture.lockKey]);
+        await expect(fixture.worker.run()).resolves.toMatchObject({ submitted: 1 });
+        expect(fixture.prepare).toHaveBeenCalledTimes(1);
+        expect(fixture.broadcast).toHaveBeenCalledTimes(1);
+      } finally {
+        try { await competitor.query("SELECT pg_advisory_unlock(hashtextextended($1,0))", [fixture.lockKey]); }
+        finally { competitor.release(true); }
+      }
+    });
+  });
+
+  it("案件慢广播期间另一真实连接不能取得 operator 锁，完成后释放", async () => {
+    await withRollbackClient(pool, async (client) => {
+      const fixture = await caseLockFixture(client);
+      const competitor = await pool.connect();
+      let enterBroadcast: () => void = () => {};
+      let finishBroadcast: () => void = () => {};
+      const entered = new Promise<void>((resolve) => { enterBroadcast = resolve; });
+      const finish = new Promise<void>((resolve) => { finishBroadcast = resolve; });
+      fixture.broadcast.mockImplementation(async () => {
+        // 本测试验证锁覆盖保存签名与广播窗口；外层回滚不代表签名已对另一连接提交可见。
+        const stored = await client.query("SELECT status,tx_hash,raw_transaction FROM dao_case_commands WHERE dispute_id=$1", [fixture.disputeId]);
+        expect(stored.rows[0]).toEqual({ status: "prepared", tx_hash: BLOCK_HASH, raw_transaction: "0x02abcd" });
+        enterBroadcast();
+        await finish;
+        return BLOCK_HASH;
+      });
+      const running = fixture.worker.run();
+      try {
+        // 若 worker 在进入广播之前结束或报错，立即失败，避免测试因等待屏障而悬挂。
+        await Promise.race([entered, running.then(() => { throw new Error("EXPECTED_PENDING_BROADCAST"); })]);
+        const held = await competitor.query<{ locked: boolean }>("SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked", [fixture.lockKey]);
+        expect(held.rows[0]?.locked).toBe(false);
+        finishBroadcast();
+        await expect(running).resolves.toMatchObject({ submitted: 1 });
+        const released = await competitor.query<{ locked: boolean }>("SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked", [fixture.lockKey]);
+        expect(released.rows[0]?.locked).toBe(true);
+        expect(fixture.prepare).toHaveBeenCalledTimes(1);
+        expect(fixture.broadcast).toHaveBeenCalledTimes(1);
+      } finally {
+        finishBroadcast();
+        try { await running; }
+        finally {
+          try { await competitor.query("SELECT pg_advisory_unlock_all()"); }
+          finally { competitor.release(); }
+        }
+      }
+    });
+  });
+
+  it("本轮链快照读取失败时不签名或广播已有命令，恢复读取后才继续", async () => {
+    await withRollbackClient(pool, async (client) => {
+      const fixture = await insertFixture(client);
+      await registerChainCase(client, fixture.disputeId, fixture.taskId, { chainId: 31337n, contractAddress: DAO });
+      const prepare = vi.fn(async () => ({ txHash: BLOCK_HASH, rawTransaction: "0x02abcd" }));
+      const broadcast = vi.fn(async () => BLOCK_HASH);
+      let unavailable = true;
+      const chain: DaoCaseChainClient = {
+        chainId: 31337n, contractAddress: DAO,
+        read: async () => {
+          if (unavailable) throw new Error("DAO_CASE_BLOCK_REORGED");
+          return { status: "none", taskKey: BLOCK_HASH, evidenceRoot: BLOCK_HASH, round: 0, evidenceDeadline: "0", deadline: "0",
+            releaseBasisPoints: 0, firstReleaseBasisPoints: 0, appellant: PUBLISHER, rewardPerVoteMinor: "0", appealBondMinor: "0", appealFeeMinor: "0", bondPolicy: 0,
+            requestId: "0", candidatesHash: BLOCK_HASH, panel: [], firstPanel: [], voteCount: 0, voters: [], blockNumber: "1", blockHash: BLOCK_HASH, blockTimestamp: "100" };
+        },
+        eligibleMembers: async () => [], verifyEscrowBinding: async () => undefined, hasVoted: async () => false,
+        paymentToken: async () => CONTRACT, verifyEvidence: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+        inspectEvidenceTransaction: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+      };
+      const operator: DaoCaseOperator = { prepareContractCall: prepare, broadcast, receipt: async () => "pending" };
+      expect(await new DaoCaseWorker(asNestedPool(client), chain, operator).run()).toMatchObject({ failed: 1, submitted: 0 });
+      expect(prepare).not.toHaveBeenCalled();
+      expect(broadcast).not.toHaveBeenCalled();
+      unavailable = false;
+      expect(await new DaoCaseWorker(asNestedPool(client), chain, operator).run()).toMatchObject({ failed: 0, submitted: 1 });
+      expect(prepare).toHaveBeenCalledTimes(1);
+      await client.query(
+        "INSERT INTO reconciliation_alerts(task_id,discrepancy_summary,operations_frozen) VALUES ($1,$2::jsonb,TRUE)",
+        [fixture.taskId, JSON.stringify({ code: "DAO_FINAL_DECISION_REORGED" })],
+      );
+      // 已恢复正常 RPC 不能解除持久冻结，且冻结时不重播占用该 nonce 的原始交易。
+      expect(await new DaoCaseWorker(asNestedPool(client), chain, operator).run()).toMatchObject({ failed: 0, submitted: 0 });
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(broadcast).toHaveBeenCalledTimes(1);
+      await client.query("UPDATE reconciliation_alerts SET resolved_at=now() WHERE task_id=$1", [fixture.taskId]);
+      expect(await new DaoCaseWorker(asNestedPool(client), chain, operator).run()).toMatchObject({ submitted: 1 });
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(broadcast).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("运营只可重试状态未变化且尚未签名的失败命令，并保留审计证据", async () => {
+    await withRollbackClient(pool, async (client) => {
+      const fixture = await insertFixture(client);
+      await registerChainCase(client, fixture.disputeId, fixture.taskId, { chainId: 31337n, contractAddress: DAO });
+      const command = (await client.query<{ id: string }>(
+        "SELECT id::text FROM dao_case_commands WHERE dispute_id=$1 AND command_key='open'",
+        [fixture.disputeId],
+      )).rows[0];
+      expect(command).toBeDefined();
+      await client.query(
+        "UPDATE dao_case_commands SET status='failed',error_code='DAO_PREPARE_FAILED' WHERE id=$1",
+        [command?.id],
+      );
+
+      await expect(retryUnsignedCaseCommand(client, {
+        commandId: command?.id ?? "",
+        expectedErrorCode: "DAO_PREPARE_FAILED",
+        resolutionCode: "rpc_recovered",
+      })).resolves.toMatchObject({ disputeId: fixture.disputeId, commandKey: "open", status: "pending" });
+      expect((await client.query("SELECT status,error_code,tx_hash,raw_transaction FROM dao_case_commands WHERE id=$1", [command?.id])).rows[0])
+        .toEqual({ status: "pending", error_code: null, tx_hash: null, raw_transaction: null });
+      expect((await client.query(
+        "SELECT actor_id,actor_type,action,before_summary,after_summary FROM audit_logs WHERE target_type='dao_case_command' AND target_id=$1",
+        [command?.id],
+      )).rows[0]).toMatchObject({
+        actor_id: "dao-operations",
+        actor_type: "system",
+        action: "dao.case_command.retry",
+        before_summary: { errorCode: "DAO_PREPARE_FAILED", status: "failed" },
+        after_summary: { status: "pending", resolutionCode: "rpc_recovered" },
+      });
+
+      await client.query(
+        "UPDATE dao_case_commands SET status='failed',error_code='DAO_COMMAND_REVERTED',tx_hash=$2,raw_transaction='0x02abcd' WHERE id=$1",
+        [command?.id, BLOCK_HASH],
+      );
+      await expect(retryUnsignedCaseCommand(client, {
+        commandId: command?.id ?? "",
+        expectedErrorCode: "DAO_COMMAND_REVERTED",
+        resolutionCode: "configuration_repaired",
+      })).rejects.toMatchObject({ code: "DAO_SIGNED_COMMAND_RETRY_FORBIDDEN" });
+      expect((await client.query("SELECT tx_hash,raw_transaction FROM dao_case_commands WHERE id=$1", [command?.id])).rows[0])
+        .toEqual({ tx_hash: BLOCK_HASH, raw_transaction: "0x02abcd" });
+
+      await client.query(
+        "UPDATE dao_case_commands SET error_code='DAO_PREPARE_FAILED',tx_hash=NULL,raw_transaction=NULL WHERE id=$1",
+        [command?.id],
+      );
+      await client.query(
+        "INSERT INTO reconciliation_alerts(task_id,discrepancy_summary,operations_frozen) VALUES ($1,$2::jsonb,TRUE)",
+        [fixture.taskId, JSON.stringify({ code: "DAO_FINAL_DECISION_REORGED" })],
+      );
+      await expect(retryUnsignedCaseCommand(client, {
+        commandId: command?.id ?? "",
+        expectedErrorCode: "DAO_PREPARE_FAILED",
+        resolutionCode: "rpc_recovered",
+      })).rejects.toMatchObject({ code: "DAO_OPERATIONS_FROZEN" });
+      await client.query("UPDATE reconciliation_alerts SET resolved_at=now() WHERE task_id=$1", [fixture.taskId]);
+      await client.query("UPDATE dao_chain_cases SET status='evidence' WHERE dispute_id=$1", [fixture.disputeId]);
+      await expect(retryUnsignedCaseCommand(client, {
+        commandId: command?.id ?? "",
+        expectedErrorCode: "DAO_PREPARE_FAILED",
+        resolutionCode: "rpc_recovered",
+      })).rejects.toMatchObject({ code: "DAO_COMMAND_NO_LONGER_APPLICABLE" });
+      expect((await client.query(
+        "SELECT count(*)::text AS count FROM audit_logs WHERE target_type='dao_case_command' AND target_id=$1",
+        [command?.id],
+      )).rows[0]).toEqual({ count: "1" });
+    });
+  });
+
+  it.each(["unsigned", "pending", "confirmed", "reverted"] as const)("候选失败案件的 %s 交易不会错误越过或永久阻塞其他 nonce", async (blockedReceipt) => {
+    await withRollbackClient(pool, async (client) => {
+      const blocked = await insertFixture(client);
+      const recovering = await insertFixture(client);
+      for (const fixture of [blocked, recovering]) {
+        await registerChainCase(client, fixture.disputeId, fixture.taskId, { chainId: 31337n, contractAddress: DAO });
+      }
+      const priorHash = `0x${"72".repeat(32)}`;
+      await client.query("UPDATE dao_case_commands SET created_at='2000-01-01T00:00:00Z' WHERE dispute_id=$1", [blocked.disputeId]);
+      if (blockedReceipt !== "unsigned") {
+        const blockedCommand = required((await client.query<{ id: string }>(
+          "UPDATE dao_case_commands SET status='submitted',tx_hash=$2,raw_transaction='0x02cdef' WHERE dispute_id=$1 RETURNING id::text",
+          [blocked.disputeId, priorHash],
+        )).rows[0]);
+        await client.query(
+          "INSERT INTO dao_case_command_attempts(command_id,attempt_no,raw_transaction,tx_hash,status) VALUES($1,1,'0x02cdef',$2,'submitted')",
+          [blockedCommand.id, priorHash],
+        );
+      }
+      const recoveringCommand = required((await client.query<{ id: string }>(
+        "UPDATE dao_case_commands SET status='prepared',tx_hash=$2,raw_transaction='0x02abcd' WHERE dispute_id=$1 RETURNING id::text",
+        [recovering.disputeId, BLOCK_HASH],
+      )).rows[0]);
+      await client.query(
+        "INSERT INTO dao_case_command_attempts(command_id,attempt_no,raw_transaction,tx_hash,status) VALUES($1,1,'0x02abcd',$2,'prepared')",
+        [recoveringCommand.id, BLOCK_HASH],
+      );
+      const blockedKey = (await client.query<{ case_key: string }>("SELECT case_key FROM dao_chain_cases WHERE dispute_id=$1", [blocked.disputeId])).rows[0]?.case_key;
+      const chain: DaoCaseChainClient = {
+        chainId: 31337n, contractAddress: DAO,
+        read: async (key) => ({ status: key === blockedKey ? "awaiting_panel" : "none",
+          taskKey: taskKeyForTaskId(key === blockedKey ? blocked.taskId : recovering.taskId), evidenceRoot: BLOCK_HASH,
+          round: 1, evidenceDeadline: "0", deadline: "0", releaseBasisPoints: 0, firstReleaseBasisPoints: 0,
+          appellant: PUBLISHER, rewardPerVoteMinor: "0", appealBondMinor: "0", appealFeeMinor: "0", bondPolicy: 0,
+          requestId: "0", candidatesHash: BLOCK_HASH, panel: [], firstPanel: [], voteCount: 0, voters: [],
+          blockNumber: "1", blockHash: BLOCK_HASH, blockTimestamp: "100" }),
+        eligibleMembers: async () => { throw new Error("DAO_CANDIDATE_LIMIT_EXCEEDED"); },
+        verifyEscrowBinding: async () => undefined, hasVoted: async () => false,
+        paymentToken: async () => CONTRACT, verifyEvidence: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+        inspectEvidenceTransaction: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+      };
+      const prepare = vi.fn(async () => ({ txHash: BLOCK_HASH, rawTransaction: "0x02abcd" }));
+      const broadcast = vi.fn(async () => BLOCK_HASH);
+      const operator: DaoCaseOperator = { prepareContractCall: prepare, broadcast,
+        receipt: async (hash) => hash === priorHash && blockedReceipt !== "unsigned" ? blockedReceipt : "pending" };
+      expect(await new DaoCaseWorker(asNestedPool(client), chain, operator).run()).toMatchObject({ failed: 1, submitted: blockedReceipt === "pending" ? 0 : 1 });
+      expect(prepare).not.toHaveBeenCalled();
+      if (blockedReceipt === "pending") expect(broadcast).not.toHaveBeenCalled();
+      else expect(broadcast).toHaveBeenCalledWith({ txHash: BLOCK_HASH, rawTransaction: "0x02abcd" });
+      expect((await client.query("SELECT status,tx_hash FROM dao_case_commands WHERE dispute_id=$1", [blocked.disputeId])).rows[0])
+        .toEqual({ status: blockedReceipt === "unsigned" ? "pending" : blockedReceipt === "pending" ? "submitted" : blockedReceipt === "reverted" ? "failed" : "confirmed",
+          tx_hash: blockedReceipt === "unsigned" ? null : priorHash });
     });
   });
 });
@@ -437,11 +1115,97 @@ async function insertFixture(client: PoolClient) {
       `INSERT INTO dao_memberships(
          actor_id,chain_id,contract_address,staked_amount_minor,eligible,exit_available_at,
          sync_tx_hash,sync_block_number,synced_at
-       ) VALUES ($1,31337,$2,$3,TRUE,NULL,$4,100,$5)`,
+       ) VALUES ($1,31337,$2,$3,TRUE,NULL,$4,100,$5) ON CONFLICT (actor_id) DO NOTHING`,
       [actor, DAO, (1_000n * 10n ** 18n).toString(), `0x${randomUUID().replaceAll("-", "").repeat(2)}`, now],
     );
   }
   return { taskId, runId, disputeId, now };
+}
+
+function testAddresses(start: number, count: number): string[] {
+  return Array.from({ length: count }, (_, index) => `0x${(start + index).toString(16).padStart(40, "0")}`);
+}
+
+async function insertEligibleMemberships(client: PoolClient, actors: readonly string[], now: Date): Promise<void> {
+  for (const actor of actors) {
+    await client.query(
+      `INSERT INTO dao_memberships(
+         actor_id,chain_id,contract_address,staked_amount_minor,eligible,exit_available_at,
+         sync_tx_hash,sync_block_number,synced_at
+       ) VALUES ($1,31337,$2,$3,TRUE,NULL,$4,100,$5) ON CONFLICT (actor_id) DO NOTHING`,
+      [actor, DAO, (1_000n * 10n ** 18n).toString(), `0x${randomUUID().replaceAll("-", "").repeat(2)}`, now],
+    );
+  }
+}
+
+/**
+ * 并发事务需要双方可见的已提交夹具，不能复用单连接 SAVEPOINT。仅在指定隔离库创建
+ * 随机 schema，并原样应用权威 migration 保留全部 FK/触发器；search_path 无 public
+ * 回退。清理仅删除本函数确实创建的 schema，不接触数据库或其他 schema 的业务记录。
+ */
+async function withIsolatedCaseSchema(
+  pool: Pool,
+  test: (observer: PoolClient, first: PoolClient, second: PoolClient) => Promise<void>,
+): Promise<void> {
+  const observer = await pool.connect();
+  const schema = `dao_final_${randomUUID().replaceAll("-", "")}`;
+  let created = false;
+  const clients: PoolClient[] = [];
+  try {
+    const database = await observer.query<{ name: string }>("SELECT current_database() AS name");
+    // 默认仅允许本次隔离验收库；其他测试环境必须单独声明库名，不能从连接 URL 自动放行。
+    const expectedDatabase = process.env.DAO_TEST_DATABASE_NAME ?? "aicp_admission_20260906";
+    if (database.rows[0]?.name !== expectedDatabase) throw new Error("ISOLATED_DAO_DATABASE_REQUIRED");
+    if (!/^dao_final_[0-9a-f]{32}$/.test(schema)) throw new Error("INVALID_TEST_SCHEMA");
+    await observer.query(`CREATE SCHEMA "${schema}"`);
+    created = true;
+    await observer.query(`SET search_path TO "${schema}", pg_catalog`);
+    const directory = new URL("../../../business-service/migrations/", import.meta.url);
+    const migrations = (await readdir(directory)).filter((file) => /^\d{4}_.+\.up\.sql$/.test(file)).sort();
+    for (const file of migrations) await observer.query(await readFile(new URL(file, directory), "utf8"));
+    // 缺表不得悄悄引用公共结构；从 PostgreSQL 元数据验证所有测试表外键仍在本 schema 内。
+    const foreignKeys = await observer.query<{ escaped: string }>(
+      `SELECT count(*)::text AS escaped FROM pg_constraint constraint_row
+       JOIN pg_class local_table ON local_table.oid=constraint_row.conrelid
+       JOIN pg_namespace local_schema ON local_schema.oid=local_table.relnamespace
+       JOIN pg_class target_table ON target_table.oid=constraint_row.confrelid
+       WHERE constraint_row.contype='f' AND local_schema.nspname=$1 AND target_table.relnamespace<>local_table.relnamespace`, [schema]);
+    expect(foreignKeys.rows[0]?.escaped).toBe("0");
+    const first = await pool.connect(); clients.push(first);
+    const second = await pool.connect(); clients.push(second);
+    for (const client of clients) {
+      await client.query(`SET search_path TO "${schema}", pg_catalog`);
+      await client.query("SET statement_timeout TO '10s'");
+    }
+    await test(observer, first, second);
+  } finally {
+    // 先关闭竞争连接，保证异常事务和锁不会阻塞 schema 清理；destroy 不归还带自定义路径的连接。
+    for (const client of clients) client.release(true);
+    try {
+      await observer.query("ROLLBACK");
+      if (created) await observer.query(`DROP SCHEMA "${schema}" CASCADE`);
+    } finally { observer.release(true); }
+  }
+}
+
+/** 链调用全部隔离；只有 PostgreSQL 锁竞争使用两个真实 session，业务夹具最终统一回滚。 */
+async function caseLockFixture(client: PoolClient) {
+  const fixture = await insertFixture(client);
+  await registerChainCase(client, fixture.disputeId, fixture.taskId, { chainId: 31337n, contractAddress: DAO });
+  const chain: DaoCaseChainClient = {
+    chainId: 31337n, contractAddress: DAO,
+    read: async () => ({ status: "none", taskKey: BLOCK_HASH, evidenceRoot: BLOCK_HASH, round: 0, evidenceDeadline: "0", deadline: "0",
+      releaseBasisPoints: 0, firstReleaseBasisPoints: 0, appellant: PUBLISHER, rewardPerVoteMinor: "0", appealBondMinor: "0", appealFeeMinor: "0", bondPolicy: 0,
+      requestId: "0", candidatesHash: BLOCK_HASH, panel: [], firstPanel: [], voteCount: 0, voters: [], blockNumber: "1", blockHash: BLOCK_HASH, blockTimestamp: "100" }),
+    eligibleMembers: async () => [], verifyEscrowBinding: async () => undefined, hasVoted: async () => false,
+    paymentToken: async () => CONTRACT, verifyEvidence: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+    inspectEvidenceTransaction: async () => { throw new Error("UNEXPECTED_EVIDENCE_CALL"); },
+  };
+  const prepare = vi.fn(async () => ({ txHash: BLOCK_HASH, rawTransaction: "0x02abcd" }));
+  const broadcast = vi.fn(async () => BLOCK_HASH);
+  const operator: DaoCaseOperator = { prepareContractCall: prepare, broadcast, receipt: async () => "pending" };
+  return { disputeId: fixture.disputeId, lockKey: "aicp:dao-case-operator:31337", prepare, broadcast,
+    worker: new DaoCaseWorker(asNestedPool(client), chain, operator) };
 }
 
 /** 把 DaoService 的内部事务映射为 SAVEPOINT，使整个夹具仍可由外层事务统一回滚。 */
@@ -457,6 +1221,16 @@ function asNestedPool(client: PoolClient): PoolLike {
         }
         return client.query(text, [...params]);
       },
+      release: () => undefined,
+    }),
+  };
+}
+
+/** 随机 schema 的 observer 使用自动提交；恢复服务需要在同一连接上开启真实短事务。 */
+function asDirectPool(client: PoolClient): PoolLike {
+  return {
+    connect: async () => ({
+      query: (text, params) => client.query(text, [...params]),
       release: () => undefined,
     }),
   };

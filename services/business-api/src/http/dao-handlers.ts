@@ -8,6 +8,7 @@ export interface DaoHttpDeps {
   resolveActorId(request: Request): Promise<string>;
   allowedOrigin: string;
   service: Readonly<{
+    candidatePool(): Promise<Readonly<Record<string, unknown>>>;
     overview(actorId: string): Promise<Readonly<Record<string, unknown>>>;
     sync(actorId: string, raw: unknown, idempotencyKey: string | undefined): Promise<Readonly<Record<string, unknown>>>;
     vote(roundId: string, actorId: string, raw: unknown, idempotencyKey: string | undefined): Promise<Readonly<Record<string, unknown>>>;
@@ -17,6 +18,11 @@ export interface DaoHttpDeps {
 /** DAO Route Handler 只处理 HTTP、会话和错误映射，不在控制器复制质押或投票规则。 */
 export function createDaoHandlers(deps: DaoHttpDeps) {
   return {
+    /** 候选池只公开聚合阶段和人数，不解析钱包会话，也不返回成员地址或案件。 */
+    candidatePool: async (): Promise<Response> => {
+      try { return success(deps, await deps.service.candidatePool(), 200); }
+      catch (error) { return failureOf(deps, error); }
+    },
     overview: async (request: Request): Promise<Response> => {
       const actor = await actorOf(request, deps);
       if (actor instanceof Response) return actor;

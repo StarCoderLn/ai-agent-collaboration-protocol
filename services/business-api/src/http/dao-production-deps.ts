@@ -1,6 +1,7 @@
 import { corsOriginFromSiweConfig, loadSiweConfigFromEnv } from "../auth/siwe-config";
 import { getOptionalEnv, getRequiredEnv } from "../config/env";
 import { createJsonRpcDaoMembershipClient } from "../dao/dao-chain-client";
+import { normalizeFoundingArbitrators } from "../dao/dao-candidate-pool";
 import { DaoService, DaoServiceError } from "../dao/dao-service";
 import { asQueryExecutor, getSharedPgPool } from "../db/pool";
 import { Idempotency, PgIdempotencyStore } from "../idempotency/idempotency-store";
@@ -31,6 +32,11 @@ export function loadDaoChainRuntimeConfigFromEnv() {
       "ARBITRATION_DAO_MINIMUM_STAKE_MINOR",
       getRequiredEnv("ARBITRATION_DAO_MINIMUM_STAKE_MINOR"),
     ),
+    foundingArbitrators: normalizeFoundingArbitrators(
+      getOptionalEnv("DAO_FOUNDING_ARBITRATOR_ADDRESSES", "").trim() === ""
+        ? []
+        : getOptionalEnv("DAO_FOUNDING_ARBITRATOR_ADDRESSES", "").split(",").map((value) => value.trim()),
+    ),
   });
 }
 
@@ -49,6 +55,7 @@ export function createProductionDaoDeps(resolveActorId: DaoHttpDeps["resolveActo
     });
     service = new DaoService(pool, db, chain, {
       minimumStakeMinor: config.minimumStakeMinor,
+      foundingArbitrators: config.foundingArbitrators,
     });
   }
   idempotency ??= new Idempotency(new PgIdempotencyStore(db));
@@ -56,6 +63,7 @@ export function createProductionDaoDeps(resolveActorId: DaoHttpDeps["resolveActo
     resolveActorId,
     allowedOrigin: corsOriginFromSiweConfig(loadSiweConfigFromEnv()),
     service: {
+      candidatePool: () => required(service, "DAO_SERVICE_NOT_CONFIGURED").candidatePoolOverview(),
       overview: (actorId) => required(service, "DAO_SERVICE_NOT_CONFIGURED").overview(actorId),
       sync: (actorId, raw, key) => idempotent(
         key,

@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 
 import { PgAuditLogWriter } from "../audit/audit-log-writer";
 import { createDaoRoundForDispute } from "../dao/dao-service";
+import { evidenceContentHash } from "../dao/dao-case-contract";
+import { chainCaseSnapshotSchema } from "../dao/dao-case-contract";
+import { hasDaoCaseSchema } from "../dao/dao-case-schema";
+import { registerChainCase, type DaoCaseRegistrationConfig } from "../dao/dao-chain-case-repository";
+import { readCaseCompensation } from "../dao/dao-case-compensation";
 import type { QueryExecutor } from "../db/pool";
 import {
   decideDispute,
@@ -11,8 +16,14 @@ import {
   type DisputeRecord,
 } from "../platform/disputes";
 import { calculatePlatformFee, type TaskStatus } from "../platform/task-state";
+import { validateTaskAttachments } from "../platform/task-validation";
 import { emitTaskEvent } from "../tasks/task-event-repository";
 import type { DecideDisputeInput, OpenDisputeInput, SubmitEvidenceInput } from "./dispute-input";
+import {
+  commitEvidenceObjects,
+  DisputeEvidenceObjectError,
+  verifyEvidenceObjects,
+} from "./dispute-evidence-object";
 import {
   buildArbitrationSettlementPlan,
   loadArbitrationSettlementContext,
@@ -43,9 +54,12 @@ type DisputeRow = {
  * task event 始终在同一个外层事务内；Handler 不直接 UPDATE 任一资金状态。
  */
 export class PgDisputeRepository implements DisputeRepository {
-  constructor(private readonly db: QueryExecutor) {}
+  constructor(private readonly db: QueryExecutor, private readonly chainCases?: DaoCaseRegistrationConfig) {}
 
   async open(taskId: string, actorId: string, input: OpenDisputeInput, now: Date): Promise<DisputeResult> {
+    if (this.chainCases !== undefined && !await hasDaoCaseSchema(this.db)) {
+      throw new DisputeRepositoryError(503, "DAO_SCHEMA_MIGRATION_REQUIRED", "新版仲裁数据迁移尚未完成，暂不能创建链上案件");
+    }
     const contextResult = await this.db.query<{
       status: TaskStatus; status_version: string; publisher_id: string; agent_provider_ids: string[];
       evidence_window_seconds: number;
@@ -99,7 +113,7 @@ export class PgDisputeRepository implements DisputeRepository {
     );
     // 争议与 DAO 案件必须在同一事务产生；成员不足时明确保留等待成组状态，而不是
     // 回退到没有审计痕迹的临时人工处理。
-    const daoRound = await createDaoRoundForDispute(this.db, disputeId, taskId, now);
+    const daoRound = this.chainCases === undefined ? await createDaoRoundForDispute(this.db, disputeId, taskId, now) : null;
     await this.db.query(
       `UPDATE escrow_execution_jobs SET status='cancelled',lock_token=NULL,lock_expires_at=NULL,updated_at=$2
         WHERE task_id=$1 AND source<>'arbitration' AND status IN ('pending','prepared','failed')`,
@@ -118,6 +132,7 @@ export class PgDisputeRepository implements DisputeRepository {
         now,
       );
     }
+    if (this.chainCases !== undefined) await registerChainCase(this.db, disputeId, taskId, this.chainCases);
     await emitTaskEvent(this.db, {
       taskId, statusVersion: version, eventType: "task.dispute_opened",
       payload: { status: opened.taskStatus, disputeId, evidenceDeadline: opened.dispute.evidenceDeadline.toISOString() }, createdAt: now,
@@ -158,6 +173,7 @@ export class PgDisputeRepository implements DisputeRepository {
   }
 
   async read(disputeId: string, actorId: string): Promise<DisputeResult> {
+    const chainSchemaAvailable = await hasDaoCaseSchema(this.db);
     const access = await this.db.query<DisputeRow & {
       publisher_id: string;
       authorized_agent: boolean;
@@ -173,9 +189,11 @@ export class PgDisputeRepository implements DisputeRepository {
                   AND lower(agent.provider_wallet_address)=lower($2)) AS authorized_agent,
               EXISTS(SELECT 1 FROM platform_actor_roles
                 WHERE lower(actor_id)=lower($2) AND role='arbitrator') AS platform_arbitrator,
-              EXISTS(SELECT 1 FROM dao_arbitration_rounds round
+              (EXISTS(SELECT 1 FROM dao_arbitration_rounds round
                 JOIN dao_arbitration_panel_members panel ON panel.round_id=round.id
-               WHERE round.dispute_id=dispute.id AND lower(panel.actor_id)=lower($2)) AS dao_panel_member
+               WHERE round.dispute_id=dispute.id AND lower(panel.actor_id)=lower($2))
+               ${chainSchemaAvailable ? `OR EXISTS(SELECT 1 FROM dao_chain_cases chain WHERE chain.dispute_id=dispute.id
+                 AND (chain.snapshot->'panel' ? lower($2) OR chain.snapshot->'firstPanel' ? lower($2)))` : ""}) AS dao_panel_member
               ,(SELECT intent.amount_minor::text FROM escrow_intents intent WHERE intent.task_id=task.id) AS escrow_amount_minor
          FROM disputes dispute JOIN tasks task ON task.id=dispute.task_id WHERE dispute.id=$1`,
       [disputeId, actorId],
@@ -192,8 +210,11 @@ export class PgDisputeRepository implements DisputeRepository {
     }
     const evidence = await this.db.query<{
       id: string; submitted_by: string; party: string; description: string; attachments: unknown; created_at: Date;
+      content_hash: string | null; anchor_tx_hash: string | null;
     }>(
-      `SELECT id::text,submitted_by,party,description,attachments,created_at
+      `SELECT id::text,submitted_by,party,description,attachments,created_at,
+              to_jsonb(dispute_evidence)->>'content_hash' AS content_hash,
+              to_jsonb(dispute_evidence)->>'anchor_tx_hash' AS anchor_tx_hash
          FROM dispute_evidence WHERE dispute_id=$1 ORDER BY created_at,id`,
       [disputeId],
     );
@@ -232,6 +253,11 @@ export class PgDisputeRepository implements DisputeRepository {
       [disputeId, actorId],
     );
     const round = daoRound.rows[0];
+    const chainResult = chainSchemaAvailable ? await this.db.query<{ chain_id: string; contract_address: string; case_key: string; status: string; snapshot: unknown; last_error_code: string | null }>(
+      "SELECT chain_id::text,contract_address,case_key,status,snapshot,last_error_code FROM dao_chain_cases WHERE dispute_id=$1", [disputeId],
+    ) : { rows: [] };
+    const chain = chainResult.rows[0];
+    const compensation = await readCaseCompensation(this.db, disputeId);
     return result(200, {
       id: dispute.id, taskId: dispute.task_id, openedBy: dispute.opened_by, reason: dispute.reason,
       status: dispute.status, fundsFrozen: dispute.funds_frozen,
@@ -240,6 +266,12 @@ export class PgDisputeRepository implements DisputeRepository {
       evidence: evidence.rows.map((row) => ({
         id: row.id, submittedBy: row.submitted_by, party: row.party, description: row.description,
         attachments: row.attachments, createdAt: row.created_at.toISOString(),
+        contentHash: row.content_hash,
+        anchorTxHash: row.anchor_tx_hash,
+        // null 表示旧证据没有原始承诺，不能把“未验证”显示成“验证通过”。
+        integrity: row.content_hash === null ? "unverified" : row.content_hash === evidenceContentHash({
+          disputeId, evidenceId: row.id, submitter: row.submitted_by, description: row.description, attachments: row.attachments,
+        }) ? "consistent" : "mismatch",
       })),
       decision: decision.rows[0] === undefined ? null : serializeDecision(decision.rows[0]),
       // 平台仲裁员与 DAO 小组成员都可读卷宗，但只有平台角色能调用后台直接裁决接口。
@@ -247,7 +279,14 @@ export class PgDisputeRepository implements DisputeRepository {
       viewerRole: dispute.platform_arbitrator || dispute.dao_panel_member
         ? "arbitrator"
         : sameActor(actorId, dispute.publisher_id) ? "publisher" : "agent",
-      viewerCanPlatformDecide: dispute.platform_arbitrator,
+      viewerCanPlatformDecide: dispute.platform_arbitrator && chain === undefined,
+      chainArbitration: chain === undefined ? null : {
+        chainId: chain.chain_id, contractAddress: chain.contract_address, caseKey: chain.case_key,
+        status: chain.status, lastErrorCode: chain.last_error_code,
+        viewerIsParty: sameActor(actorId, dispute.publisher_id) || dispute.authorized_agent,
+        snapshot: chain.snapshot === null ? null : chainCaseSnapshotSchema.parse(chain.snapshot),
+      },
+      compensation,
       daoArbitration: round === undefined ? null : {
         roundId: round.id,
         status: round.status,
@@ -270,6 +309,9 @@ export class PgDisputeRepository implements DisputeRepository {
 
   async decide(disputeId: string, actorId: string, input: DecideDisputeInput, now: Date): Promise<DisputeResult> {
     const context = await this.lockDisputeContext(disputeId);
+    // 一旦任务绑定独立案件合约，平台仲裁员也不能绕过 VRF、小组投票或申诉窗口。
+    const chainCase = await hasDaoCaseSchema(this.db) ? await this.db.query("SELECT 1 FROM dao_chain_cases WHERE dispute_id=$1", [disputeId]) : { rows: [] };
+    if (chainCase.rows.length > 0) throw new DisputeRepositoryError(409, "DAO_CHAIN_DECISION_REQUIRED", "本案由 DAO 链上裁决，请等待仲裁与申诉流程完成");
     const role = await this.db.query("SELECT 1 FROM platform_actor_roles WHERE lower(actor_id)=lower($1) AND role='arbitrator'", [actorId]);
     const config = await this.db.query<{
       partial_release_enabled: boolean; fee_version: string; fee_basis_points: number; gas_fallback_minor: string;
@@ -444,8 +486,22 @@ export class PgDisputeRepository implements DisputeRepository {
     input: SubmitEvidenceInput,
     now: Date,
   ): Promise<string> {
+    const chainSchemaAvailable = await hasDaoCaseSchema(this.db);
+    const chain = chainSchemaAvailable ? await this.db.query<{ status: string }>("SELECT status FROM dao_chain_cases WHERE dispute_id=$1", [dispute.id]) : { rows: [] };
+    if (chain.rows[0] !== undefined && chain.rows[0].status !== "evidence") {
+      throw new DisputeRepositoryError(409, "DAO_EVIDENCE_WINDOW_CLOSED", "链上案件当前不在举证阶段，请先刷新案件状态");
+    }
     await validateEvidenceAttachments(this.db, dispute.taskId, input);
     const evidenceId = randomUUID();
+    let evidenceObjectIds: readonly string[];
+    try {
+      evidenceObjectIds = await verifyEvidenceObjects(this.db, dispute.id, actorId, input.attachments);
+    } catch (error) {
+      if (error instanceof DisputeEvidenceObjectError) {
+        throw new DisputeRepositoryError(error.statusCode, error.code, error.message);
+      }
+      throw error;
+    }
     let evidence: ReturnType<typeof submitDisputeEvidence>;
     try {
       evidence = submitDisputeEvidence({
@@ -453,11 +509,23 @@ export class PgDisputeRepository implements DisputeRepository {
         description: input.description, attachmentRefs: input.attachments.map((attachment) => attachment.storageRef), now,
       });
     } catch (error) { throw domainError(error); }
+    if (!chainSchemaAvailable) {
+      // 未迁移的历史部署仍按旧列写入，不伪造缺失的承诺。新案入口在 open 中明确拒绝降级。
+      await this.db.query(
+        `INSERT INTO dispute_evidence(id,dispute_id,submitted_by,party,description,attachments,created_at)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)`,
+        [evidence.id, dispute.id, evidence.submittedBy, evidence.party, evidence.description, JSON.stringify(input.attachments), now],
+      );
+      return evidence.id;
+    }
     await this.db.query(
-      `INSERT INTO dispute_evidence(id,dispute_id,submitted_by,party,description,attachments,created_at)
-       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)`,
-      [evidence.id, dispute.id, evidence.submittedBy, evidence.party, evidence.description, JSON.stringify(input.attachments), now],
+      `INSERT INTO dispute_evidence(id,dispute_id,submitted_by,party,description,attachments,created_at,content_hash)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8)`,
+      [evidence.id, dispute.id, evidence.submittedBy, evidence.party, evidence.description, JSON.stringify(input.attachments), now,
+        evidenceContentHash({ disputeId: dispute.id, evidenceId: evidence.id, submitter: evidence.submittedBy,
+          description: evidence.description, attachments: input.attachments })],
     );
+    await commitEvidenceObjects(this.db, evidenceObjectIds, evidence.id, now);
     return evidence.id;
   }
 }
@@ -474,11 +542,17 @@ async function validateEvidenceAttachments(db: QueryExecutor, taskId: string, in
   const maxFiles = limits.max_files ?? 10;
   const maxSize = BigInt(limits.max_file_size_bytes ?? String(20 * 1_048_576));
   const allowed = new Set((limits.allowed_mime_types ?? ["application/pdf", "image/png", "image/jpeg", "text/plain"]).map((value) => value.toLowerCase()));
-  if (input.attachments.length > maxFiles) throw new DisputeRepositoryError(422, "EVIDENCE_ATTACHMENT_LIMIT", `证据附件不能超过 ${maxFiles} 个`);
-  for (const attachment of input.attachments) {
-    if (!allowed.has(attachment.mimeType) || BigInt(attachment.sizeBytes) > maxSize) {
-      throw new DisputeRepositoryError(422, "EVIDENCE_ATTACHMENT_INVALID", `证据附件 ${attachment.name} 的格式或大小不符合任务分类限制`);
-    }
+  // 证据与任务附件遵循同一安全边界：分类配置只能调整限额和白名单，不能放开
+  // 可执行文件或非正大小。这里仅将权威校验结果映射为既有争议接口错误码。
+  const issue = validateTaskAttachments(
+    input.attachments.map((attachment) => ({ ...attachment, sizeBytes: BigInt(attachment.sizeBytes) })),
+    { maxFiles, maxFileSizeBytes: maxSize, allowedMimeTypes: allowed },
+  )[0];
+  if (issue !== undefined) {
+    throw new DisputeRepositoryError(422,
+      issue.code === "ATTACHMENT_COUNT_EXCEEDED" ? "EVIDENCE_ATTACHMENT_LIMIT" : "EVIDENCE_ATTACHMENT_INVALID",
+      issue.message,
+    );
   }
 }
 

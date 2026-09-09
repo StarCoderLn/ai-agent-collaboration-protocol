@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { withTransaction } from "../db/pool";
 import { EscrowExecutionWorker } from "../escrow/escrow-execution-worker";
 import type { EscrowOperatorClient } from "../escrow/escrow-operator-client";
 import { taskKeyForTaskId, type ObservedEscrowEvent } from "../escrow/escrow-chain-client";
-import { PgEscrowRepository } from "../escrow/escrow-repository";
+import { PgEscrowRepository, type EscrowDatabase } from "../escrow/escrow-repository";
 import { Idempotency, PgIdempotencyStore } from "../idempotency/idempotency-store";
 import { PgDisputeRepository } from "./dispute-repository";
 import { createDisputeService } from "./dispute-service";
@@ -22,11 +22,36 @@ const BLOCK_HASH = `0x${"66".repeat(32)}`;
 const CATEGORY_ID = "40000000-0000-4000-8000-000000000001";
 
 integration("dispute PostgreSQL and escrow execution vertical slice", () => {
-  let pool: Pool;
-  beforeAll(() => { pool = new Pool({ connectionString: requiredDatabaseUrl() }); });
-  afterAll(async () => { await pool.end(); });
+  let sharedPool: Pool;
+  beforeAll(() => { sharedPool = new Pool({ connectionString: requiredDatabaseUrl() }); });
+  afterAll(async () => { await sharedPool.end(); });
+
+  it("允许正式工作流从粗粒度 matching 投影发起争议", async () => {
+    const connection = await sharedPool.connect();
+    await connection.query("BEGIN");
+    const pool = rollbackDatabase(connection);
+    try {
+      const fixture = await insertFixture(pool);
+      // 正式工作流以 run/node 记录细粒度进度，tasks.status 在等待最终验收时仍可能保持
+      // matching。争议入口必须消费这个既定投影，同时继续依赖已接单 Agent 和托管事实。
+      await pool.query("UPDATE tasks SET status='matching' WHERE id=$1", [fixture.taskId]);
+
+      await expect(disputeWrite(pool, (service) => service.open(fixture.taskId, {
+        reason: "最终交付未满足真实链上闭环的验收条件",
+      }, PUBLISHER, `dispute-open:${randomUUID()}`))).resolves.toMatchObject({
+        body: { taskStatus: "disputed", fundsFrozen: true },
+      });
+    } finally {
+      await connection.query("ROLLBACK");
+      connection.release();
+    }
+  });
 
   it("freezes normal settlement, audits a role-checked decision, and executes only after chain confirmation", async () => {
+    const connection = await sharedPool.connect();
+    await connection.query("BEGIN");
+    const pool = rollbackDatabase(connection);
+    try {
     const fixture = await insertFixture(pool);
     // 审核身份属于本用例自己的夹具。随机地址避免上一次进程被强制终止后遗留的角色
     // 与下一次测试冲突，也避免清理时误删共享验收库中其他用例拥有的角色。
@@ -35,7 +60,6 @@ integration("dispute PostgreSQL and escrow execution vertical slice", () => {
     const evidenceKey = `dispute-evidence:${randomUUID()}`;
     const forbiddenKey = `dispute-forbidden:${randomUUID()}`;
     const decisionKey = `dispute-decision:${randomUUID()}`;
-    try {
       const opened = await disputeWrite(pool, (service) => service.open(fixture.taskId, {
         reason: "Agent 交付未覆盖约定的关键失败恢复路径",
       }, PUBLISHER, openKey));
@@ -96,7 +120,7 @@ integration("dispute PostgreSQL and escrow execution vertical slice", () => {
       };
       const escrow = new PgEscrowRepository(pool);
       await escrow.observe(event);
-      const pending = required((await escrow.listPending(10))[0]);
+      const pending = required((await escrow.listPending(31_337n, CONTRACT, 10))[0]);
       await expect(escrow.applyCanonicalConfirmation({
         eventId: pending.id, canonicalBlockHash: BLOCK_HASH, confirmations: 12n,
         now: new Date("2026-08-23T02:01:00Z"),
@@ -124,19 +148,22 @@ integration("dispute PostgreSQL and escrow execution vertical slice", () => {
       await expect(disputeWrite(pool, (service) => service.read(disputeId, `0x${"99".repeat(20)}`)))
         .rejects.toMatchObject({ code: "DISPUTE_NOT_FOUND" });
     } finally {
-      await cleanupFixture(pool, fixture.taskId, fixture.agentId, fixture.distributionId, arbitrator, [openKey, evidenceKey, forbiddenKey, decisionKey]);
+      // 证据承诺是追加写审计数据，不能为测试清理而关闭触发器或授予绕过权限。
+      // 外层事务回滚同时清理所有子表，保留真实业务断言且避免手工维护删除顺序。
+      await connection.query("ROLLBACK");
+      connection.release();
     }
   });
 });
 
-async function disputeWrite<T>(pool: Pool, action: (service: ReturnType<typeof createDisputeService>) => Promise<T>): Promise<T> {
+async function disputeWrite<T>(pool: EscrowDatabase, action: (service: ReturnType<typeof createDisputeService>) => Promise<T>): Promise<T> {
   return withTransaction(pool, (client) => action(createDisputeService(
     new PgDisputeRepository(client), new Idempotency(new PgIdempotencyStore(client)),
     () => new Date("2026-08-23T01:00:00Z"),
   )));
 }
 
-async function insertFixture(pool: Pool) {
+async function insertFixture(pool: EscrowDatabase) {
   const taskId = randomUUID();
   const agentId = randomUUID();
   const distributionId = randomUUID();
@@ -182,57 +209,21 @@ async function insertFixture(pool: Pool) {
   return { taskId, agentId, distributionId, acceptanceJobId };
 }
 
-async function cleanupFixture(
-  pool: Pool,
-  taskId: string,
-  agentId: string,
-  distributionId: string,
-  arbitrator: string,
-  keys: readonly string[],
-): Promise<void> {
-  await pool.query("DELETE FROM webhook_deliveries WHERE task_event_id IN (SELECT id FROM task_events WHERE task_id=$1)", [taskId]);
-  await pool.query("DELETE FROM task_events WHERE task_id=$1", [taskId]);
-  // 争议审计以 disputeId 为目标，而不是 taskId。必须在删除 disputes 前清理，
-  // 否则共享集成测试库会残留与本用例相关的审计证据，破坏测试间隔离性。
-  await pool.query(
-    "DELETE FROM audit_logs WHERE target_type='dispute' AND target_id IN (SELECT id::text FROM disputes WHERE task_id=$1)",
-    [taskId],
-  );
-  await pool.query("DELETE FROM audit_logs WHERE target_id=$1 OR (target_type='task' AND target_id=$2)", [taskId, taskId]);
-  await pool.query("DELETE FROM refund_attempts WHERE task_id=$1", [taskId]);
-  await pool.query("DELETE FROM reconciliation_alerts WHERE task_id=$1", [taskId]);
-  await pool.query("DELETE FROM escrow_sync WHERE task_id=$1", [taskId]);
-  await pool.query("DELETE FROM escrow_execution_jobs WHERE task_id=$1", [taskId]);
-  await pool.query("DELETE FROM arbitration_decisions WHERE dispute_id IN (SELECT id FROM disputes WHERE task_id=$1)", [taskId]);
-  // 每个新争议都会同步建立 DAO 轮次。先按外键逆序清理投票、小组和轮次，避免旧版
-  // 测试夹具只认识 disputes 表，在新增 DAO 聚合后把清理失败误报成业务失败。
-  await pool.query(
-    "DELETE FROM dao_arbitration_votes WHERE round_id IN (SELECT round.id FROM dao_arbitration_rounds round JOIN disputes dispute ON dispute.id=round.dispute_id WHERE dispute.task_id=$1)",
-    [taskId],
-  );
-  await pool.query(
-    "DELETE FROM dao_arbitration_panel_members WHERE round_id IN (SELECT round.id FROM dao_arbitration_rounds round JOIN disputes dispute ON dispute.id=round.dispute_id WHERE dispute.task_id=$1)",
-    [taskId],
-  );
-  await pool.query(
-    "DELETE FROM dao_arbitration_rounds WHERE dispute_id IN (SELECT id FROM disputes WHERE task_id=$1)",
-    [taskId],
-  );
-  await pool.query("DELETE FROM dispute_evidence WHERE dispute_id IN (SELECT id FROM disputes WHERE task_id=$1)", [taskId]);
-  await pool.query("DELETE FROM disputes WHERE task_id=$1", [taskId]);
-  await pool.query("DELETE FROM escrow_intents WHERE task_id=$1", [taskId]);
-  await pool.query("DELETE FROM task_assignments WHERE task_id=$1", [taskId]);
-  await pool.query("DELETE FROM job_distribution_records WHERE id=$1", [distributionId]);
-  // 链上确认会为已分配 Agent 创建投递。即使清理开始时 task_events 查询尚未看到
-  // 该提交事件，删除 Agent 前仍按 Agent 外键做最后一道兜底，避免留下半套夹具。
-  await pool.query("DELETE FROM webhook_deliveries WHERE agent_id=$1", [agentId]);
-  await pool.query("DELETE FROM task_events WHERE task_id=$1", [taskId]);
-  await pool.query("DELETE FROM task_ratings WHERE agent_id=$1", [agentId]);
-  await pool.query("DELETE FROM agent_score_snapshots WHERE agent_id=$1", [agentId]);
-  await pool.query("DELETE FROM agents WHERE id=$1", [agentId]);
-  await pool.query("DELETE FROM tasks WHERE id=$1", [taskId]);
-  await pool.query("DELETE FROM platform_actor_roles WHERE actor_id=$1", [arbitrator]);
-  await pool.query("DELETE FROM idempotency_records WHERE idempotency_key=ANY($1::text[])", [keys]);
+/** 将生产组件自己的事务映射为 SAVEPOINT，确保失败请求回滚不会结束测试外层事务。 */
+function rollbackDatabase(client: PoolClient): EscrowDatabase {
+  let counter = 0;
+  return {
+    query: (sql, params) => client.query(sql, [...params]),
+    connect: async () => {
+      const savepoint = `dispute_test_${++counter}`;
+      return {
+        query: (sql, params) => client.query(sql === "BEGIN" ? `SAVEPOINT ${savepoint}`
+          : sql === "COMMIT" ? `RELEASE SAVEPOINT ${savepoint}`
+          : sql === "ROLLBACK" ? `ROLLBACK TO SAVEPOINT ${savepoint}` : sql, [...params]),
+        release: () => undefined,
+      };
+    },
+  };
 }
 
 function required<T>(value: T | undefined): T {
