@@ -154,6 +154,8 @@ export default function FormalWorkflowView({
 	taskDeadline = null,
 	viewportResetKey = "",
 	workflow,
+	activeDisputeId = null,
+	terminalResolution = null,
 	viewMode,
 	selectionEditable = false,
 	unlockPreparedSelection,
@@ -173,6 +175,16 @@ export default function FormalWorkflowView({
 	 */
 	viewportResetKey?: string;
 	workflow: FormalWorkflow;
+	/**
+	 * 任务级争议会冻结整个工作流的资金操作。保留历史产物供核对，但原验收、返工和
+	 * 重复开案入口必须由争议卷宗入口替代，避免链下节点旧状态误导用户继续结算。
+	 */
+	activeDisputeId?: string | null;
+	/**
+	 * 任务资金终态不会覆写节点历史。退款后仅在展示层终止未验收节点的进行时文案，
+	 * 已验收状态和原始节点数据继续保留，供审计与争议复核。
+	 */
+	terminalResolution?: "refunded" | null;
 	viewMode: FormalWorkflowViewMode;
 	selectionEditable?: boolean;
 	/**
@@ -423,6 +435,7 @@ export default function FormalWorkflowView({
 					nodes={orderedNodes}
 					selectedNodeId={selectedNodeId}
 					viewMode={viewMode}
+					terminalResolution={terminalResolution}
 					retryingNodeId={retryRequest?.nodeId ?? null}
 					onSelect={setSelectedNodeId}
 				/>
@@ -443,6 +456,7 @@ export default function FormalWorkflowView({
 					node={selectedNode}
 					currency={workflow.run.currency}
 					viewMode={viewMode}
+					terminalResolution={terminalResolution}
 					isFinalNode={
 						!workflow.edges.some(
 							(edge) => edge.sourceNodeId === selectedNode.id,
@@ -451,6 +465,7 @@ export default function FormalWorkflowView({
 					workflowTotalMinor={
 						workflow.run.quotedTotalMinor ?? workflow.run.totalBudgetMinor
 					}
+					activeDisputeId={activeDisputeId}
 					selectionEditable={selectionEditable}
 					selectionUnlockable={unlockPreparedSelection !== undefined}
 					reselecting={reselection?.nodeId === selectedNode.id}
@@ -645,12 +660,14 @@ function WorkflowStageNavigator({
 	nodes,
 	selectedNodeId,
 	viewMode,
+	terminalResolution,
 	retryingNodeId,
 	onSelect,
 }: {
 	nodes: readonly FormalWorkflowNode[];
 	selectedNodeId: string;
 	viewMode: Exclude<FormalWorkflowViewMode, "allocation">;
+	terminalResolution: "refunded" | null;
 	retryingNodeId: string | null;
 	onSelect: (nodeId: string) => void;
 }) {
@@ -685,7 +702,10 @@ function WorkflowStageNavigator({
 								<span className="text-[10px] text-muted-foreground">
 									{node.id === retryingNodeId
 										? t("重新生成中")
-										: workflowNodeStatusLabel(node.status, t)}
+										: terminalResolution === "refunded" &&
+												node.status !== "accepted"
+											? t("随任务退款终止")
+											: workflowNodeStatusLabel(node.status, t)}
 								</span>
 							</div>
 							<p className="mt-2 font-medium text-sm">{node.title}</p>
@@ -706,8 +726,10 @@ function WorkflowNodeWorkspace({
 	node,
 	currency,
 	viewMode,
+	terminalResolution,
 	isFinalNode,
 	workflowTotalMinor,
+	activeDisputeId,
 	selectionEditable,
 	selectionUnlockable,
 	reselecting,
@@ -727,8 +749,10 @@ function WorkflowNodeWorkspace({
 	node: FormalWorkflowNode;
 	currency: string;
 	viewMode: FormalWorkflowViewMode;
+	terminalResolution: "refunded" | null;
 	isFinalNode: boolean;
 	workflowTotalMinor: string | null;
+	activeDisputeId: string | null;
 	selectionEditable: boolean;
 	selectionUnlockable: boolean;
 	reselecting: boolean;
@@ -964,10 +988,60 @@ function WorkflowNodeWorkspace({
 				))}
 
 			{viewMode === "settlement" && (
-				<WorkflowSettlementSummary node={node} currency={currency} />
+				<WorkflowSettlementSummary
+					node={node}
+					currency={currency}
+					terminalResolution={terminalResolution}
+				/>
+			)}
+
+			{activeDisputeId !== null && viewMode === "review" && (
+				<div className="flex items-start gap-3 border-primary/15 border-t bg-primary/5 px-5 py-5 sm:px-6">
+					<span className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-destructive/20 bg-destructive/10 text-destructive">
+						<LockKeyhole className="size-4" aria-hidden />
+					</span>
+					<div className="min-w-0">
+						<p className="font-semibold text-foreground text-sm">
+							{t("任务已进入 DAO 争议，验收与结算操作已冻结")}
+						</p>
+						<p className="mt-1 text-muted-foreground text-xs leading-5">
+							{t("历史交付仅供核对；请在“结算或争议”阶段继续处理。")}
+						</p>
+					</div>
+				</div>
+			)}
+
+			{activeDisputeId !== null && viewMode === "settlement" && (
+				<div className="flex flex-col gap-4 border-primary/15 border-t bg-primary/5 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+					<div className="flex min-w-0 items-start gap-3">
+						<span className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-destructive/20 bg-destructive/10 text-destructive">
+							<LockKeyhole className="size-4" aria-hidden />
+						</span>
+						<div className="min-w-0">
+							<p className="font-semibold text-foreground text-sm">
+								{t("任务已进入 DAO 争议，验收与结算操作已冻结")}
+							</p>
+							<p className="mt-1 text-muted-foreground text-xs leading-5">
+								{t("请进入争议详情查看证据、仲裁进度和最终资金结果。")}
+							</p>
+						</div>
+					</div>
+					<Button
+						type="button"
+						variant="outline"
+						className="shrink-0 border-destructive/25 text-destructive hover:bg-destructive/5 hover:text-destructive"
+						render={
+							<Link href={`/workspace/disputes/${activeDisputeId}` as Route} />
+						}
+					>
+						<Scale className="size-4" aria-hidden />
+						{t("查看争议详情")}
+					</Button>
+				</div>
 			)}
 
 			{viewMode === "review" &&
+				activeDisputeId === null &&
 				node.status === "awaiting_review" &&
 				selectedArtifact !== null && (
 					<div className="border-primary/15 border-t bg-accent/45 px-5 py-5 sm:px-6">
@@ -1071,21 +1145,28 @@ function WorkflowNodeWorkspace({
 							</div>
 						</div>
 						{isFinalNode && showDispute && (
-							<div className="mt-4 rounded-xl border border-destructive/25 bg-destructive-container/70 p-4">
-								<p className="font-semibold text-destructive text-sm">
-									{t(
-										"提交后全部 USDC 继续冻结，由无利益冲突的 DAO 仲裁小组投票裁决。",
-									)}
-								</p>
-								<p className="mt-1 text-destructive/80 text-xs leading-5">
-									{t(
-										"当前说明将作为第一份文字证据；已交付制品和结算清单会生成摘要供链上核验。",
-									)}
-								</p>
+							<div className="mt-4 flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 shadow-[inset_0_1px_0_rgb(255_255_255/4%)] sm:flex-row sm:items-center sm:justify-between">
+								<div className="flex min-w-0 items-start gap-3">
+									<span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-destructive/20 bg-destructive/10 text-destructive">
+										<LockKeyhole className="size-4" />
+									</span>
+									<div className="min-w-0">
+										<p className="font-medium text-foreground text-sm">
+											{t(
+												"提交后全部 USDC 继续冻结，由无利益冲突的 DAO 仲裁小组投票裁决。",
+											)}
+										</p>
+										<p className="mt-1 text-muted-foreground text-xs leading-5">
+											{t(
+												"当前说明将作为第一份文字证据；已交付制品和结算清单会生成摘要供链上核验。",
+											)}
+										</p>
+									</div>
+								</div>
 								<Button
 									type="button"
 									variant="destructive"
-									className="mt-3"
+									className="shrink-0 sm:self-center"
 									disabled={busy}
 									onClick={() =>
 										run("workflow-open-dispute", () =>
@@ -1538,9 +1619,11 @@ function workflowExecutionFailureReason(
 function WorkflowSettlementSummary({
 	node,
 	currency,
+	terminalResolution,
 }: {
 	node: FormalWorkflowNode;
 	currency: string;
+	terminalResolution: "refunded" | null;
 }) {
 	const { t } = useLocale();
 	if (node.acceptance === null) {
@@ -1549,12 +1632,16 @@ function WorkflowSettlementSummary({
 				<div className="max-w-lg">
 					<WalletCards className="mx-auto size-10 text-muted-foreground" />
 					<h3 className="mt-4 font-semibold text-xl">
-						{t("该阶段暂无结算记录")}
+						{terminalResolution === "refunded"
+							? t("该阶段随任务退款终止")
+							: t("该阶段暂无结算记录")}
 					</h3>
 					<p className="mt-2 text-muted-foreground text-sm leading-7">
-						{t(
-							"阶段产物验收后会固化成交与费用明细；资金仍保持托管，直到全部阶段完成并由发布者最终确认。",
-						)}
+						{terminalResolution === "refunded"
+							? t("任务退款已经完成，该阶段未通过验收，也不会再继续结算。")
+							: t(
+									"阶段产物验收后会固化成交与费用明细；资金仍保持托管，直到全部阶段完成并由发布者最终确认。",
+								)}
 					</p>
 				</div>
 			</div>
@@ -2036,13 +2123,13 @@ function WorkflowCandidateSelection({
 										<p className="font-medium text-xs">{t("相关交付案例")}</p>
 										{candidate.deliveryCases
 											?.slice(0, 2)
-											.map((deliveryCase) => {
+											.map((deliveryCase, caseIndex) => {
 												const previewUrl = publicPreviewUrl(
 													deliveryCase.previewRef,
 												);
 												return (
 													<div
-														key={`${deliveryCase.source}:${deliveryCase.title}`}
+														key={`${deliveryCase.source}:${deliveryCase.title}:${deliveryCase.previewRef ?? "none"}:${caseIndex}`}
 														className="rounded-xl border border-primary/10 bg-accent/35 p-3"
 													>
 														<div className="flex items-center justify-between gap-2">

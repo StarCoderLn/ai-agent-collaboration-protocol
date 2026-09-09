@@ -57,6 +57,7 @@ describe("arbitration console", () => {
 		);
 
 		expect(await screen.findByText("争议卷宗与资金决定")).toBeInTheDocument();
+		expect(screen.getByText("9,007,199,254.740993 USDC")).toBeInTheDocument();
 		expect(screen.getByDisplayValue("9007199254740993")).toBeInTheDocument();
 		expect(screen.getByText("金额守恒校验通过")).toBeInTheDocument();
 		expect(

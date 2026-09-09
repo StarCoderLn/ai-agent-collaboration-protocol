@@ -1,4 +1,10 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getPublisherTaskStats, listOwnedTasks } from "@/lib/api/tasks";
@@ -64,6 +70,9 @@ describe("Publisher workspace statistics", () => {
 		).not.toBeInTheDocument();
 		expect(listOwnedTasks).toHaveBeenCalledWith(expect.any(AbortSignal));
 		expect(getPublisherTaskStats).toHaveBeenCalledWith(expect.any(AbortSignal));
+		fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+		await waitFor(() => expect(listOwnedTasks).toHaveBeenCalledTimes(2));
+		expect(getPublisherTaskStats).toHaveBeenCalledTimes(2);
 	});
 
 	it("任务卡片只展示用户决策所需信息，不暴露可见性和内部状态版本", async () => {

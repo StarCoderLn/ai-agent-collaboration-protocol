@@ -21,6 +21,11 @@ export const anvil = defineChain({
 	testnet: true,
 });
 
+// 每次启动只连接一个业务目标链。Sepolia 启动器传入的项目 RPC 必须同时用于页面读取、
+// 交易广播后的回执等待和状态刷新；若回执单独落到默认公共节点，已确认交易也可能长时间
+// 停留在“确认中”。未配置时仍使用各公开链的 Viem 默认节点，便于独立页面开发。
+const configuredRpcUrl = process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL;
+
 /**
  * 这里只导出连接器工厂，不把它预注册到全局 Wagmi 配置。
  *
@@ -46,7 +51,7 @@ export const wagmiConfig = createConfig({
 	ssr: true,
 	transports: {
 		[mainnet.id]: http(),
-		[sepolia.id]: http(),
+		[sepolia.id]: http(configuredRpcUrl),
 		[anvil.id]: http(anvil.rpcUrls.default.http[0]),
 	},
 });

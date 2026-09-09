@@ -190,11 +190,54 @@
 		@apply font-sans bg-background text-foreground;
 		background-image:
 			radial-gradient(circle at 12% -8%, var(--brand-glow), transparent 28rem),
-			radial-gradient(circle at 92% 18%, color-mix(in srgb, var(--secondary) 10%, transparent), transparent 24rem);
+			radial-gradient(
+				circle at 92% 18%,
+				color-mix(in srgb, var(--secondary) 10%, transparent),
+				transparent 24rem
+			);
 		background-attachment: fixed;
 	}
 	html {
 		@apply font-sans;
 		color-scheme: dark;
+	}
+}
+
+/*
+ * 所有业务页面通过同一个 Skeleton 入口获得加载反馈。组件提供中等默认圆角，调用方仍
+ * 可按卡片结构覆盖；颜色引用设计 token，避免不同页面各自维护一套加载视觉。
+ */
+@keyframes skeleton-gradient-flow {
+	0% {
+		background-position: 120% 50%;
+	}
+	100% {
+		background-position: -120% 50%;
+	}
+}
+
+[data-slot="skeleton"] {
+	background-color: var(--muted);
+	background-image: linear-gradient(
+		108deg,
+		color-mix(in srgb, var(--muted) 96%, var(--primary)) 0%,
+		color-mix(in srgb, var(--muted) 90%, var(--primary-container)) 39%,
+		color-mix(in srgb, var(--primary-container) 86%, var(--primary)) 48%,
+		color-mix(in srgb, var(--primary-container) 97%, var(--secondary)) 52%,
+		color-mix(in srgb, var(--primary-container) 86%, var(--primary)) 56%,
+		color-mix(in srgb, var(--muted) 90%, var(--primary-container)) 65%,
+		color-mix(in srgb, var(--muted) 96%, var(--primary)) 100%
+	);
+	background-size: 360% 100%;
+	box-shadow:
+		inset 0 0 0 1px color-mix(in srgb, var(--primary) 7%, transparent),
+		0 0 10px color-mix(in srgb, var(--brand-glow) 16%, transparent);
+	animation: skeleton-gradient-flow 2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	[data-slot="skeleton"] {
+		background-position: 50% 50%;
+		animation: none;
 	}
 }

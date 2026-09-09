@@ -23,6 +23,7 @@ import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import type { MessageId } from "@/lib/i18n/messages";
 import { walletNetworkName } from "@/lib/wallet/network-name";
 import BrandMark from "./brand-mark";
+import DaoRewardNotice from "./dao-reward-notice";
 import LanguageSwitcher from "./i18n/language-switcher";
 import { useLocale } from "./i18n/locale-provider";
 
@@ -92,6 +93,12 @@ export default function Header() {
 					})}
 				</nav>
 				<span className="flex-1 xl:hidden" />
+				{wallet.status === "connected" && (
+					<DaoRewardNotice
+						key={wallet.walletAddress.toLowerCase()}
+						actorId={wallet.walletAddress}
+					/>
+				)}
 				<LanguageSwitcher />
 				<div className="hidden h-6 w-px bg-border sm:block" />
 				<WalletAccountControl wallet={wallet} />

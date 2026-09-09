@@ -48,6 +48,11 @@ export class EscrowDepositFlowError extends Error {
 		super(message, options);
 		this.name = "EscrowDepositFlowError";
 	}
+
+	/** 钱包超时只代表页面没有收到结果，不能与已确认失败使用同一种危险状态。 */
+	get transactionStateUncertain(): boolean {
+		return this.cause instanceof WalletRequestTimeoutError;
+	}
 }
 
 export async function startEscrowDeposit(

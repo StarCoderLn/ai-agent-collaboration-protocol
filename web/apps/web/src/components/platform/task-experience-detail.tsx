@@ -16,6 +16,7 @@ import {
 	GitBranch,
 	Loader2,
 	LockKeyhole,
+	Paperclip,
 	ReceiptText,
 	RefreshCw,
 	Scale,
@@ -47,6 +48,7 @@ import FormalWorkflowView, {
 } from "@/components/platform/formal-workflow-view";
 import PageBackLink from "@/components/platform/page-back-link";
 import TaskAgentAllocationGraph from "@/components/platform/task-agent-allocation-graph";
+import SectionRefreshButton from "@/components/section-refresh-button";
 import {
 	acceptTaskResult,
 	archiveTask,
@@ -88,6 +90,7 @@ import {
 	type TaskResult,
 	type TaskStatus,
 	updateTaskMatchCriteria,
+	uploadTaskDisputeEvidenceObject,
 	type WorkflowFeedback,
 	type WorkflowFeedbackInput,
 	type WorkflowFeedbackStrength,
@@ -167,6 +170,10 @@ type TaskDisplay = Readonly<{
 }>;
 
 type EventSyncMode = "connecting" | "live" | "polling";
+type EscrowActionIssue = Readonly<{
+	message: string;
+	state: "uncertain" | "failed";
+}>;
 const ACTION_REFRESH_TIMEOUT_MS = 10_000;
 
 export default function TaskExperienceDetail({
@@ -187,7 +194,9 @@ export default function TaskExperienceDetail({
 	const [data, setData] = useState<LoadedTask | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
-	const [escrowError, setEscrowError] = useState<string | null>(null);
+	const [escrowError, setEscrowError] = useState<EscrowActionIssue | null>(
+		null,
+	);
 	const [busy, setBusy] = useState<string | null>(null);
 	const [confirmingArchive, setConfirmingArchive] = useState(false);
 	const [events, setEvents] = useState<readonly TaskEventData[]>([]);
@@ -421,7 +430,15 @@ export default function TaskExperienceDetail({
 		} catch (caught) {
 			const message = messageOf(caught, t);
 			// 资金错误必须出现在用户刚刚点击的托管卡片内，不能只显示在长页面顶部。
-			if (escrowAction) setEscrowError(message);
+			if (escrowAction)
+				setEscrowError({
+					message,
+					state:
+						caught instanceof EscrowDepositFlowError &&
+						caught.transactionStateUncertain
+							? "uncertain"
+							: "failed",
+				});
 			else if (errorPlacement === "page") setError(message);
 			return { ok: false, message };
 		} finally {
@@ -470,6 +487,7 @@ export default function TaskExperienceDetail({
 			<NotFoundState message={error ?? t("任务不存在或当前钱包无权访问")} />
 		);
 	const task = displayTask(data);
+	const activeDisputeId = dispute?.id ?? disputeId;
 	// 历史任务可能已经停在 awaiting_escrow，却没有新版工作流和冻结报价。旧流程还可能
 	// 留下未广播交易的 prepared/failed 记录；它们无法通过新版服务端校验，必须引导重新
 	// 发布。已经提交或确认的链上交易仍走原恢复视图，不能被兼容提示遮挡。
@@ -509,6 +527,12 @@ export default function TaskExperienceDetail({
 							<div className="flex flex-wrap items-center gap-2">
 								<StatusBadge status={task.status} />
 								<FormalStateBadge owner={data.owned !== null} />
+								{task.status === "disputed" && activeDisputeId === null && (
+									<span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs">
+										<Loader2 className="size-3.5 animate-spin" aria-hidden />
+										{t("正在读取争议编号")}
+									</span>
+								)}
 							</div>
 							<h1 className="mt-3 max-w-4xl font-bold text-2xl tracking-tight sm:text-3xl">
 								{task.title || t("未命名任务")}
@@ -516,6 +540,11 @@ export default function TaskExperienceDetail({
 							<p className="mt-2 font-mono text-muted-foreground text-xs">
 								{task.id}
 							</p>
+							{task.status === "disputed" && activeDisputeId !== null && (
+								<p className="mt-1 font-mono text-destructive/80 text-xs">
+									{t("争议 ID：{id}", { id: activeDisputeId })}
+								</p>
+							)}
 						</div>
 						<div className="flex flex-col items-stretch gap-2 sm:items-end">
 							<div className="rounded-lg border bg-accent px-5 py-3 text-right">
@@ -631,6 +660,12 @@ export default function TaskExperienceDetail({
 									taskDeadline={task.deadline}
 									viewportResetKey={`${task.statusVersion ?? "unknown"}:${data.escrow?.status ?? "none"}`}
 									workflow={data.workflow}
+									activeDisputeId={
+										task.status === "disputed" ? activeDisputeId : null
+									}
+									terminalResolution={
+										task.status === "refunded" ? "refunded" : null
+									}
 									viewMode={
 										selectedFlowStage === 1
 											? "allocation"
@@ -866,7 +901,7 @@ function CurrentAction({
 	busy: boolean;
 	run: (label: string, action: () => Promise<unknown>) => Promise<void>;
 	dispute: TaskDispute | null;
-	escrowError: string | null;
+	escrowError: EscrowActionIssue | null;
 }) {
 	const { t } = useLocale();
 	if (task.status === "draft")
@@ -1063,7 +1098,7 @@ function EscrowAction({
 	wallet: ReturnType<typeof useWalletSession>;
 	busy: boolean;
 	run: (label: string, action: () => Promise<unknown>) => Promise<void>;
-	error: string | null;
+	error: EscrowActionIssue | null;
 	exactAmountMinor?: string | null;
 }) {
 	const { t } = useLocale();
@@ -1168,7 +1203,11 @@ function EscrowAction({
 	const failed = escrow?.status === "failed";
 	// 服务端确认失败后，failureReason 才是可重试原因的权威记录；本地 error 只描述
 	// 当前这次钱包操作。两者共用同一个就近错误区，避免用户只看到“可重试”却不知道原因。
-	const visibleError = error ?? (failed ? escrow.failureReason : null);
+	const visibleIssue =
+		error ??
+		(failed && escrow.failureReason !== null
+			? { message: escrow.failureReason, state: "failed" as const }
+			: null);
 	const escrowAmount =
 		exactAmountMinor !== undefined && exactAmountMinor !== null
 			? formatMinorAmount(exactAmountMinor, task.currency)
@@ -1209,19 +1248,6 @@ function EscrowAction({
 					</p>
 				)}
 			</details>
-			{visibleError !== null && (
-				<div
-					role="alert"
-					aria-label={t("托管操作未完成")}
-					className="mb-5 flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive-container p-4 text-destructive"
-				>
-					<AlertCircle className="mt-0.5 size-4 shrink-0" />
-					<div>
-						<p className="font-semibold text-sm">{t("托管操作未完成")}</p>
-						<p className="mt-1 text-sm leading-6">{visibleError}</p>
-					</div>
-				</div>
-			)}
 			{breakdown !== null && (
 				<section
 					className="mb-5 rounded-xl border border-tertiary/20 bg-background/35 p-4"
@@ -1233,6 +1259,34 @@ function EscrowAction({
 							{formatMinorAmount(breakdown.amountMinor, task.currency)}
 						</p>
 					</div>
+					{visibleIssue !== null && (
+						<div
+							role={visibleIssue.state === "uncertain" ? "status" : "alert"}
+							className={`mt-3 flex items-start gap-2.5 rounded-lg border px-3 py-2.5 ${
+								visibleIssue.state === "uncertain"
+									? "border-warning/20 bg-warning/5"
+									: "border-destructive/20 bg-destructive/5"
+							}`}
+						>
+							<AlertCircle
+								className={`mt-0.5 size-4 shrink-0 ${
+									visibleIssue.state === "uncertain"
+										? "text-warning"
+										: "text-destructive"
+								}`}
+							/>
+							<div>
+								<p className="font-medium text-sm">
+									{visibleIssue.state === "uncertain"
+										? t("交易状态待确认")
+										: t("托管操作未完成")}
+								</p>
+								<p className="mt-0.5 text-muted-foreground text-xs leading-5">
+									{visibleIssue.message}
+								</p>
+							</div>
+						</div>
+					)}
 					<p className="mt-3 text-muted-foreground text-xs leading-5">
 						{t("任务完成并通过验收前，托管资金不会支付给 Agent。")}
 					</p>
@@ -1995,24 +2049,19 @@ function ReviewPanel({
 					aria-label={t("验收结算明细")}
 				>
 					<div className="flex items-center justify-between gap-3">
-						<div>
-							<p className="font-semibold text-sm">{t("本次验收与结算")}</p>
-							<p className="mt-1 text-muted-foreground text-xs">
-								{t(
-									"明细由服务端按冻结成交价与当前费率生成；条件变化时确认会被拒绝。",
-								)}
-							</p>
-						</div>
-						<Button
-							type="button"
-							size="sm"
-							variant="outline"
+						<p className="min-w-0 font-semibold text-sm">
+							{t("本次验收与结算")}
+						</p>
+						<SectionRefreshButton
+							label={t("刷新明细")}
 							onClick={() => setPreviewRevision((value) => value + 1)}
-						>
-							<RefreshCw className="size-3.5" />
-							{t("刷新明细")}
-						</Button>
+						/>
 					</div>
+					<p className="mt-1 text-muted-foreground text-xs">
+						{t(
+							"明细由服务端按冻结成交价与当前费率生成；条件变化时确认会被拒绝。",
+						)}
+					</p>
 					{preview === null ? (
 						<p
 							className={`mt-4 text-sm ${previewError ? "text-destructive" : "text-muted-foreground"}`}
@@ -2209,6 +2258,7 @@ function DisputePanel({
 }) {
 	const { locale, t } = useLocale();
 	const [evidence, setEvidence] = useState("");
+	const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
 	if (dispute === null)
 		return (
 			<Panel
@@ -2285,6 +2335,25 @@ function DisputePanel({
 							)}
 					</div>
 				)}
+				{dispute.chainArbitration && (
+					<div className="mt-5 rounded-xl border border-primary/20 p-4">
+						<p className="text-muted-foreground text-sm">
+							{locale === "en"
+								? "Review the on-chain case, evidence and appeal options in the dispute dossier."
+								: "前往争议卷宗查看链上案件进度、完整证据与申诉选项。"}
+						</p>
+						<Button
+							size="lg"
+							variant="outline"
+							className="mt-3 cursor-pointer"
+							render={
+								<Link href={`/workspace/disputes/${dispute.id}` as Route} />
+							}
+						>
+							{locale === "en" ? "View arbitration case" : "查看仲裁案件"}
+						</Button>
+					</div>
+				)}
 				<ol className="mt-5 space-y-3">
 					{dispute.evidence.map((entry) => (
 						<li key={entry.id} className="rounded-lg border bg-accent p-4">
@@ -2305,6 +2374,9 @@ function DisputePanel({
 					))}
 				</ol>
 				{dispute.status === "evidence_collection" &&
+					(!dispute.chainArbitration ||
+						dispute.chainArbitration.status === "evidence") &&
+					new Date(dispute.evidenceDeadline).getTime() > Date.now() &&
 					dispute.viewerRole !== "arbitrator" && (
 						<div className="mt-5 border-t pt-4">
 							<label className="font-medium text-sm" htmlFor="dispute-evidence">
@@ -2316,17 +2388,45 @@ function DisputePanel({
 								value={evidence}
 								onChange={(event) => setEvidence(event.target.value)}
 							/>
+							<label
+								className="mt-3 flex cursor-pointer items-center gap-2 rounded-lg border border-primary/30 border-dashed bg-primary/5 px-3 py-2 text-sm"
+								htmlFor="dispute-evidence-file"
+							>
+								<Paperclip className="size-4 text-primary" />
+								<span className="truncate">
+									{evidenceFile?.name ?? t("添加证据文件（可选）")}
+								</span>
+							</label>
+							<Input
+								id="dispute-evidence-file"
+								type="file"
+								className="sr-only"
+								accept="application/pdf,image/png,image/jpeg,text/plain"
+								onChange={(event) =>
+									setEvidenceFile(event.target.files?.[0] ?? null)
+								}
+							/>
 							<Button
 								className="mt-3"
 								disabled={busy || evidence.trim().length === 0}
 								onClick={() =>
-									run("submit-evidence", () =>
-										submitTaskDisputeEvidence(
+									run("submit-evidence", async () => {
+										const attachments = evidenceFile
+											? [
+													await uploadTaskDisputeEvidenceObject(
+														dispute.id,
+														evidenceFile,
+													),
+												]
+											: [];
+										await submitTaskDisputeEvidence(
 											dispute.id,
-											{ description: evidence.trim(), attachments: [] },
+											{ description: evidence.trim(), attachments },
 											key("dispute-evidence"),
-										),
-									)
+										);
+										setEvidence("");
+										setEvidenceFile(null);
+									})
 								}
 							>
 								{t("提交证据")}

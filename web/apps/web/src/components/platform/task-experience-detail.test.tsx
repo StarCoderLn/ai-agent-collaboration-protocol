@@ -41,6 +41,7 @@ import {
 	EscrowDepositFlowError,
 	startEscrowDeposit,
 } from "@/lib/wallet/escrow-deposit-flow";
+import { WalletRequestTimeoutError } from "@/lib/wallet/wallet-session";
 import TaskExperienceDetail from "./task-experience-detail";
 
 const navigationMock = vi.hoisted(() => ({
@@ -996,7 +997,7 @@ describe("formal task detail", () => {
 		).toBeEnabled();
 	});
 
-	it("托管失败后恢复按钮并在资金操作旁显示原因", async () => {
+	it("钱包结果不确定时在金额卡片内使用紧凑提示，不渲染成大块失败状态", async () => {
 		await setTaskStatus("awaiting_escrow");
 		vi.mocked(getTaskEscrowStatus).mockResolvedValue({
 			...(await vi.mocked(getTaskEscrowStatus)(taskId)),
@@ -1010,6 +1011,7 @@ describe("formal task detail", () => {
 				"wallet",
 				"MetaMask 没有返回交易结果，请先检查钱包后重试",
 				null,
+				{ cause: new WalletRequestTimeoutError("钱包请求超时") },
 			),
 		);
 
@@ -1020,11 +1022,12 @@ describe("formal task detail", () => {
 		});
 		fireEvent.click(escrowButton);
 
-		expect(
-			await screen.findByRole("alert", {
-				name: "托管操作未完成",
-			}),
-		).toHaveTextContent("MetaMask 没有返回交易结果");
+		const amountPanel = screen.getByLabelText("托管金额确认");
+		const issue = await within(amountPanel).findByRole("status");
+		expect(issue).toHaveTextContent("交易状态待确认");
+		expect(issue).toHaveTextContent("MetaMask 没有返回交易结果");
+		expect(issue).toHaveClass("bg-warning/5");
+		expect(issue).not.toHaveClass("bg-destructive-container");
 		expect(escrowButton).toBeEnabled();
 		expect(screen.queryByText("重试")).not.toBeInTheDocument();
 	});
@@ -1367,6 +1370,10 @@ describe("formal task detail", () => {
 			failedAt: null,
 			lastEventId: "10",
 		});
+		vi.mocked(getTaskWorkflow).mockResolvedValue({
+			...formalWorkflowFixture(),
+			run: { ...formalWorkflowFixture().run, status: "disputed" },
+		});
 		const disputeId = "99999999-9999-4999-8999-999999999999";
 		vi.mocked(getTaskDispute).mockResolvedValue({
 			id: disputeId,
@@ -1386,7 +1393,7 @@ describe("formal task detail", () => {
 		});
 
 		render(<TaskExperienceDetail taskId={taskId} />);
-		expect(await screen.findByText("正在读取争议卷宗")).toBeInTheDocument();
+		expect(await screen.findByText("争议中")).toBeInTheDocument();
 		await waitFor(() => expect(subscribedHandlers).toBeDefined());
 		act(() =>
 			subscribedHandlers?.onEvent({
@@ -1399,13 +1406,16 @@ describe("formal task detail", () => {
 			}),
 		);
 
-		expect(
-			await screen.findByText("正式交付没有覆盖约定的失败恢复路径。"),
-		).toBeInTheDocument();
-		expect(getTaskDispute).toHaveBeenCalledWith(
-			disputeId,
-			expect.any(AbortSignal),
+		await waitFor(() =>
+			expect(getTaskDispute).toHaveBeenCalledWith(
+				disputeId,
+				expect.any(AbortSignal),
+			),
 		);
+		expect(
+			screen.getByRole("button", { name: "查看争议详情" }),
+		).toHaveAttribute("href", `/workspace/disputes/${disputeId}`);
+		expect(screen.getByText(`争议 ID：${disputeId}`)).toBeInTheDocument();
 	});
 
 	it("shows authoritative settlement terms before enabling acceptance", async () => {

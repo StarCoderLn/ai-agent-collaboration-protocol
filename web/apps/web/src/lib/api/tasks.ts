@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
 import { BUSINESS_API_BASE_URL } from "./base-url";
+import { chainArbitrationSchema } from "./dao-cases";
 
 /**
  * 正式任务 API 的浏览器边界。页面不保存任务主状态，所有金额、版本和状态都以服务端
@@ -530,6 +531,10 @@ const evidenceAttachmentSchema = z.object({
 	sizeBytes: integerStringSchema,
 	storageRef: z.string(),
 });
+const uploadedEvidenceObjectSchema = evidenceAttachmentSchema.extend({
+	id: uuidSchema,
+	sha256: z.string().regex(/^0x[0-9a-f]{64}$/),
+});
 const disputeOpenedSchema = z.object({
 	disputeId: uuidSchema,
 	taskId: uuidSchema,
@@ -591,6 +596,9 @@ const disputeSchema = z.object({
 			description: z.string(),
 			attachments: z.array(evidenceAttachmentSchema),
 			createdAt: isoDateTimeSchema,
+			contentHash: transactionHashSchema.nullable().optional(),
+			anchorTxHash: transactionHashSchema.nullable().optional(),
+			integrity: z.enum(["unverified", "consistent", "mismatch"]).optional(),
 		}),
 	),
 	decision: disputeDecisionSchema.nullable(),
@@ -598,6 +606,20 @@ const disputeSchema = z.object({
 	// 平台仲裁员与 DAO 小组成员都能读取卷宗，但资金裁决入口不同，不能只靠同一个
 	// viewerRole 推断写权限，否则 DAO 成员会被错误引导到平台后台裁决表单。
 	viewerCanPlatformDecide: z.boolean(),
+	compensation: z
+		.object({
+			id: uuidSchema,
+			status: z.enum(["awaiting_funding", "submitted", "confirmed", "failed"]),
+			beneficiary: z.string(),
+			amountMinor: integerStringSchema,
+			currency: z.literal("USDC"),
+			paymentTxHash: transactionHashSchema.nullable(),
+			confirmedBlockNumber: integerStringSchema.nullable(),
+			reason: z.string(),
+		})
+		.nullable()
+		.optional(),
+	chainArbitration: chainArbitrationSchema.nullable().optional(),
 	daoArbitration: z
 		.object({
 			roundId: uuidSchema,
@@ -1535,6 +1557,20 @@ export async function submitTaskDisputeEvidence(
 		idempotencyKey,
 		disputeEvidenceResultSchema,
 	);
+}
+
+/** 文件先作为当前案件的不可变暂存对象上传，随后与文字证据在同一提交事务中绑定。 */
+export async function uploadTaskDisputeEvidenceObject(
+	disputeId: string,
+	file: File,
+) {
+	const form = new FormData();
+	form.set("file", file);
+	const response = await request(
+		`/disputes/${taskPathId(disputeId)}/attachments`,
+		{ method: "POST", credentials: "include", body: form },
+	);
+	return parseSuccess(response, uploadedEvidenceObjectSchema);
 }
 
 export async function decideTaskDispute(

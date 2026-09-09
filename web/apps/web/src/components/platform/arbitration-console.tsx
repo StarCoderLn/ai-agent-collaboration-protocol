@@ -20,6 +20,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import { useLocale } from "@/components/i18n/locale-provider";
+import DaoChainCasePanel from "@/components/platform/dao-chain-case-panel";
 import PageBackLink from "@/components/platform/page-back-link";
 import {
 	decideTaskDispute,
@@ -28,6 +29,7 @@ import {
 	type TaskDispute,
 } from "@/lib/api/tasks";
 import { formatDate } from "@/lib/platform/format";
+import { formatMinorAmount, MVP_CURRENCY } from "@/lib/platform/money";
 
 type LoadState =
 	| { kind: "loading" }
@@ -81,6 +83,26 @@ export default function ArbitrationConsole({
 	}, [load]);
 
 	const dispute = state.kind === "loaded" ? state.dispute : null;
+	const hasChainCase = dispute?.chainArbitration != null;
+	useEffect(() => {
+		if (!hasChainCase || wallet.status !== "connected") return;
+		const controller = new AbortController();
+		// 后台刷新不清空卷宗、不重置正在输入的理由，也不把页面切回骨架屏。
+		const timer = setInterval(() => {
+			getTaskDispute(disputeId, controller.signal)
+				.then((next) => {
+					if (!controller.signal.aborted)
+						setState({ kind: "loaded", dispute: next });
+				})
+				.catch((error: unknown) => {
+					if (!controller.signal.aborted) setMessage(apiMessage(error, t));
+				});
+		}, 5000);
+		return () => {
+			controller.abort();
+			clearInterval(timer);
+		};
+	}, [hasChainCase, disputeId, wallet.status, t]);
 	const conservation = useMemo(
 		() =>
 			moneyConservation(
@@ -188,34 +210,8 @@ export default function ArbitrationConsole({
 			/>
 		);
 	if (dispute === null) return null;
-	if (!dispute.viewerCanPlatformDecide)
-		return (
-			<ArbitrationState
-				icon={ShieldCheck}
-				title={
-					dispute.daoArbitration !== null && dispute.viewerRole === "arbitrator"
-						? t("请在 DAO 仲裁页提交投票")
-						: t("当前钱包没有平台仲裁权限")
-				}
-				description={
-					dispute.daoArbitration !== null && dispute.viewerRole === "arbitrator"
-						? t(
-								"DAO 小组通过独立投票形成多数裁决，不能使用平台内部的直接裁决入口。",
-							)
-						: t(
-								"发布者和 Agent 只能提交证据；平台仲裁员角色由服务端权限表验证。",
-							)
-				}
-				action={
-					dispute.daoArbitration !== null &&
-					dispute.viewerRole === "arbitrator" ? (
-						<Button size="lg" render={<Link href={{ pathname: "/dao" }} />}>
-							{t("前往 DAO 投票")}
-						</Button>
-					) : undefined
-				}
-			/>
-		);
+	// 卷宗读取权限已由 API 核验。只隐藏无权使用的裁决表单，不能把有权阅证的 DAO
+	// 成员挡在整页之外，否则“查看完整证据”链接会成为无法履行仲裁职责的死路。
 
 	return (
 		<main className="min-h-[70vh] bg-accent">
@@ -236,7 +232,7 @@ export default function ArbitrationConsole({
 						</div>
 						<span className="inline-flex items-center gap-2 rounded-full border border-destructive/20 bg-destructive-container px-3 py-1.5 font-medium text-destructive text-xs">
 							<LockKeyhole className="size-3.5" />
-							{t("资金冻结")}
+							{dispute.fundsFrozen ? t("资金冻结") : t("已完成（链上已确认）")}
 						</span>
 					</div>
 				</div>
@@ -256,7 +252,11 @@ export default function ArbitrationConsole({
 							/>
 							<Fact
 								label={t("托管总额")}
-								value={dispute.escrowAmountMinor ?? t("未读取到")}
+								value={
+									dispute.escrowAmountMinor === null
+										? t("未读取到")
+										: formatMinorAmount(dispute.escrowAmountMinor, MVP_CURRENCY)
+								}
 							/>
 						</dl>
 					</article>
@@ -285,6 +285,13 @@ export default function ArbitrationConsole({
 									<p className="mt-3 whitespace-pre-wrap text-sm leading-6">
 										{entry.description}
 									</p>
+									{entry.integrity === "mismatch" && (
+										<p role="alert" className="mt-2 text-destructive text-sm">
+											{locale === "en"
+												? "Evidence no longer matches its original commitment. Do not rely on this content."
+												: "证据与原始提交承诺不一致，请勿据此作出裁决。"}
+										</p>
+									)}
 									<p className="mt-2 text-muted-foreground text-xs">
 										{t("附件 {count} 个 · 提交者 {submitter}", {
 											count: entry.attachments.length,
@@ -302,151 +309,194 @@ export default function ArbitrationConsole({
 					</article>
 				</section>
 				<aside>
-					<div className="sticky top-24 rounded-xl border bg-card p-5">
-						<p className="font-medium text-warning text-xs">
-							{t("不可逆资金决定")}
-						</p>
-						<h2 className="mt-1 font-semibold text-xl">{t("记录仲裁结论")}</h2>
-						{dispute.decision ? (
-							<div className="mt-5 rounded-lg border bg-accent p-4">
-								<CheckCircle2 className="size-5 text-success" />
-								<p className="mt-3 font-semibold">
-									{t("决定已记录：{decision}", {
-										decision: decisionLabel(dispute.decision.type, t),
-									})}
-								</p>
-								<p className="mt-2 text-muted-foreground text-sm">
-									{dispute.decision.reason}
-								</p>
-								<p className="mt-3 text-xs">
-									{t("执行状态：")}
-									{executionStatusLabel(dispute.decision.executionStatus, t)}
-								</p>
-								{dispute.decision.executionTxHash !== null && (
-									<Link
-										href={
-											`/transactions/${dispute.decision.executionTxHash}?disputeId=${dispute.id}` as Route
-										}
-										className="mt-3 inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg font-medium text-primary text-sm transition-colors hover:text-primary/80"
-										title={dispute.decision.executionTxHash}
-									>
-										<ReceiptText className="size-4" aria-hidden />
-										{t("查看链上记录")}
-									</Link>
-								)}
-							</div>
-						) : (
-							<>
-								<label
-									className="mt-5 block font-medium text-sm"
-									htmlFor="decision-type"
-								>
-									{t("资金去向")}
-								</label>
-								<SelectField
-									id="decision-type"
-									className="mt-2"
-									value={decisionType}
-									onValueChange={(value) =>
-										selectDecision(value as DecisionType)
-									}
-									options={[
-										{ value: "refund", label: t("全额退款给发布者") },
-										{ value: "release", label: t("全额结算给 Agent") },
-										{ value: "partial_release", label: t("部分结算") },
-									]}
-								/>
-								<div className="mt-4 grid grid-cols-2 gap-3">
-									<MoneyInput
-										id="arbitration-release-amount"
-										label={t("释放给 Agent（最小单位）")}
-										value={releaseAmount}
-										onChange={setReleaseAmount}
-									/>
-									<MoneyInput
-										id="arbitration-refund-amount"
-										label={t("退给发布者（最小单位）")}
-										value={refundAmount}
-										onChange={setRefundAmount}
-									/>
-								</div>
-								<p
-									className={`mt-2 text-xs ${conservation === "valid" ? "text-success" : "text-destructive"}`}
-								>
-									{conservation === "valid"
-										? t("金额守恒校验通过")
-										: conservation === "missing"
-											? t("未读取到托管金额，不能提交")
-											: t("两项之和必须严格等于托管总额")}
-								</p>
-								<label
-									className="mt-4 block font-medium text-sm"
-									htmlFor="responsibility"
-								>
-									{t("Agent 责任")}
-								</label>
-								<SelectField
-									id="responsibility"
-									className="mt-2"
-									value={responsibility}
-									onValueChange={(value) =>
-										setResponsibility(value as typeof responsibility)
-									}
-									options={[
-										{ value: "agent_at_fault", label: t("Agent 负主要责任") },
-										{ value: "agent_not_at_fault", label: t("Agent 无责任") },
-										{ value: "shared", label: t("双方共同责任") },
-										{ value: "not_determined", label: t("无法确定") },
-									]}
-								/>
-								<label
-									className="mt-4 block font-medium text-sm"
-									htmlFor="decision-reason"
-								>
-									{t("决定依据")}
-								</label>
-								<Textarea
-									id="decision-reason"
-									className="mt-2 min-h-32"
-									value={reason}
-									onChange={(event) => setReason(event.target.value)}
-									placeholder={t("引用具体验收标准和证据，至少 10 个字符。")}
-								/>
-								<div className="mt-4 rounded-lg border border-warning/25 bg-warning/10 p-3 text-warning text-xs leading-5">
-									{t(
-										"提交只创建经审计的链上执行任务，不代表交易已经广播或确认；页面不会提前显示退款/结算完成。",
-									)}
-								</div>
-								<Button
-									variant="destructive"
-									size="lg"
-									className="mt-4 w-full"
-									disabled={
-										busy ||
-										conservation !== "valid" ||
-										reason.trim().length < 10 ||
-										dispute.evidence.length === 0
-									}
-									onClick={submitDecision}
-								>
-									{busy ? (
-										<Loader2 className="size-4 animate-spin" />
-									) : (
-										<Scale className="size-4" />
-									)}
-									{t("确认并记录仲裁决定")}
-								</Button>
-							</>
-						)}
-						{message && (
-							<p
-								role="status"
-								className="mt-4 rounded-lg border bg-accent p-3 text-sm"
-							>
-								{message}
+					{dispute.chainArbitration ? (
+						<DaoChainCasePanel
+							disputeId={dispute.id}
+							info={dispute.chainArbitration}
+							evidence={dispute.evidence}
+							settlementConfirmed={!dispute.fundsFrozen}
+							compensation={dispute.compensation}
+							onRefresh={() => {
+								getTaskDispute(dispute.id)
+									.then((next) => setState({ kind: "loaded", dispute: next }))
+									.catch((error: unknown) => setMessage(apiMessage(error, t)));
+							}}
+						/>
+					) : !dispute.viewerCanPlatformDecide ? (
+						<section className="rounded-xl border bg-card p-5">
+							<ShieldCheck className="size-5 text-primary" />
+							<h2 className="mt-3 font-semibold">
+								{dispute.viewerRole === "arbitrator"
+									? t("请在 DAO 仲裁页提交投票")
+									: locale === "en"
+										? "Your dispute dossier"
+										: "争议卷宗"}
+							</h2>
+							<p className="mt-2 text-muted-foreground text-sm leading-6">
+								{locale === "en"
+									? "Review both parties’ evidence here. Only authorized decision actions are available."
+									: "在这里查看双方证据；裁决操作按各自权限开放。"}
 							</p>
-						)}
-					</div>
+							{dispute.daoArbitration &&
+								dispute.viewerRole === "arbitrator" && (
+									<Button
+										size="lg"
+										className="mt-4 w-full cursor-pointer"
+										render={<Link href={{ pathname: "/dao" }} />}
+									>
+										{t("前往 DAO 投票")}
+									</Button>
+								)}
+						</section>
+					) : (
+						<div className="sticky top-24 rounded-xl border bg-card p-5">
+							<p className="font-medium text-warning text-xs">
+								{t("不可逆资金决定")}
+							</p>
+							<h2 className="mt-1 font-semibold text-xl">
+								{t("记录仲裁结论")}
+							</h2>
+							{dispute.decision ? (
+								<div className="mt-5 rounded-lg border bg-accent p-4">
+									<CheckCircle2 className="size-5 text-success" />
+									<p className="mt-3 font-semibold">
+										{t("决定已记录：{decision}", {
+											decision: decisionLabel(dispute.decision.type, t),
+										})}
+									</p>
+									<p className="mt-2 text-muted-foreground text-sm">
+										{dispute.decision.reason}
+									</p>
+									<p className="mt-3 text-xs">
+										{t("执行状态：")}
+										{executionStatusLabel(dispute.decision.executionStatus, t)}
+									</p>
+									{dispute.decision.executionTxHash !== null && (
+										<Link
+											href={
+												`/transactions/${dispute.decision.executionTxHash}?disputeId=${dispute.id}` as Route
+											}
+											className="mt-3 inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg font-medium text-primary text-sm transition-colors hover:text-primary/80"
+											title={dispute.decision.executionTxHash}
+										>
+											<ReceiptText className="size-4" aria-hidden />
+											{t("查看链上记录")}
+										</Link>
+									)}
+								</div>
+							) : (
+								<>
+									<label
+										className="mt-5 block font-medium text-sm"
+										htmlFor="decision-type"
+									>
+										{t("资金去向")}
+									</label>
+									<SelectField
+										id="decision-type"
+										className="mt-2"
+										value={decisionType}
+										onValueChange={(value) =>
+											selectDecision(value as DecisionType)
+										}
+										options={[
+											{ value: "refund", label: t("全额退款给发布者") },
+											{ value: "release", label: t("全额结算给 Agent") },
+											{ value: "partial_release", label: t("部分结算") },
+										]}
+									/>
+									<div className="mt-4 grid grid-cols-2 gap-3">
+										<MoneyInput
+											id="arbitration-release-amount"
+											label={t("释放给 Agent（最小单位）")}
+											value={releaseAmount}
+											onChange={setReleaseAmount}
+										/>
+										<MoneyInput
+											id="arbitration-refund-amount"
+											label={t("退给发布者（最小单位）")}
+											value={refundAmount}
+											onChange={setRefundAmount}
+										/>
+									</div>
+									<p
+										className={`mt-2 text-xs ${conservation === "valid" ? "text-success" : "text-destructive"}`}
+									>
+										{conservation === "valid"
+											? t("金额守恒校验通过")
+											: conservation === "missing"
+												? t("未读取到托管金额，不能提交")
+												: t("两项之和必须严格等于托管总额")}
+									</p>
+									<label
+										className="mt-4 block font-medium text-sm"
+										htmlFor="responsibility"
+									>
+										{t("Agent 责任")}
+									</label>
+									<SelectField
+										id="responsibility"
+										className="mt-2"
+										value={responsibility}
+										onValueChange={(value) =>
+											setResponsibility(value as typeof responsibility)
+										}
+										options={[
+											{ value: "agent_at_fault", label: t("Agent 负主要责任") },
+											{ value: "agent_not_at_fault", label: t("Agent 无责任") },
+											{ value: "shared", label: t("双方共同责任") },
+											{ value: "not_determined", label: t("无法确定") },
+										]}
+									/>
+									<label
+										className="mt-4 block font-medium text-sm"
+										htmlFor="decision-reason"
+									>
+										{t("决定依据")}
+									</label>
+									<Textarea
+										id="decision-reason"
+										className="mt-2 min-h-32"
+										value={reason}
+										onChange={(event) => setReason(event.target.value)}
+										placeholder={t("引用具体验收标准和证据，至少 10 个字符。")}
+									/>
+									<div className="mt-4 rounded-lg border border-warning/25 bg-warning/10 p-3 text-warning text-xs leading-5">
+										{t(
+											"提交只创建经审计的链上执行任务，不代表交易已经广播或确认；页面不会提前显示退款/结算完成。",
+										)}
+									</div>
+									<Button
+										variant="destructive"
+										size="lg"
+										className="mt-4 w-full"
+										disabled={
+											busy ||
+											conservation !== "valid" ||
+											reason.trim().length < 10 ||
+											dispute.evidence.length === 0
+										}
+										onClick={submitDecision}
+									>
+										{busy ? (
+											<Loader2 className="size-4 animate-spin" />
+										) : (
+											<Scale className="size-4" />
+										)}
+										{t("确认并记录仲裁决定")}
+									</Button>
+								</>
+							)}
+							{message && (
+								<p
+									role="status"
+									className="mt-4 rounded-lg border bg-accent p-3 text-sm"
+								>
+									{message}
+								</p>
+							)}
+						</div>
+					)}
 				</aside>
 			</div>
 		</main>

@@ -27,10 +27,13 @@ import { formatUnits } from "viem";
 
 import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import { useLocale } from "@/components/i18n/locale-provider";
+import SectionRefreshButton from "@/components/section-refresh-button";
 import {
+	type DaoCandidatePool,
 	type DaoCase,
 	type DaoOverview,
 	type DaoVoteInput,
+	getDaoCandidatePool,
 	getDaoOverview,
 	submitDaoVote,
 } from "@/lib/api/dao";
@@ -42,6 +45,11 @@ import {
 type ViewState =
 	| Readonly<{ kind: "idle" | "loading" }>
 	| Readonly<{ kind: "loaded"; data: DaoOverview }>
+	| Readonly<{ kind: "error"; message: string }>;
+
+type CandidatePoolViewState =
+	| Readonly<{ kind: "idle" | "loading" }>
+	| Readonly<{ kind: "loaded"; data: DaoCandidatePool }>
 	| Readonly<{ kind: "error"; message: string }>;
 
 type MembershipProgress =
@@ -59,6 +67,8 @@ export default function DaoGovernance() {
 	const { t } = useLocale();
 	const wallet = useWalletSession();
 	const [state, setState] = useState<ViewState>({ kind: "idle" });
+	const [candidatePoolState, setCandidatePoolState] =
+		useState<CandidatePoolViewState>({ kind: "idle" });
 	const [busy, setBusy] = useState<DaoMembershipCommand | "vote" | null>(null);
 	const [progress, setProgress] = useState<MembershipProgress | null>(null);
 	const [actionError, setActionError] = useState<string | null>(null);
@@ -84,12 +94,35 @@ export default function DaoGovernance() {
 		},
 		[t, wallet.status],
 	);
+	const loadCandidatePool = useCallback(
+		(signal?: AbortSignal) => {
+			setCandidatePoolState({ kind: "loading" });
+			getDaoCandidatePool(signal)
+				.then((data) => setCandidatePoolState({ kind: "loaded", data }))
+				.catch((error: unknown) => {
+					if (error instanceof DOMException && error.name === "AbortError")
+						return;
+					setCandidatePoolState({
+						kind: "error",
+						message:
+							error instanceof Error ? error.message : t("DAO 数据加载失败"),
+					});
+				});
+		},
+		[t],
+	);
 
 	useEffect(() => {
 		const controller = new AbortController();
 		load(controller.signal);
 		return () => controller.abort();
 	}, [load]);
+
+	useEffect(() => {
+		const controller = new AbortController();
+		loadCandidatePool(controller.signal);
+		return () => controller.abort();
+	}, [loadCandidatePool]);
 
 	const runMembership = async (
 		command: DaoMembershipCommand,
@@ -194,6 +227,8 @@ export default function DaoGovernance() {
 							busy={busy}
 							progress={progress}
 							error={actionError}
+							candidatePoolState={candidatePoolState}
+							onReloadCandidatePool={() => loadCandidatePool()}
 							onCommand={(command) => void runMembership(command, state.data)}
 						/>
 						<CaseList
@@ -214,12 +249,16 @@ function MembershipCard({
 	busy,
 	progress,
 	error,
+	candidatePoolState,
+	onReloadCandidatePool,
 	onCommand,
 }: Readonly<{
 	data: DaoOverview;
 	busy: DaoMembershipCommand | "vote" | null;
 	progress: MembershipProgress | null;
 	error: string | null;
+	candidatePoolState: CandidatePoolViewState;
+	onReloadCandidatePool(): void;
 	onCommand(command: DaoMembershipCommand): void;
 }>) {
 	// 资格展示完全来自服务端核验快照；本地只计算按钮可用性和冷静期提示，不自行推导
@@ -242,17 +281,12 @@ function MembershipCard({
 			<div className="grid gap-0 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
 				<div className="p-6 sm:p-8">
 					<div className="flex flex-wrap items-start justify-between gap-4">
-						<div className="flex items-start gap-4">
+						<div className="flex items-center gap-4">
 							<span className="flex size-13 items-center justify-center rounded-2xl border border-secondary/25 bg-secondary/12 text-secondary shadow-[0_0_28px_var(--brand-glow)]">
 								<Users className="size-6" aria-hidden />
 							</span>
 							<div>
-								<p className="font-mono text-[10px] text-secondary uppercase tracking-[0.2em]">
-									DAO MEMBERSHIP
-								</p>
-								<h2 className="mt-1 font-semibold text-2xl">
-									{t("仲裁成员资格")}
-								</h2>
+								<h2 className="font-semibold text-2xl">{t("仲裁成员资格")}</h2>
 							</div>
 						</div>
 						<span
@@ -393,7 +427,109 @@ function MembershipCard({
 					)}
 				</div>
 			</div>
+			<CandidatePoolSummary
+				state={candidatePoolState}
+				onReload={onReloadCandidatePool}
+			/>
 		</section>
+	);
+}
+
+function CandidatePoolSummary({
+	state,
+	onReload,
+}: Readonly<{
+	state: CandidatePoolViewState;
+	onReload(): void;
+}>) {
+	const { t } = useLocale();
+	if (state.kind !== "loaded") {
+		if (state.kind === "error") {
+			return (
+				<div className="flex flex-wrap items-center justify-between gap-3 border-primary/15 border-t bg-accent/25 px-6 py-4 sm:px-8">
+					<p className="text-muted-foreground text-sm">
+						{t("仲裁机制状态暂时无法读取")}
+					</p>
+					<Button variant="outline" onClick={onReload}>
+						<RefreshCw className="size-4" aria-hidden />
+						{t("重新加载")}
+					</Button>
+				</div>
+			);
+		}
+		return (
+			<div className="grid gap-3 border-primary/15 border-t bg-accent/25 px-6 py-5 sm:grid-cols-3 sm:px-8">
+				<Skeleton className="h-12 rounded-xl" />
+				<Skeleton className="h-12 rounded-xl" />
+				<Skeleton className="h-12 rounded-xl" />
+			</div>
+		);
+	}
+	const pool = state.data;
+	const phase =
+		pool.phase === "bootstrap"
+			? t("创始仲裁阶段")
+			: pool.phase === "mixed"
+				? t("社区过渡阶段")
+				: t("社区仲裁阶段");
+	const description =
+		pool.phase === "bootstrap"
+			? t(
+					"创始成员与现有社区成员共同进入候选池，系统仍通过 VRF 随机组成仲裁小组。",
+				)
+			: pool.phase === "mixed"
+				? t("全部合格社区成员与最多五名创始成员共同参与随机分案。")
+				: t("新案件只从合格社区成员中随机抽取，创始成员不再占用常规候选席位。");
+	return (
+		<div className="border-primary/15 border-t bg-accent/25 px-6 py-5 sm:px-8">
+			<div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+				<span className="rounded-full border border-secondary/25 bg-secondary/10 px-3 py-1.5 font-medium text-secondary text-xs">
+					{phase}
+				</span>
+				<dl className="flex flex-1 flex-wrap gap-x-6 gap-y-2 text-sm">
+					<div className="flex gap-2">
+						<dt className="text-muted-foreground">{t("已同步社区成员")}</dt>
+						<dd className="font-semibold tabular-nums">
+							{pool.communityEligibleCount} {t("名")}
+						</dd>
+					</div>
+					<div className="flex gap-2">
+						<dt className="text-muted-foreground">{t("社区仲裁启用门槛")}</dt>
+						<dd className="font-semibold tabular-nums">
+							{pool.handoffThreshold} {t("名")}
+						</dd>
+					</div>
+					<div className="flex gap-2">
+						<dt className="text-muted-foreground">{t("可用创始成员")}</dt>
+						<dd className="font-semibold tabular-nums">
+							{pool.foundingEligibleCount} {t("名")}
+						</dd>
+						<span className="text-muted-foreground" aria-hidden>
+							/
+						</span>
+						<dt className="text-muted-foreground">{t("已配置")}</dt>
+						<dd className="font-semibold tabular-nums">
+							{pool.foundingConfiguredCount} {t("名")}
+						</dd>
+					</div>
+				</dl>
+			</div>
+			<details className="group mt-4 border-primary/10 border-t pt-3">
+				<summary className="w-fit cursor-pointer font-medium text-primary text-sm">
+					{t("查看仲裁员抽取规则")}
+				</summary>
+				<div className="mt-3 space-y-2 text-muted-foreground text-sm leading-6">
+					<p>{description}</p>
+					<p>{t("平台不能按案件手选仲裁员；每轮候选名单固化后再随机抽取。")}</p>
+					<p>
+						{t(
+							"达到 {count} 名已同步社区成员后，新案件自动进入社区仲裁阶段。",
+							{ count: pool.handoffThreshold },
+						)}
+					</p>
+				</div>
+			</details>
+		</div>
 	);
 }
 
@@ -412,22 +548,22 @@ function CaseList({
 	const { t } = useLocale();
 	return (
 		<section className="overflow-hidden rounded-[28px] border border-primary/20 bg-card/80 shadow-[0_24px_80px_rgb(0_0_0/16%)]">
-			<header className="flex flex-wrap items-center justify-between gap-4 border-primary/15 border-b p-6 sm:px-8">
-				<div>
-					<p className="font-mono text-[10px] text-primary uppercase tracking-[0.18em]">
-						ASSIGNED CASES
-					</p>
-					<h2 className="mt-1 font-semibold text-2xl">{t("我的仲裁案件")}</h2>
-					<p className="mt-2 text-muted-foreground text-sm">
-						{t("这里只显示随机分配给当前钱包且已排除利益冲突的案件。")}
-					</p>
+			<header className="border-primary/15 border-b p-6 sm:px-8">
+				<div className="flex items-center justify-between gap-3">
+					<h2 className="min-w-0 font-semibold text-2xl">
+						{t("我的仲裁案件")}
+					</h2>
+					<SectionRefreshButton
+						label={t("刷新")}
+						disabled={busy}
+						onClick={onReload}
+					/>
 				</div>
-				<Button variant="ghost" onClick={onReload}>
-					<RefreshCw className="size-4" />
-					{t("刷新")}
-				</Button>
+				<p className="mt-2 text-muted-foreground text-sm">
+					{t("这里只显示随机分配给当前钱包且已排除利益冲突的案件。")}
+				</p>
 			</header>
-			{data.cases.length === 0 ? (
+			{data.cases.length === 0 && (data.chainCases?.length ?? 0) === 0 ? (
 				<div className="px-6 py-14 text-center">
 					<Scale className="mx-auto size-10 text-muted-foreground" />
 					<h3 className="mt-4 font-semibold text-lg">
@@ -439,6 +575,31 @@ function CaseList({
 				</div>
 			) : (
 				<div className="divide-y divide-primary/10">
+					{data.chainCases?.map((item) => (
+						<article
+							key={item.disputeId}
+							className="flex flex-wrap items-center justify-between gap-4 p-6 sm:px-8"
+						>
+							<div>
+								<p className="font-semibold">{item.taskTitle}</p>
+								<p className="mt-2 text-muted-foreground text-sm">
+									{t("查看完整证据")}
+								</p>
+							</div>
+							<Button
+								size="lg"
+								variant="outline"
+								className="cursor-pointer"
+								render={
+									<Link
+										href={`/workspace/disputes/${item.disputeId}` as Route}
+									/>
+								}
+							>
+								{t("查看完整证据")}
+							</Button>
+						</article>
+					))}
 					{data.cases.map((item) => (
 						<DaoCaseCard
 							key={item.roundId}

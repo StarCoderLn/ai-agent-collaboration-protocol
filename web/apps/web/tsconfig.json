@@ -39,7 +39,9 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "dev-dist/local-mvp/types/**/*.ts",
-    "dev-dist/local-mvp/dev/types/**/*.ts"
+    "dev-dist/local-mvp/dev/types/**/*.ts",
+    "dev-dist/sepolia-mvp/types/**/*.ts",
+    "dev-dist/sepolia-mvp/dev/types/**/*.ts"
   ],
   "exclude": [
     "./node_modules"

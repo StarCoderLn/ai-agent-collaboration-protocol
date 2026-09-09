@@ -21,6 +21,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import { useLocale } from "@/components/i18n/locale-provider";
+import SectionRefreshButton from "@/components/section-refresh-button";
 import {
 	getPublisherTaskStats,
 	listOwnedTasks,
@@ -180,28 +181,31 @@ export default function WorkspaceDashboard() {
 						}
 					/>
 				) : state.kind === "loaded" ? (
-					<TaskList tasks={state.tasks} />
+					<TaskList tasks={state.tasks} onReload={() => load()} />
 				) : null}
 			</div>
 		</main>
 	);
 }
 
-function TaskList({ tasks }: { tasks: readonly OwnedTaskSummary[] }) {
+function TaskList({
+	tasks,
+	onReload,
+}: Readonly<{
+	tasks: readonly OwnedTaskSummary[];
+	onReload(): void;
+}>) {
 	const { t } = useLocale();
 	return (
 		<section className="cyber-panel cyber-corner overflow-hidden rounded-2xl border">
-			<header className="flex flex-wrap items-center justify-between gap-3 border-primary/15 border-b px-5 py-4">
-				<div>
-					<h2 className="font-semibold text-lg">{t("我的任务")}</h2>
-					<p className="mt-1 text-muted-foreground text-xs">
-						{t("包含草稿、私密任务和全部交易状态，按最近更新时间排序")}
-					</p>
+			<header className="border-primary/15 border-b px-5 py-4">
+				<div className="flex items-center justify-between gap-3">
+					<h2 className="min-w-0 font-semibold text-lg">{t("我的任务")}</h2>
+					<SectionRefreshButton label={t("刷新")} onClick={onReload} />
 				</div>
-				<Button variant="ghost" onClick={() => window.location.reload()}>
-					<RefreshCw className="size-4" />
-					{t("刷新")}
-				</Button>
+				<p className="mt-1 text-muted-foreground text-xs">
+					{t("包含草稿、私密任务和全部交易状态，按最近更新时间排序")}
+				</p>
 			</header>
 			<div className="divide-y divide-primary/10">
 				{tasks.map((task) => (

@@ -26,6 +26,16 @@ const caseSchema = z.object({
 	hasVoted: z.boolean(),
 	voteCount: z.number().int().nonnegative(),
 });
+const candidatePoolSchema = z.object({
+	phase: z.enum(["bootstrap", "mixed", "community"]),
+	foundingConfiguredCount: z.number().int().nonnegative(),
+	foundingEligibleCount: z.number().int().nonnegative(),
+	communityEligibleCount: z.number().int().nonnegative(),
+	mixedThreshold: z.number().int().positive(),
+	handoffThreshold: z.number().int().positive(),
+	selection: z.literal("chainlink_vrf"),
+	measuredFrom: z.literal("confirmed_membership_sync"),
+});
 const overviewSchema = z.object({
 	chainId: integerString,
 	contractAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
@@ -33,6 +43,18 @@ const overviewSchema = z.object({
 	minimumStakeMinor: integerString,
 	membership: membershipSchema.nullable(),
 	cases: z.array(caseSchema),
+	// 新旧案件按自己的裁决权威展示，不把链上轮次塞进旧版“立即结算”的投票表单。
+	chainCases: z
+		.array(
+			z.object({
+				disputeId: z.uuid(),
+				taskId: z.uuid(),
+				taskTitle: z.string(),
+				status: z.string(),
+			}),
+		)
+		.optional(),
+	candidatePool: candidatePoolSchema,
 });
 const syncSchema = overviewSchema
 	.pick({
@@ -63,6 +85,7 @@ const voteResultSchema = z.object({
 const errorSchema = z.object({ message: z.string().min(1) }).passthrough();
 
 export type DaoOverview = z.infer<typeof overviewSchema>;
+export type DaoCandidatePool = z.infer<typeof candidatePoolSchema>;
 export type DaoCase = z.infer<typeof caseSchema>;
 export type DaoVoteInput = Readonly<{
 	decision: "release" | "partial_release" | "refund";
@@ -83,6 +106,16 @@ export async function getDaoOverview(
 		signal,
 	});
 	return parseResponse(response, overviewSchema);
+}
+
+/** 公开治理概览不携带钱包会话，也不返回候选地址、成员身份或案件。 */
+export async function getDaoCandidatePool(
+	signal?: AbortSignal,
+): Promise<DaoCandidatePool> {
+	const response = await fetch(`${BUSINESS_API_BASE_URL}/dao/candidate-pool`, {
+		signal,
+	});
+	return parseResponse(response, candidatePoolSchema);
 }
 
 /** 成员交易必须先由钱包确认，再把唯一 txHash 交给服务端核验，浏览器不上报余额或资格。 */

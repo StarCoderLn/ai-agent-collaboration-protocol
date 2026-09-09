@@ -1369,6 +1369,55 @@ describe("FormalWorkflowView", () => {
 		);
 	});
 
+	it("任务进入争议后在验收阶段仅保留历史交付和冻结提示", () => {
+		const disputeId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+		render(
+			<FormalWorkflowView
+				taskTitle="DAO 仲裁验收"
+				workflow={awaitingReviewPaperWorkflowFixture()}
+				activeDisputeId={disputeId}
+				viewMode="review"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		expect(
+			screen.getByText("任务已进入 DAO 争议，验收与结算操作已冻结"),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "查看争议详情" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", {
+				name: "验收全部阶段并结算 25 USDC",
+			}),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "发起争议" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("任务进入争议后只在结算或争议阶段提供卷宗入口", () => {
+		const disputeId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+		render(
+			<FormalWorkflowView
+				taskTitle="DAO 仲裁验收"
+				workflow={awaitingReviewPaperWorkflowFixture()}
+				activeDisputeId={disputeId}
+				viewMode="settlement"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("button", { name: "查看争议详情" }),
+		).toHaveAttribute("href", `/workspace/disputes/${disputeId}`);
+	});
+
 	it("统一结算阶段展示权威金额与资金状态且不重复分配图", () => {
 		const workflow = completedWorkflowFixture();
 		render(
@@ -1394,6 +1443,53 @@ describe("FormalWorkflowView", () => {
 			"href",
 			`/transactions/0x${"ab".repeat(32)}?taskId=${workflow.run.taskId}`,
 		);
+	});
+
+	it("任务退款后保留已验收历史，并将未验收阶段显示为随退款终止", () => {
+		const workflow = completedWorkflowFixture();
+		render(
+			<FormalWorkflowView
+				taskTitle="DAO 退款验收"
+				workflow={workflow}
+				terminalResolution="refunded"
+				viewMode="settlement"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		expect(screen.getByText("已验收")).toBeInTheDocument();
+		expect(screen.getAllByText("随任务退款终止")).toHaveLength(2);
+		expect(screen.queryByText("等待验收")).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("tab", { name: /界面设计/ }));
+		expect(screen.getByText("该阶段随任务退款终止")).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"任务退款已经完成，该阶段未通过验收，也不会再继续结算。",
+			),
+		).toBeInTheDocument();
+	});
+
+	it("普通待验收任务继续显示等待验收和托管说明", () => {
+		render(
+			<FormalWorkflowView
+				taskTitle="正常验收任务"
+				workflow={awaitingReviewPaperWorkflowFixture()}
+				viewMode="settlement"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		expect(screen.getByText("等待验收")).toBeInTheDocument();
+		expect(screen.getByText("该阶段暂无结算记录")).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"阶段产物验收后会固化成交与费用明细；资金仍保持托管，直到全部阶段完成并由发布者最终确认。",
+			),
+		).toBeInTheDocument();
 	});
 });
 

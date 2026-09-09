@@ -370,6 +370,15 @@ export const EN_MESSAGES = {
 		"Manage listed Agents, reviews, health status, configuration, and availability.",
 	"查看争议证据、托管资金和仲裁进度，确保每次处理可追溯。":
 		"Review dispute evidence, escrowed funds, and arbitration progress with a traceable record.",
+	我的奖励: "My Rewards",
+	"查看当前钱包的 YD 到账、待发放状态和奖励来源。":
+		"Review YD payments, pending payouts, and reward sources for the connected wallet.",
+	"管理我的 YD 奖励": "Manage My YD Rewards",
+	"查看当前钱包已确认到账、待发放和历史奖励记录。":
+		"Review confirmed payments, pending payouts, and reward history for the connected wallet.",
+	连接钱包查看奖励: "Connect wallet to view rewards",
+	"奖励记录与当前钱包绑定，连接后才能读取你的真实奖励数据。":
+		"Reward records belong to the connected wallet. Connect it to view your verified reward data.",
 	进入管理: "Open workspace",
 	钱包资产: "Wallet assets",
 	链上实时余额: "Live onchain balances",
@@ -703,6 +712,17 @@ export const EN_MESSAGES = {
 		"Independently review both parties' evidence, escrowed funds, and fund destination. Arbitrator roles are verified server-side; regular clients cannot issue decisions here.",
 	打开争议卷宗: "Open a dispute case",
 	"输入争议 ID": "Enter dispute ID",
+	查看争议详情: "View dispute details",
+	"任务已进入 DAO 争议，验收与结算操作已冻结":
+		"This task is in DAO dispute; approval and settlement actions are frozen",
+	"请进入争议详情查看证据、仲裁进度和最终资金结果。":
+		"Open the dispute details to review evidence, arbitration progress, and the final fund outcome.",
+	"历史交付仅供核对；请在“结算或争议”阶段继续处理。":
+		"Historical deliverables are read-only; continue in the Settlement or dispute stage.",
+	正在读取争议编号: "Loading dispute ID",
+	"争议 ID：{id}": "Dispute ID: {id}",
+	"请输入争议 ID": "Enter a dispute ID",
+	"请输入有效的争议 ID": "Enter a valid dispute ID",
 	"争议 ID 可从任务详情的状态时间线或争议发起结果中取得。":
 		"Find the dispute ID in the task timeline or the dispute submission result.",
 	核对卷宗: "Review case",
@@ -1210,6 +1230,7 @@ export const EN_MESSAGES = {
 	"继续保留当前 Agent": "Keep the current Agent",
 	"确认并查看候选 Agent": "Confirm and view Agent candidates",
 	托管操作未完成: "Escrow operation did not complete",
+	交易状态待确认: "Transaction status needs confirmation",
 	"等待 MetaMask 返回结果": "Waiting for MetaMask",
 	正在准备托管交易: "Preparing escrow transaction",
 	"正在完成 USDC 授权": "Completing USDC approval",
@@ -1313,6 +1334,7 @@ export const EN_MESSAGES = {
 	发布者证据: "Client evidence",
 	"Agent 证据": "Agent evidence",
 	补充文字证据: "Add text evidence",
+	"添加证据文件（可选）": "Add evidence file (optional)",
 	提交证据: "Submit evidence",
 	"仲裁决定：{decision}": "Arbitration decision: {decision}",
 	"链上执行：": "Onchain execution: ",
@@ -1541,6 +1563,10 @@ export const EN_MESSAGES = {
 	执行状态: "Execution status",
 	正式执行进度: "Verified execution progress",
 	该阶段暂无结算记录: "No settlement record for this stage",
+	该阶段随任务退款终止: "This stage ended when the task was refunded",
+	随任务退款终止: "Ended with task refund",
+	"任务退款已经完成，该阶段未通过验收，也不会再继续结算。":
+		"The task refund is complete. This stage was not approved and will not proceed to settlement.",
 	"阶段产物验收后，成交金额、平台服务费和 Agent 实收金额会显示在这里。":
 		"After the stage deliverable is approved, its agreed amount, platform fee, and Agent payout will appear here.",
 	阶段成交金额: "Stage agreed amount",
@@ -1851,6 +1877,27 @@ export const EN_MESSAGES = {
 	"质押并加入 DAO": "Stake and join the DAO",
 	补足质押并加入: "Top up and join",
 	"DAO 合约": "DAO contract",
+	仲裁候选池: "Arbitrator candidate pool",
+	创始仲裁阶段: "Founding arbitration phase",
+	社区过渡阶段: "Community transition phase",
+	社区仲裁阶段: "Community arbitration phase",
+	"创始成员与现有社区成员共同进入候选池，系统仍通过 VRF 随机组成仲裁小组。":
+		"Founding and current community members share the candidate pool. VRF still randomly forms every panel.",
+	"全部合格社区成员与最多五名创始成员共同参与随机分案。":
+		"All eligible community members and up to five founding members participate in random assignment.",
+	"新案件只从合格社区成员中随机抽取，创始成员不再占用常规候选席位。":
+		"New cases draw only from eligible community members. Founding members no longer occupy regular candidate seats.",
+	"平台不能按案件手选仲裁员；每轮候选名单固化后再随机抽取。":
+		"The platform cannot hand-pick arbitrators per case. Each round freezes its candidates before random selection.",
+	已同步社区成员: "Synced community members",
+	社区仲裁启用门槛: "Community arbitration threshold",
+	可用创始成员: "Available founding members",
+	名: "members",
+	查看仲裁员抽取规则: "View arbitrator selection rules",
+	仲裁机制状态暂时无法读取:
+		"Arbitration mechanism status is temporarily unavailable",
+	"达到 {count} 名已同步社区成员后，新案件自动进入社区仲裁阶段。":
+		"New cases automatically enter community arbitration after {count} synced community members are available.",
 	我的仲裁案件: "My arbitration cases",
 	"这里只显示随机分配给当前钱包且已排除利益冲突的案件。":
 		"Only cases randomly assigned to this wallet after conflict-of-interest screening appear here.",

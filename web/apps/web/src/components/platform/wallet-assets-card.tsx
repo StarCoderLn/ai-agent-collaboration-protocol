@@ -7,6 +7,7 @@ import { AlertTriangle, Coins, RefreshCw, Wallet } from "lucide-react";
 
 import { useWalletSession } from "@/components/auth/wallet-session-provider";
 import { useLocale } from "@/components/i18n/locale-provider";
+import SectionRefreshButton from "@/components/section-refresh-button";
 import {
 	getWalletAssetDirectory,
 	WalletAssetsApiError,
@@ -53,15 +54,28 @@ export default function WalletAssetsCard() {
 				className="pointer-events-none absolute -top-20 -right-16 size-48 rounded-full bg-secondary/15 blur-3xl"
 				aria-hidden
 			/>
-			<header className="relative flex items-start justify-between gap-4">
-				<div className="flex min-w-0 items-center gap-3">
+			<header className="relative flex min-w-0 items-start gap-3">
+				<div className="flex min-w-0 flex-1 items-center gap-3">
 					<span className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-secondary/20 bg-secondary/12 text-secondary shadow-[0_0_24px_color-mix(in_oklab,var(--secondary)_25%,transparent)]">
 						<Wallet className="size-5" aria-hidden />
 					</span>
-					<div className="min-w-0">
-						<h2 id="wallet-assets-title" className="font-semibold text-lg">
-							{t("钱包资产")}
-						</h2>
+					<div className="min-w-0 flex-1">
+						<div className="flex items-center justify-between gap-3">
+							<h2
+								id="wallet-assets-title"
+								className="min-w-0 font-semibold text-lg"
+							>
+								{t("钱包资产")}
+							</h2>
+							{walletAddress !== null && (
+								<SectionRefreshButton
+									label={t("刷新")}
+									ariaLabel={t("刷新钱包余额")}
+									pending={balances.isFetching}
+									onClick={() => balances.refetch()}
+								/>
+							)}
+						</div>
 						<p className="truncate text-muted-foreground text-xs">
 							{walletAddress === null
 								? t("链上实时余额")
@@ -69,22 +83,6 @@ export default function WalletAssetsCard() {
 						</p>
 					</div>
 				</div>
-				{walletAddress !== null && (
-					<Button
-						type="button"
-						variant="ghost"
-						size="icon-lg"
-						className="relative rounded-full"
-						aria-label={t("刷新钱包余额")}
-						onClick={() => balances.refetch()}
-						disabled={balances.isFetching}
-					>
-						<RefreshCw
-							className={`size-4 ${balances.isFetching ? "animate-spin" : ""}`}
-							aria-hidden
-						/>
-					</Button>
-				)}
 			</header>
 			<div className="relative mt-5">
 				{wallet.status === "checking" || wallet.status === "connecting" ? (

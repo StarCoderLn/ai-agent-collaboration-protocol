@@ -3,12 +3,14 @@
 import { Button } from "@web/ui/components/button";
 import { Input } from "@web/ui/components/input";
 import { Scale, Search } from "lucide-react";
+import { useState } from "react";
 
 import { useLocale } from "@/components/i18n/locale-provider";
 import PageBackLink from "@/components/platform/page-back-link";
 
 export default function WorkspaceDisputesPage() {
 	const { t } = useLocale();
+	const [idError, setIdError] = useState<"empty" | "invalid" | null>(null);
 	return (
 		<main className="min-h-[70vh]">
 			<section className="page-hero border-b">
@@ -42,15 +44,54 @@ export default function WorkspaceDisputesPage() {
 					</p>
 					<form
 						action="/workspace/disputes/open"
-						className="mt-5 flex flex-col gap-3 sm:flex-row"
+						className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-start"
+						noValidate
+						onSubmit={(event) => {
+							const input = event.currentTarget.elements.namedItem("id");
+							if (!(input instanceof HTMLInputElement)) return;
+
+							if (input.value.trim().length === 0) {
+								event.preventDefault();
+								setIdError("empty");
+								return;
+							}
+							if (!input.validity.valid) {
+								event.preventDefault();
+								setIdError("invalid");
+								return;
+							}
+							setIdError(null);
+						}}
 					>
-						<Input
-							name="id"
-							required
-							pattern="[0-9a-fA-F-]{36}"
-							placeholder="00000000-0000-4000-8000-000000000000"
-							className="font-mono"
-						/>
+						<div className="min-w-0 flex-1">
+							<Input
+								name="id"
+								required
+								pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"
+								placeholder="00000000-0000-4000-8000-000000000000"
+								autoComplete="off"
+								aria-invalid={idError !== null}
+								aria-describedby={
+									idError === null ? undefined : "dispute-id-error"
+								}
+								className="font-mono"
+								onChange={() => {
+									if (idError !== null) setIdError(null);
+								}}
+							/>
+							{idError !== null && (
+								<p
+									id="dispute-id-error"
+									className="mt-2 text-destructive text-sm"
+								>
+									{t(
+										idError === "empty"
+											? "请输入争议 ID"
+											: "请输入有效的争议 ID",
+									)}
+								</p>
+							)}
+						</div>
 						<Button
 							type="submit"
 							size="lg"

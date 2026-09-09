@@ -5,6 +5,7 @@ import "../index.css";
 import Footer from "@/components/footer";
 import Header from "@/components/header";
 import Providers from "@/components/providers";
+import { resolveCanonicalLocalOrigin } from "@/lib/canonical-local-origin";
 import { LOCALE_COOKIE, resolveAppLocale } from "@/lib/i18n/locale";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -23,9 +24,23 @@ export default async function RootLayout({
 }: Readonly<{
 	children: React.ReactNode;
 }>) {
-	const locale = await requestLocale();
+	const [locale, requestHeaders] = await Promise.all([requestLocale(), headers()]);
+	const canonicalLocalOrigin = resolveCanonicalLocalOrigin(
+		requestHeaders.get("host"),
+		process.env.NEXT_PUBLIC_SERVER_URL,
+	);
 	return (
 		<html lang={locale} suppressHydrationWarning>
+			{canonicalLocalOrigin !== null && (
+				<head>
+					<script
+						// 必须在 React 水合和钱包按钮可交互前统一 origin，避免错误页面发起 SIWE。
+						dangerouslySetInnerHTML={{
+							__html: `window.location.replace(${JSON.stringify(canonicalLocalOrigin)} + window.location.pathname + window.location.search + window.location.hash);`,
+						}}
+					/>
+				</head>
+			)}
 			<body className="cyber-theme antialiased">
 				<Providers initialLocale={locale}>
 					<div className="site-ambient" aria-hidden />

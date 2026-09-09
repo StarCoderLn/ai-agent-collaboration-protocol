@@ -3,6 +3,7 @@
 import {
 	ArrowUpRight,
 	Bot,
+	CircleDollarSign,
 	ListTodo,
 	type LucideIcon,
 	Scale,
@@ -16,7 +17,11 @@ import WalletAssetsCard from "@/components/platform/wallet-assets-card";
 import type { MessageId } from "@/lib/i18n/messages";
 
 type WorkspaceEntry = Readonly<{
-	href: "/workspace/tasks" | "/workspace/agents" | "/workspace/disputes";
+	href:
+		| "/workspace/tasks"
+		| "/workspace/agents"
+		| "/workspace/disputes"
+		| "/workspace/rewards";
 	title: MessageId;
 	description: MessageId;
 	icon: LucideIcon;
@@ -49,6 +54,14 @@ const workspaceEntries: readonly WorkspaceEntry[] = [
 		icon: Scale,
 		iconClassName: "bg-destructive/10 text-destructive",
 		glowClassName: "bg-destructive/15",
+	},
+	{
+		href: "/workspace/rewards",
+		title: "我的奖励",
+		description: "查看当前钱包的 YD 到账、待发放状态和奖励来源。",
+		icon: CircleDollarSign,
+		iconClassName: "bg-primary-container text-primary",
+		glowClassName: "bg-primary/20",
 	},
 ] as const;
 
@@ -83,7 +96,7 @@ export default function WorkspacePage() {
 
 				<nav
 					aria-label={t("工作台业务入口")}
-					className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-3"
+					className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4"
 				>
 					{workspaceEntries.map((entry) => (
 						<WorkspaceEntryCard key={entry.href} entry={entry} />

@@ -372,10 +372,10 @@ function TaskCard({
 				<h3 className="mt-3 font-semibold leading-6 transition-colors group-hover/card:text-primary">
 					{task.title}
 				</h3>
-				<p className="mt-1.5 line-clamp-2 text-muted-foreground text-sm leading-5.5">
+				<p className="mt-1.5 min-h-11 line-clamp-2 text-muted-foreground text-sm leading-5.5">
 					{task.description}
 				</p>
-				<div className="mt-3 flex flex-wrap gap-1.5">
+				<div className="mt-3 flex min-h-7 flex-wrap content-start gap-1.5">
 					{task.tags.slice(0, 3).map((item) => (
 						<span
 							key={item}
