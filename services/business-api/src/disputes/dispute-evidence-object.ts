@@ -34,7 +34,12 @@ export async function storeDisputeEvidenceObject(
 		now: Date;
 	}>,
 ) {
-	const context = await lockUploadContext(db, input.disputeId, input.actorId);
+	const context = await lockUploadContext(
+		db,
+		input.disputeId,
+		input.actorId,
+		input.now,
+	);
 	const id = randomUUID();
 	const mimeType = input.mimeType.toLowerCase();
 	const sha256 = digest(input.content);
@@ -196,6 +201,7 @@ async function lockUploadContext(
 	db: QueryExecutor,
 	disputeId: string,
 	actorId: string,
+	now: Date,
 ) {
 	const result = await db.query<{
 		status: string;
@@ -230,7 +236,7 @@ async function lockUploadContext(
 	}
 	if (
 		row.status !== "evidence_collection" ||
-		row.evidence_deadline.getTime() <= Date.now()
+		row.evidence_deadline.getTime() <= now.getTime()
 	) {
 		throw new DisputeEvidenceObjectError(
 			409,

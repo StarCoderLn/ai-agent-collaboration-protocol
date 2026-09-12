@@ -1,3 +1,4 @@
+import { id } from "ethers";
 import { z } from "zod";
 
 import type { PoolLike, QueryExecutor } from "../db/pool";
@@ -73,7 +74,7 @@ export class DaoCaseWorker {
         failed++;
         blockedCases.add(row.dispute_id);
         chainReadFailed ||= !snapshotRead;
-        await withTransaction(this.pool, (db) => markFailure(db, row.dispute_id, safeErrorCode(error)));
+        await withTransaction(this.pool, (db) => markFailure(db, row.dispute_id, daoCaseWorkerErrorCode(error)));
       }
     }
     // 同一 operator 共用 nonce。确认快照不可用时，本轮不能在旧状态上继续签名或重播；
@@ -139,11 +140,11 @@ export class DaoCaseWorker {
           // 未确认交易保留原始签名继续恢复；一次只广播一个 nonce，不积压未知状态的后续调用。
           break;
         } catch (error) {
-          await markFailure(connection, command.dispute_id, safeErrorCode(error));
+          await markFailure(connection, command.dispute_id, daoCaseWorkerErrorCode(error));
           // 预执行失败没有广播，不作无限快速重试；保留显式失败供运营在排除原因后重新入队。
           if (command.tx_hash === null) await connection.query(
             "UPDATE dao_case_commands SET status=CASE WHEN tx_hash IS NULL THEN 'failed' ELSE status END,error_code=$2,updated_at=now() WHERE id=$1",
-            [command.id, safeErrorCode(error)]);
+            [command.id, daoCaseWorkerErrorCode(error)]);
           break;
         }
       }
@@ -223,9 +224,45 @@ async function recordCommandReceipt(
   }
 }
 
-/** 只写稳定错误码，不把 RPC 错误中的 calldata、完整证据或供应商凭据带入日志。 */
-function safeErrorCode(error: unknown): string {
-  return error instanceof Error && /^[A-Z][A-Z0-9_]{2,79}$/.test(error.message) ? error.message : "DAO_CASE_SYNC_FAILED";
+const insufficientPoolSelector = id("InsufficientPool()").slice(0, 10).toLowerCase();
+
+/**
+ * 只把已知的 provider/合约失败映射为稳定错误码，不持久化可能包含 calldata、RPC URL
+ * 或供应商信息的原始错误。其余显式领域错误继续按原码透传，未知结构统一收敛。
+ */
+export function daoCaseWorkerErrorCode(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    if (readString(error, "code") === "INSUFFICIENT_FUNDS") return "DAO_CASE_OPERATOR_INSUFFICIENT_FUNDS";
+    const candidates = [
+      readString(error, "message"), readString(error, "shortMessage"), readString(error, "reason"),
+      readNestedString(error, "revert", "name"), readNestedString(error, "info", "error", "message"),
+      readNestedString(error, "error", "message"), readString(error, "data"),
+      readNestedString(error, "info", "error", "data"), readNestedString(error, "error", "data"),
+    ];
+    if (candidates.some((value) => value?.includes("InsufficientPool") || value?.toLowerCase().startsWith(insufficientPoolSelector))) {
+      return "DAO_REWARD_POOL_INSUFFICIENT";
+    }
+    if (candidates.some((value) => value?.toLowerCase().includes("insufficient funds"))) {
+      return "DAO_CASE_OPERATOR_INSUFFICIENT_FUNDS";
+    }
+  }
+  return error instanceof Error && /^[A-Z][A-Z0-9_]{2,79}$/.test(error.message)
+    ? error.message
+    : "DAO_CASE_SYNC_FAILED";
+}
+
+function readString(value: object, key: string): string | null {
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "string" ? candidate : null;
+}
+
+function readNestedString(value: object, ...path: readonly string[]): string | null {
+  let candidate: unknown = value;
+  for (const key of path) {
+    if (typeof candidate !== "object" || candidate === null) return null;
+    candidate = (candidate as Record<string, unknown>)[key];
+  }
+  return typeof candidate === "string" ? candidate : null;
 }
 async function markFailure(db: QueryExecutor, disputeId: string, code: string): Promise<void> {
   await db.query("UPDATE dao_chain_cases SET last_error_code=$2,updated_at=now() WHERE dispute_id=$1", [disputeId, code]);
