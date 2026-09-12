@@ -2,8 +2,9 @@ import { writeFile } from "node:fs/promises";
 
 import { describe, expect, it } from "vitest";
 
+import { renderDesignScreens } from "../src/design-renderer.js";
 import {
-  extractDesignRegionIds,
+  DesignArtifactSchema,
   RequirementsArtifactSchema,
 } from "../src/domain.js";
 import { WorkflowExecutorRouter } from "../src/executors.js";
@@ -11,8 +12,8 @@ import { DeepSeekJsonClient } from "../src/model-client.js";
 
 const runRealModel = process.env.RUN_REAL_MODEL_SMOKE === "1" ? it : it.skip;
 
-describe("真实模型 Design→Coding 链路", () => {
-  runRealModel("把同一份 DesignSpec 完整传给 Coding 并保留视觉契约", async () => {
+describe("真实模型 LangGraph Coding 链路", () => {
+  runRealModel("根据固定 DesignSpec 生成并校验完整前端制品", async () => {
     const apiKey = process.env.DEEPSEEK_API_KEY;
     if (apiKey === undefined || apiKey.length === 0) {
       throw new Error("RUN_REAL_MODEL_SMOKE=1 时必须提供 DEEPSEEK_API_KEY");
@@ -35,7 +36,7 @@ describe("真实模型 Design→Coding 链路", () => {
     });
     const requirements = RequirementsArtifactSchema.parse({
       schemaVersion: "requirements.artifact.v0.1",
-      taskId: "real-model-design-code-smoke",
+      taskId: "real-model-code-langgraph-smoke",
       title: "自由职业者项目交付工作台",
       problemStatement: "自由职业者需要在一个可信、清晰的工作台中查看项目里程碑、客户反馈、待办事项与 USDC 收款状态。",
       targetUsers: ["同时管理多个客户项目的自由职业者"],
@@ -65,55 +66,122 @@ describe("真实模型 Design→Coding 链路", () => {
       generatedBy: { agentId: "prd-direct", strategy: "direct" },
       generatedAt: new Date().toISOString(),
     });
-    const userRequest = "请设计并开发一款面向自由职业者的项目交付工作台，突出项目风险、下一步行动和 USDC 里程碑收款。";
-
-    const design = await router.run({
-      schemaVersion: "workflow.execute.v0.1",
+    const designDraft = {
+      title: "自由职业者项目交付工作台",
+      direction: "使用柔和紫色突出项目风险、下一步行动和 USDC 里程碑，让复杂交付状态可以快速浏览。",
+      tokens: {
+        primaryColor: "#7C3AED",
+        secondaryColor: "#64748B",
+        backgroundColor: "#F8FAFC",
+        textColor: "#172033",
+        borderRadius: "12px" as const,
+        spacingBase: "8px" as const,
+        fontFamily: "system-ui",
+      },
+      pages: [{
+        id: "home",
+        name: "项目总览",
+        purpose: "集中展示项目风险、待办和收款状态。",
+        sections: ["概览指标", "项目列表", "今日待办", "里程碑收款"],
+      }],
+      components: [{
+        id: "hero",
+        name: "工作台概览",
+        parentId: null,
+        responsibility: "说明当前风险和最紧急的下一步行动。",
+        states: ["正常", "有风险"],
+      }],
+      interactionRules: ["项目状态筛选立即更新列表", "勾选待办后即时显示完成状态"],
+      responsiveRules: ["移动端使用单列布局"],
+      accessibilityRules: ["按钮和筛选项具有可访问名称", "状态信息不只依赖颜色表达"],
+      assetPlan: [],
+      preview: {
+        navigation: {
+          brand: "Freelance Desk",
+          items: [{ label: "项目", active: true }, { label: "收款", active: false }],
+          action: "新建项目",
+        },
+        hero: {
+          eyebrow: "交付工作台",
+          title: "掌握风险，推进下一项工作",
+          description: "在一个页面跟踪客户反馈、今日待办和 USDC 里程碑收款。",
+          primaryAction: "查看风险项目",
+          secondaryAction: "管理待办",
+        },
+        metrics: [
+          { label: "进行中项目", value: "6", detail: "2 个需要关注", tone: "warning" as const },
+          { label: "本周应收", value: "4,800 USDC", detail: "3 个里程碑", tone: "success" as const },
+        ],
+        sections: [
+          previewSection("projects", "项目列表", "查看客户、进度、截止日期和下一步行动。"),
+          previewSection("todos", "今日待办", "完成最影响交付进度的工作。"),
+          previewSection("payments", "里程碑收款", "跟踪每笔 USDC 的验收和付款状态。"),
+          previewSection("feedback", "客户反馈", "集中处理等待回复和需要修改的内容。"),
+        ],
+      },
+    };
+    const design = DesignArtifactSchema.parse({
+      ...designDraft,
+      schemaVersion: "design.artifact.v0.4",
       taskId: requirements.taskId,
-      step: "design",
-      agentId: "design-direct",
-      userRequest,
-      requirements,
+      rendererVersion: "aicp-design-renderer.v1",
+      renderedScreens: renderDesignScreens(designDraft),
+      generatedBy: { agentId: "design-direct", strategy: "direct" },
+      generatedAt: new Date().toISOString(),
     });
-    expect(design.schemaVersion).toBe("design.artifact.v0.4");
-    if (design.schemaVersion !== "design.artifact.v0.4") {
-      throw new Error("真实设计 Agent 返回了错误制品类型");
-    }
-    const designIds = extractDesignRegionIds(design);
-    expect(designIds.length).toBeGreaterThanOrEqual(4);
-		expect(design.renderedScreens.map((screen) => screen.id)).toEqual(["desktop", "mobile"]);
+    const userRequest = "请开发一款面向自由职业者的项目交付工作台，突出项目风险、下一步行动和 USDC 里程碑收款。";
 
     const code = await router.run({
       schemaVersion: "workflow.execute.v0.1",
       taskId: requirements.taskId,
       step: "code",
-	  // 真实冒烟默认验证可靠状态机：只有 TSX 验收通过后才生成 CSS，并确保下游明确
-	  // 消费同一份页面源码。direct 与 Mastra 仍由普通契约测试覆盖，保留为效果对照。
-      agentId: "code-state-machine",
+      agentId: "code-langgraph",
       userRequest,
       requirements,
       design,
+    }, {
+      executionId: `real-model-code-langgraph-${Date.now()}`,
     });
     expect(code.schemaVersion).toBe("code.artifact.v0.1");
     if (code.schemaVersion !== "code.artifact.v0.1") {
-      throw new Error("真实 Coding Agent 返回了错误制品类型");
+      throw new Error("真实 LangGraph Coding Agent 返回了错误制品类型");
     }
-	const pageTsx = code.files.find((file) => file.path === "app/page.tsx")?.content;
-	const globalsCss = code.files.find((file) => file.path === "app/globals.css")?.content;
-		for (const color of [
-			design.tokens.primaryColor,
-			design.tokens.secondaryColor,
-			design.tokens.backgroundColor,
-			design.tokens.textColor,
-		]) expect(globalsCss?.toLowerCase()).toContain(color.toLowerCase());
-		expect(globalsCss).toMatch(/@media\s*\(/i);
-		expect(pageTsx).toContain(design.preview.hero.title);
+    const pageTsx = code.files.find((file) => file.path === "app/page.tsx")?.content;
+    const globalsCss = code.files.find((file) => file.path === "app/globals.css")?.content;
+    expect(pageTsx).toContain(design.preview.hero.title);
+    for (const color of [
+      design.tokens.primaryColor,
+      design.tokens.secondaryColor,
+      design.tokens.backgroundColor,
+      design.tokens.textColor,
+    ]) {
+      expect(globalsCss?.toLowerCase()).toContain(color.toLowerCase());
+    }
+    expect(globalsCss).toMatch(/@media\s*\(/i);
 
     const outputPath = process.env.REAL_MODEL_SMOKE_OUTPUT;
     if (outputPath !== undefined && outputPath.length > 0) {
-      // 只有显式指定临时路径时才保存虚构任务制品，便于使用平台预览器做人工视觉对比。
-      // 文件不包含 API Key，也不会默认写入仓库或让普通测试产生副作用。
+      // 只有显式指定临时路径时才保存虚构任务制品，便于检查模型真实输出。
       await writeFile(outputPath, JSON.stringify({ design, code }, null, 2), "utf8");
     }
   }, 360_000);
 });
+
+function previewSection(id: string, title: string, description: string) {
+  return {
+    id,
+    kind: "cards" as const,
+    layout: "split" as const,
+    title,
+    description,
+    items: [1, 2, 3].map((index) => ({
+      title: `${title}${index}`,
+      description: `${description} 示例 ${index}`,
+      value: index === 1 ? "需关注" : null,
+      status: index === 1 ? "风险" : "正常",
+      progress: index * 25,
+      action: "查看详情",
+      tone: index === 1 ? "warning" as const : "neutral" as const,
+    })),
+  };
+}

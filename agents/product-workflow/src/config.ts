@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const EnvironmentSchema = z.object({
+  DATABASE_URL: z.url(),
   DEEPSEEK_API_KEY: z.string().min(1),
   DEEPSEEK_BASE_URL: z.url().default("https://api.deepseek.com"),
   // 工作流要求稳定输出严格 JSON；默认使用非推理 chat 模型，避免 reasoning token
@@ -12,6 +13,7 @@ const EnvironmentSchema = z.object({
 });
 
 export type WorkflowAgentConfig = {
+  databaseUrl: string;
   apiKey: string;
   baseUrl: string;
   modelName: string;
@@ -32,6 +34,7 @@ export function loadWorkflowAgentConfig(environment: NodeJS.ProcessEnv): Workflo
   const baseUrl = normalizeBaseUrl(parsed.DEEPSEEK_BASE_URL);
   const modelName = stripProviderPrefix(parsed.WORKFLOW_AGENT_MODEL);
   return {
+    databaseUrl: parsed.DATABASE_URL,
     apiKey: parsed.DEEPSEEK_API_KEY,
     baseUrl,
     modelName,

@@ -3,7 +3,7 @@ import { z } from "zod";
 export const WorkflowStepSchema = z.enum(["requirements", "design", "code"]);
 export type WorkflowStep = z.infer<typeof WorkflowStepSchema>;
 
-export const AgentStrategySchema = z.enum(["direct", "mastra", "state-machine"]);
+export const AgentStrategySchema = z.enum(["direct", "mastra", "state-machine", "langgraph"]);
 export type AgentStrategy = z.infer<typeof AgentStrategySchema>;
 
 export const WorkflowAgentIdSchema = z.enum([
@@ -16,6 +16,7 @@ export const WorkflowAgentIdSchema = z.enum([
   "code-direct",
   "code-mastra",
   "code-state-machine",
+  "code-langgraph",
 ]);
 export type WorkflowAgentId = z.infer<typeof WorkflowAgentIdSchema>;
 
@@ -34,7 +35,7 @@ export type WorkflowAgentManifest = {
 };
 
 /**
- * 9 个候选的单一权威目录。Web 只展示这里存在且服务端能解析的 Agent ID，避免 UI
+ * 内置候选的单一权威目录。Web 只展示这里存在且服务端能解析的 Agent ID，避免 UI
  * 出现“看起来可选、实际上没有执行器”的假候选。
  */
 export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
@@ -145,6 +146,18 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     strategy: "state-machine",
     name: "可靠前端开发 Agent",
     description: "先验收页面结构，再基于已验收 TSX 生成样式；失败时只重做对应片段。",
+  },
+  {
+    id: "code-langgraph",
+    platformId: "91000000-0000-4000-8000-000000000010",
+    categoryId: "40000000-0000-4000-8000-000000000023",
+    capability: "LangGraph 持久检查点、局部恢复与前端代码生成",
+    tags: ["typescript", "next.js", "langgraph", "agent"],
+    priceMinor: "5000000",
+    step: "code",
+    strategy: "langgraph",
+    name: "LangGraph 前端开发 Agent",
+    description: "持久保存已验收页面片段，服务恢复后只继续尚未完成的生成步骤。",
   },
 ];
 

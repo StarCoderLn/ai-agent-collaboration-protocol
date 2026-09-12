@@ -28,7 +28,7 @@ const MAX_BODY_BYTES = 4 << 20;
 // 保留既有类型导入路径；协议传输类型的权威定义已经迁移到 SDK。
 export type { ApiRequest, ApiResponse } from "@aicp/agent-sdk";
 
-/** 9 个产品工作流 Agent 共用的协议边界；agentId 只在验签和输入校验后用于路由。 */
+/** 产品工作流 Agent 共用的协议边界；agentId 只在验签和输入校验后用于路由。 */
 export class WorkflowApi {
   readonly #executor: WorkflowExecutor;
   readonly #verifier: ProtocolVerifier;

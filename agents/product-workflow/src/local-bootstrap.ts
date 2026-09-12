@@ -20,7 +20,7 @@ export interface BootstrapDatabase {
 }
 
 /**
- * 把代码目录中的 9 个 Agent 以稳定 UUID 幂等写入正式平台表。脚本不保存真实密钥，
+ * 把代码目录中的内置 Agent 以稳定 UUID 幂等写入正式平台表。脚本不保存真实密钥，
  * `local-dev:` 只是 Go LocalDecryptor 可识别的 marker，实际 secret 始终来自进程环境。
  */
 export async function bootstrapLocalAgents(

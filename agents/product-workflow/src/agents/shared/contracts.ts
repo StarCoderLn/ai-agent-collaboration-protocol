@@ -6,6 +6,8 @@ import type { JsonModelClient } from "../../model-client.js";
 
 export type RunContext = Readonly<{
   signal?: AbortSignal;
+  /** 平台一次实际执行的稳定标识；持久执行器不得退化为 taskId，否则返工会复用旧检查点。 */
+  executionId?: string;
   // 正式平台只在节点已经执行失败后设置恢复模式；执行器据此避免重复分析上游制品。
   recoveryMode?: boolean;
 }>;
@@ -15,7 +17,7 @@ export interface WorkflowExecutor {
   run(input: WorkflowExecutionInput, context?: RunContext): Promise<WorkflowArtifact>;
 }
 
-/** 九个 Agent 共用的基础设施依赖，不包含任何 Agent 自己的步骤或策略决策。 */
+/** 内置 Agent 共用的基础设施依赖，不包含任何 Agent 自己的步骤或策略决策。 */
 export type WorkflowAgentDependencies = Readonly<{
   jsonClient: JsonModelClient;
   mastraModel: MastraModelConfig;

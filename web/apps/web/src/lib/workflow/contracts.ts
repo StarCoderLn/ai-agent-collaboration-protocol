@@ -13,6 +13,7 @@ export const WorkflowAgentIdSchema = z.enum([
 	"code-direct",
 	"code-mastra",
 	"code-state-machine",
+	"code-langgraph",
 ]);
 export type WorkflowAgentId = z.infer<typeof WorkflowAgentIdSchema>;
 
@@ -81,6 +82,13 @@ export const WORKFLOW_AGENT_CATALOG = [
 		description:
 			"先验收页面结构，再基于已验收 TSX 生成样式；失败时只重做对应片段。",
 	},
+	{
+		id: "code-langgraph",
+		step: "code",
+		strategy: "LangGraph 编排",
+		name: "LangGraph 前端开发 Agent",
+		description: "持久保存已验收页面片段，恢复后只继续未完成的生成步骤。",
+	},
 ] as const satisfies readonly {
 	id: WorkflowAgentId;
 	step: WorkflowStep;
@@ -93,7 +101,7 @@ const Text = z.string().min(1);
 const GeneratedBySchema = z
 	.object({
 		agentId: WorkflowAgentIdSchema,
-		strategy: z.enum(["direct", "mastra", "state-machine"]),
+		strategy: z.enum(["direct", "mastra", "state-machine", "langgraph"]),
 	})
 	.strict();
 

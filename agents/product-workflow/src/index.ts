@@ -1,3 +1,5 @@
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+
 import { WorkflowApi } from "./api.js";
 import { loadWorkflowAgentConfig } from "./config.js";
 import { WorkflowExecutorRouter } from "./executors.js";
@@ -12,10 +14,14 @@ const jsonClient = new DeepSeekJsonClient({
   modelName: config.modelName,
   timeoutMs: config.modelStepTimeoutMs,
 });
+const langGraphCheckpointer = PostgresSaver.fromConnString(config.databaseUrl, { schema: "langgraph" });
+// 官方 setup 自带版本表并可重复执行；独立 schema 避免把框架表混入业务 migration 权威范围。
+await langGraphCheckpointer.setup();
 const executor = new WorkflowExecutorRouter({
   jsonClient,
   mastraModel: config.mastraModel,
   modelStepTimeoutMs: config.modelStepTimeoutMs,
+  langGraphCheckpointer,
 });
 const api = new WorkflowApi({
   secret: config.secret,
@@ -37,6 +43,7 @@ const shutdown = (signal: NodeJS.Signals) => {
       console.error("workflow agent graceful shutdown failed");
       process.exitCode = 1;
     }
+    void langGraphCheckpointer.end();
   });
 };
 

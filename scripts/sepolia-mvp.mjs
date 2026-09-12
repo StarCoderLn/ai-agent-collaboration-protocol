@@ -92,6 +92,7 @@ async function main() {
 				WORKFLOW_AGENT_SECRET: agentSecret,
 				WORKFLOW_AGENT_HOST: "127.0.0.1",
 				WORKFLOW_AGENT_PORT: String(PORTS.workflow),
+				DATABASE_URL,
 			},
 		},
 	);
@@ -148,6 +149,12 @@ async function main() {
 				paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
 			AGENT_ADMISSION_EVALUATOR_MODEL:
 				process.env.AGENT_ADMISSION_EVALUATOR_MODEL ?? "deepseek-chat",
+			AGENT_ADMISSION_ENGINE:
+				process.env.AGENT_ADMISSION_ENGINE ?? "postgres",
+			TEMPORAL_ADDRESS: process.env.TEMPORAL_ADDRESS ?? "127.0.0.1:7233",
+			TEMPORAL_NAMESPACE: process.env.TEMPORAL_NAMESPACE ?? "default",
+			TEMPORAL_ADMISSION_TASK_QUEUE:
+				process.env.TEMPORAL_ADMISSION_TASK_QUEUE ?? "aicp-agent-admission-v1",
 		},
 	});
 	await waitForService(dispatch, "Dispatch Engine", `${URLS.dispatch}/health`);

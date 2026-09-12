@@ -8,7 +8,7 @@ const ShortText = NonEmptyText.max(500);
 const GeneratedBySchema = z
   .object({
     agentId: WorkflowAgentIdSchema,
-    strategy: z.enum(["direct", "mastra", "state-machine"]),
+    strategy: z.enum(["direct", "mastra", "state-machine", "langgraph"]),
   })
   .strict();
 

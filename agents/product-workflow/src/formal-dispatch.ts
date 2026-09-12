@@ -251,6 +251,9 @@ export class FormalDispatchService {
       const input = adaptFormalTask(context, this.#now(), reworkFeedback);
       artifact = await this.#executor.run(input, {
         recoveryMode: context.dispatch.workflow?.recoveryMode ?? false,
+        // assignmentId 在节点恢复时保持稳定，返工 suffix 随状态版本变化。该组合让
+        // 执行失败重试复用检查点，同时保证新的返工轮次不会读到旧产物。
+        executionId: `${context.agentId}:${context.dispatch.assignmentId}:${suffix}`,
       });
     } catch (error) {
       const failureCode = classifyWorkflowExecutionFailure(error);

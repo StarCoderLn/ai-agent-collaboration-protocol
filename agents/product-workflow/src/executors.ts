@@ -1,6 +1,8 @@
 import type { MastraModelConfig } from "@mastra/core/llm";
+import { MemorySaver, type BaseCheckpointSaver } from "@langchain/langgraph";
 
 import { CodingDirectAgent } from "./agents/coding/direct-agent.js";
+import { CodingLangGraphAgent } from "./agents/coding/langgraph-agent.js";
 import { CodingMastraAgent } from "./agents/coding/mastra-agent.js";
 import { CodingStateMachineAgent } from "./agents/coding/state-machine-agent.js";
 import { DesignDirectAgent } from "./agents/design/direct-agent.js";
@@ -15,6 +17,7 @@ import type { WorkflowArtifact, WorkflowExecutionInput } from "./domain.js";
 import type { JsonModelClient } from "./model-client.js";
 
 export type { RunContext, WorkflowExecutor } from "./agents/shared/contracts.js";
+export { LangGraphCodingFlow } from "./agents/coding/langgraph-coding-flow.js";
 
 /**
  * 路由器只按稳定 Agent ID 选择实现。每个 Agent 的步骤、策略和模型调用顺序都在自己的
@@ -28,6 +31,7 @@ export class WorkflowExecutorRouter implements WorkflowExecutor {
     mastraModel: MastraModelConfig;
     modelStepTimeoutMs: number;
     now?: () => Date;
+    langGraphCheckpointer?: BaseCheckpointSaver;
   }) {
     const dependencies = {
       jsonClient: options.jsonClient,
@@ -45,6 +49,10 @@ export class WorkflowExecutorRouter implements WorkflowExecutor {
       "code-direct": new CodingDirectAgent(dependencies),
       "code-mastra": new CodingMastraAgent(dependencies),
       "code-state-machine": new CodingStateMachineAgent(dependencies),
+      "code-langgraph": new CodingLangGraphAgent(
+        dependencies,
+        options.langGraphCheckpointer ?? new MemorySaver(),
+      ),
     };
   }
 

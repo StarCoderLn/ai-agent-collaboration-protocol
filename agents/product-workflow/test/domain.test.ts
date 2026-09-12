@@ -13,15 +13,17 @@ import {
 } from "../src/domain.js";
 
 describe("workflow domain contracts", () => {
-  it("publishes exactly three distinct strategies for every workflow step", () => {
-    for (const step of ["requirements", "design", "code"] as const) {
+  it("keeps the three baseline strategies and publishes LangGraph as an independent coding candidate", () => {
+    for (const step of ["requirements", "design"] as const) {
       const candidates = WORKFLOW_AGENT_CATALOG.filter((agent) => agent.step === step);
       expect(candidates).toHaveLength(3);
       expect(new Set(candidates.map((agent) => agent.strategy))).toEqual(
         new Set(["direct", "mastra", "state-machine"]),
       );
     }
-    expect(new Set(WORKFLOW_AGENT_CATALOG.map((agent) => agent.id))).toHaveLength(9);
+    const coding = WORKFLOW_AGENT_CATALOG.filter((agent) => agent.step === "code");
+    expect(coding.map((agent) => agent.strategy)).toEqual(["direct", "mastra", "state-machine", "langgraph"]);
+    expect(new Set(WORKFLOW_AGENT_CATALOG.map((agent) => agent.id))).toHaveLength(10);
   });
 
   it("keeps platform test pricing affordable while preserving tier order", () => {
@@ -37,7 +39,7 @@ describe("workflow domain contracts", () => {
     expect(pricesByStep).toEqual({
       requirements: [1_500_000n, 2_000_000n, 3_000_000n],
       design: [2_000_000n, 3_000_000n, 4_000_000n],
-      code: [3_000_000n, 4_000_000n, 5_000_000n],
+      code: [3_000_000n, 4_000_000n, 5_000_000n, 5_000_000n],
     });
   });
 
