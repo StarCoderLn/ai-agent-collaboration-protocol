@@ -1,10 +1,10 @@
 # Product Workflow Agents
 
-这个包提供 PRD、产品设计、Coding 三个步骤，每个步骤各有三个可比较的 Agent。
-九个 Agent 共用协议验签、模型客户端、制品 Schema 和正式回调，但每个 Agent 的执行顺序
+这个包提供 PRD、产品设计、Coding 三个步骤；PRD 与设计各有三个候选，Coding 增加一个
+可持久恢复的 LangGraph 候选。十个 Agent 共用协议验签、模型客户端、制品 Schema 和正式回调，但每个 Agent 的执行顺序
 都保存在独立文件中。平台通过稳定 `agentId` 派发，不按显示名称或目录名猜测实现。
 
-## 九个 Agent 的核心代码
+## 十个 Agent 的核心代码
 
 | 步骤 | Agent ID | 用户看到的名称 | 实现方式 | 核心文件 |
 | --- | --- | --- | --- | --- |
@@ -17,17 +17,35 @@
 | Coding | `code-direct` | 快速代码生成 Agent | DeepSeek 直接生成 TSX | `src/agents/coding/direct-agent.ts` |
 | Coding | `code-mastra` | Mastra 编程 Agent | Mastra 规划后生成 TSX | `src/agents/coding/mastra-agent.ts` |
 | Coding | `code-state-machine` | 可靠前端开发 Agent | TSX 验收、CSS 继承、分段局部修复 | `src/agents/coding/state-machine-agent.ts` |
+| Coding | `code-langgraph` | LangGraph 前端开发 Agent | PostgreSQL checkpoint、条件修复、断点续跑 | `src/agents/coding/langgraph-agent.ts` |
 
 ## 共享边界
 
-- `src/catalog.ts`：九个 Agent 的稳定 ID、名称、标签、价格和平台 UUID，是目录信息的单一权威来源。
+- `src/catalog.ts`：十个 Agent 的稳定 ID、名称、标签、价格和平台 UUID，是目录信息的单一权威来源。
 - `src/executors.ts`：只按 `agentId` 路由到上表文件，不包含任何模型执行分支。
-- `src/agents/shared/contracts.ts`：九个实现共同遵守的窄执行接口和输入防御检查。
+- `src/agents/shared/contracts.ts`：十个实现共同遵守的窄执行接口和输入防御检查。
 - `src/agents/shared/model-steps.ts`：Mastra 结构化输出与自研状态机共用的模型调用边界。
 - `src/model-client.ts`：DeepSeek HTTP、超时、JSON 与源码解析、代码安全和视觉继承校验；可靠前端开发 Agent 会分别验收 TSX 与 CSS，只重试失败片段。
 - `src/design-renderer.ts`：把已验证 DesignSpec 确定性渲染为桌面与移动 SVG 设计稿。
 - `src/formal-dispatch.ts`：正式任务的 202 接单、ack、进度、结果与返工回调。
 - `src/domain.ts`：PRD、设计和代码制品的 Zod Schema 与可信元数据装配。
+
+## LangGraph Coding Agent
+
+`src/agents/coding/langgraph-coding-flow.ts` 提供独立的 LangGraph 1.4.15 Coding 执行图。
+它复用现有模型客户端、提示词和代码可信校验，把 TSX 与 CSS 生成为两个可检查节点；
+校验失败只重做对应片段，供应商故障后可以用同一个 `thread_id` 从 checkpointer 继续，
+不会重新生成已经通过的 TSX。
+
+正式服务使用官方 PostgreSQL checkpointer 的独立 `langgraph` schema，并以 assignment 与
+执行轮次构造稳定 `thread_id`。`code-langgraph` 使用独立平台 UUID，不会隐藏替换现有候选；
+测试才使用进程内 `MemorySaver`。真实 PostgreSQL 验收已证明关闭旧连接后可以继续 CSS，
+不会重新生成已验收 TSX。
+
+真实模型验收使用平台确定性构造并校验过的 DesignSpec，只执行 `code-langgraph`，避免把
+Design Agent 的模型调用和效果混入 Coding 结论。2026-09-12 的受控 DeepSeek 冒烟已生成
+完整 TSX 与 CSS，并通过设计标题、颜色 token、响应式规则和可信源码边界；测试产物只写入
+系统临时目录，普通测试默认跳过该付费用例。
 
 2026-09-06 起，新软件任务默认只执行设计与 Coding，独立 PRD 服务仍可正常接单，
 但不作为普通任务的收费前置。设计节点读取 `TaskContract`，Coding 读取原始任务与完整
@@ -46,7 +64,7 @@ DesignSpec；内部 `task.requirements.v1` 明确表示原始任务，不伪造�
 
 ## 为什么仍然是一个 package
 
-这些 Agent 使用同一套接入协议和部署生命周期。保留单 package 可以避免复制九份密钥、
+这些 Agent 使用同一套接入协议和部署生命周期。保留单 package 可以避免复制十份密钥、
 端口、协议验签和回调实现；按步骤和 Agent 拆分核心文件，则让实现可独立阅读、测试和替换。
 后续若某个 Agent 需要独立扩缩容，可以保持相同协议端点和 ID，将对应实现迁移为独立服务。
 

@@ -1,16 +1,18 @@
 <div align="center">
   <img src="https://cdn.jsdelivr.net/gh/StarCoderLn/ai-agent-collaboration-protocol@main/web/apps/web/src/app/icon.svg" width="88" alt="AICP Logo" />
-  <h1>AICP</h1>
-  <p><strong>让不同 AI Agent 像一支可验收、可结算的团队协作。</strong></p>
+  <h1>AICP · AI Agent Marketplace</h1>
+  <p><strong>Discover. Orchestrate. Deliver. Settle.</strong></p>
   <p>
-    发布一个需求，平台负责发现与匹配 Agent、编排多阶段执行、展示真实交付物，
-    并通过 USDC 托管、最终统一结算和 DAO 仲裁保护协作双方。
+    面向真实交付的 AI Agent 市场、协作协议与可信结算层。<br />
+    从发现 Agent、组合工作流到验收交付、结算 USDC，
+    将一次多 Agent 协作变成可追踪、可恢复、可审计的完整执行链。
   </p>
   <p>
-    <a href="#快速体验">快速体验</a> ·
+    <a href="#产品全景">产品全景</a> ·
+    <a href="#快速体验">本地运行</a> ·
     <a href="#第三方-agent-接入">接入 Agent</a> ·
-    <a href="./docs/prd.md">产品文档</a> ·
-    <a href="./docs/agent-protocol.md">协议规格</a>
+    <a href="./docs/agent-protocol.md">开放协议</a> ·
+    <a href="./docs/prd.md">产品文档</a>
   </p>
 
   <p>
@@ -23,6 +25,8 @@
   </p>
   <p>
     <img src="https://img.shields.io/badge/Mastra-1.61.0-7C3AED" alt="Mastra 1.61.0" />
+    <img src="https://img.shields.io/badge/LangGraph-1.4.15-1C3C3C" alt="LangGraph 1.4.15" />
+    <img src="https://img.shields.io/badge/Temporal-1.48.0-141414" alt="Temporal Go SDK 1.48.0" />
     <img src="https://img.shields.io/badge/DeepSeek-Model_API-4D6BFE" alt="DeepSeek Model API" />
     <img src="https://img.shields.io/badge/Solidity-0.8.30-363636?logo=solidity&amp;logoColor=white" alt="Solidity 0.8.30" />
     <img src="https://img.shields.io/badge/Foundry-Contracts-F97316" alt="Foundry" />
@@ -30,21 +34,44 @@
     <img src="https://img.shields.io/badge/viem-2-F5C542" alt="viem 2" />
   </p>
   <p>
-    <img src="https://img.shields.io/badge/status-local%20MVP%20%2B%20Sepolia%20DAO-7C3AED" alt="Local MVP and Sepolia DAO" />
+    <img src="https://img.shields.io/badge/Product-Agent_Marketplace-7C3AED" alt="AI Agent Marketplace" />
+    <img src="https://img.shields.io/badge/Sepolia-End--to--End_Verified-238636" alt="Sepolia end-to-end verified" />
+    <img src="https://img.shields.io/badge/Workflow-Durable_Recovery-2563EB" alt="Durable workflow recovery" />
   </p>
 </div>
 
-## AICP 是什么
+## 不只是 Agent 列表，而是完整的交易与交付网络
 
-AICP（AI Agent Collaboration Protocol）是一个连接任务发布者与独立 AI Agent 的任务协作平台。
-它不只提供一份 Agent 列表，而是把一次真实协作需要的环节连成可追踪闭环：
+AICP（AI Agent Collaboration Protocol）是一个连接需求方、Agent 提供者与独立仲裁者的
+AI Agent Marketplace。平台把自然语言需求拆成可执行工作流，为每个阶段推荐合适的 Agent，
+并用版本化制品、USDC 托管和可验证争议处理连接从交易意图到最终交付的全过程。
 
-- **对任务发布者：** 用自然语言发布需求，比较平台推荐的 Agent，在清晰的预览中检查文档、设计稿、图片、视频或网站交付物，再决定验收或返工。
-- **对 Agent 提供者：** 保留自己的模型、框架和运行环境，通过统一协议接入平台，获得匹配的任务和 USDC 收入。
-- **对协作双方：** 用可解释匹配、过程事件、USDC 托管、原子多 Agent 结算、评分与 DAO 争议仲裁建立可验证的信任链路。
+| 市场层 | 执行层 | 信任与结算层 |
+| --- | --- | --- |
+| Agent 发现、上架、自动准入、能力与价格比较 | 多 Agent DAG、制品继承、LangGraph 局部恢复、Temporal 持久流程 | USDC Escrow、原子分账、声誉评分、YD DAO 仲裁 |
+
+- **需求方：** 用自然语言发布目标，比较平台推荐的 Agent，在统一预览中检查文档、设计稿、图片、视频或网站，再决定验收、返工或发起争议。
+- **Agent 提供者：** 保留自己的模型、框架和运行环境，通过开放协议进入市场，获得匹配任务、履约声誉和 USDC 收入。
+- **平台与仲裁者：** 用可解释匹配、过程事件、原子多 Agent 结算和链上裁决建立可验证的协作记录。
 
 第三方 Agent 始终运行在提供者自己的服务器上。平台负责协议、安全调用、任务状态和资金流程，
 不会要求提供者把 Agent 源码或模型交给平台。
+
+## 产品全景
+
+```mermaid
+flowchart LR
+    U[发布自然语言需求] --> M[Agent Marketplace<br/>发现 · 比较 · 选择]
+    M --> E[USDC Escrow<br/>锁定报价与任务关系]
+    E --> W[多 Agent Workflow<br/>设计 · Coding · 专业服务]
+    W --> A[验收真实交付物]
+    A -->|通过| S[原子结算与声誉沉淀]
+    A -->|争议| D[YD DAO 仲裁与链上执行]
+```
+
+市场负责找到合适的 Agent，工作流负责让多个 Agent 继承同一份已验收上下文，托管合约负责
+锁定交易承诺，DAO 则为失败协作提供公开、可追溯的退出路径。四层通过稳定 ID、幂等事件和
+版本化制品连接，同时保持 Agent 实现、平台业务状态和链上资金事实彼此独立。
 
 ## 一次任务如何完成
 
@@ -74,8 +101,9 @@ Coding 开发实现
 责任争议率和五维评分。案例会明确标记为“平台已验证交付”或“Agent 自行提供”，避免把自述
 材料当成平台履约记录。用户为所有阶段选定 Agent 后，平台才汇总冻结报价并给出准确托管额。
 
-每个阶段都有 **DeepSeek 直连、Mastra 编排、自研状态机** 三种候选实现，但一次节点只执行
-用户选定的一个 Agent。托管确认后，平台按依赖关系派发；上游已验收的完整制品会成为下游
+PRD 与设计阶段各有 **DeepSeek 直连、Mastra 编排、自研状态机** 三种候选；Coding 另有
+使用 StateGraph 与 PostgreSQL checkpoint 的 `code-langgraph`。一次节点只执行用户选定的
+一个 Agent。托管确认后，平台按依赖关系派发；上游已验收的完整制品会成为下游
 输入，避免每个 Agent 重新猜测需求，也不会为了比较候选而自动产生三倍模型费用。
 
 ## 核心能力
@@ -119,9 +147,14 @@ AICP 将用户界面、业务事实、任务派发、Agent 执行与链上资金
 | --- | --- | --- |
 | Web | Next.js 16、React 19、TypeScript strict、Tailwind CSS | 用户界面、钱包交互、制品隔离预览 |
 | 业务 API | Next.js Route Handlers、Zod、PostgreSQL、SIWE | 任务、Agent、工作流、评分、争议和审计 |
-| 派发引擎 | Go | 候选匹配、原子分配、协议签名、幂等、重试与回调 |
-| Agent | DeepSeek、Mastra、OpenAlex、PptxGenJS、自研状态机 | PRD、设计、Coding、图片、PPT 和论文写作等真实执行能力 |
+| 派发引擎 | Go、Temporal Go SDK | 候选匹配、原子分配、协议签名、幂等、重试，以及可恢复的自动准入编排 |
+| Agent | DeepSeek、Mastra、LangGraph、OpenAlex、PptxGenJS、自研状态机 | PRD、设计、Coding、图片、PPT 和论文写作等真实执行能力 |
 | 链与钱包 | Solidity、Foundry、wagmi、viem | USDC 托管、原子多 Agent 结算、DAO 质押、退款和钱包连接 |
+
+LangGraph Coding Agent 使用 PostgreSQL 检查点完成条件分支、局部修复和服务恢复；Temporal
+可通过独占运行模式接管三次沙箱、质量评测和生命周期迁移。业务页面继续读取 PostgreSQL
+权威事实，资金结果继续以已确认智能合约事件为准。启用方式与真实恢复证据见
+[LangGraph 与 Temporal 编排说明](./docs/langgraph-temporal-orchestration.md)。
 
 ## 快速体验
 
@@ -191,7 +224,7 @@ DATABASE_URL="$DATABASE_URL" node scripts/local-mvp.mjs
 
 1. 启动项目私有的 loopback Anvil 链，并从 `.local/anvil/state.json` 恢复上次状态；
 2. 首次启动时部署测试 USDC 与 Escrow、准备测试资产，后续启动复用原合约和余额；
-3. 注册 9 个 PRD、设计与 Coding Agent；
+3. 注册 10 个 PRD、设计与 Coding Agent；
 4. 启动 Product Workflow Agent、Business API、Go Dispatch Engine 和 Web；
 5. 在所有健康检查通过后输出 [http://localhost:3001](http://localhost:3001)。
 
@@ -297,9 +330,10 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 - [设计系统](./docs/DESIGN.md) — 品牌、布局、组件和响应式规范
 - [Agent 接入协议](./docs/agent-protocol.md) — 默认快速 HTTP JSON 与高级 AICP HMAC 接入契约
 - [正式工作流制品契约](./docs/workflow-artifacts.md) — 上下游输入继承、阶段验收和最终统一结算
+- [LangGraph 与 Temporal 编排说明](./docs/langgraph-temporal-orchestration.md) — StateGraph、PostgreSQL checkpoint、Temporal 自动准入和部署边界
 - [DAO 奖励与链上仲裁](./docs/dao-chain-arbitration.md) — Sepolia 部署、真实案件证据、资金边界和剩余上线条件
 - [DAO 仲裁任务清单](./specs/13.dispute-and-arbitration/tasks.md) — 已完成项、外部验收项和当前权威状态
-- [Agent SDK 与平台自建 Agent](./agents/README.md) — 接入 SDK、九个产品工作流 Agent 与图片/PPT/论文 Agent
+- [Agent SDK 与平台自建 Agent](./agents/README.md) — 接入 SDK、十个产品工作流 Agent 与图片/PPT/论文 Agent
 - [工程方法论](./docs/engineering-philosophy.md) — 项目工程决策与验证原则
 - [开发计划](./specs/PLAN.md) — Feature 边界、依赖和当前任务状态
 

@@ -1,0 +1,61 @@
+# LangGraph 与 Temporal 编排边界
+
+项目采用分层编排：LangGraph 管理单个 Agent 内部的不确定执行图，Temporal 管理跨服务、可长时间运行的业务步骤。PostgreSQL 保存任务与准入业务事实，智能合约保存资金最终事实；页面不会从 checkpoint 或 Temporal History 猜测业务状态。
+
+## LangGraph Coding Agent
+
+`agents/product-workflow/src/agents/coding/langgraph-agent.ts` 是正式候选 `code-langgraph`，使用独立平台 UUID。内部图把 TSX 与 CSS 分为两个节点，可信输出失败只局部重做一次；基础设施失败后从最后一个成功检查点继续。
+
+正式服务使用 `@langchain/langgraph-checkpoint-postgres`，框架表位于独立 `langgraph` schema。线程键由 Agent、assignment 和执行/返工轮次组成：网络重放与执行恢复复用同一检查点，新返工不会读取旧产物。启动时会幂等执行官方 checkpoint migration。
+
+内部实现使用 `StateGraph`、`Annotation.Root`、`START`、`END` 和条件边表达两段生成。
+`MemorySaver` 只用于无需数据库的单元测试；正式服务和跨进程恢复均使用 `PostgresSaver`。
+
+## Temporal 自动准入
+
+`services/dispatch-engine/internal/temporaladmission` 已接入 Dispatch Engine 组合根。三次沙箱、质量评测、生命周期迁移和失败释放分别位于 Activity；每项具有稳定 Activity ID，并继续使用现有 PostgreSQL 幂等键。
+
+运行模式只有一个生效：
+
+```bash
+# 原 PostgreSQL 租约 Worker
+AGENT_ADMISSION_ENGINE=postgres
+
+# Temporal Starter 与 Worker
+AGENT_ADMISSION_ENGINE=temporal
+TEMPORAL_ADDRESS=127.0.0.1:7233
+TEMPORAL_NAMESPACE=default
+TEMPORAL_ADMISSION_TASK_QUEUE=aicp-agent-admission-v1
+```
+
+`AGENT_ADMISSION_ENABLED=false` 会关闭两种入口。Temporal 模式连接失败时 Dispatch Engine 启动失败，不会静默退回 PostgreSQL Worker。Workflow 最长运行一小时，数据库领取租约为两小时，避免活跃 Workflow 被第二个 Starter 重领；启动失败和 Activity 最终失败会释放原租约。
+
+技术失败仍完成三道低成本沙箱题，以便提供者一次获得完整诊断。评测 Activity 复用 `sandboxadmission.Worker` 的唯一技术门禁：技术不通过时只保存确定性结果，不调用 DeepSeek。只有质量通过才迁移 Agent 生命周期；无论通过与否都会结束数据库轮次。
+
+## 当前可用性与部署口径
+
+LangGraph 和 Temporal 的代码接入、本机真实服务运行及中断恢复验收均已完成。面试演示使用
+本机 Temporal CLI Dev Server 即可：面试官通过屏幕共享查看 Web UI，不需要开放 `7233`
+端口，也不依赖 AWS 或 Temporal Cloud。完整本地启动前先运行 Temporal Dev Server，再将
+`AGENT_ADMISSION_ENGINE` 设置为 `temporal`。
+
+线上业务不能长期依赖个人电脑上的 Temporal Server。首次部署可以继续使用默认
+`AGENT_ADMISSION_ENGINE=postgres`；需要在线启用 Temporal 时，再选择 Temporal Cloud 或
+把开源 Temporal Server 部署到线上。Temporal Cloud 是付费托管服务；AWS 自托管还需要
+数据库、备份、监控和升级，二者均属于上线运维范围，不影响当前开发完成状态。
+
+## 已执行的真实验证
+
+- Product Workflow 普通回归 71 项通过，真实模型与 PostgreSQL 恢复 2 项集成用例默认跳过；
+  TypeScript 检查与构建通过。
+- 经单独授权后，`code-langgraph` 使用固定合法 DesignSpec 完成一次真实 DeepSeek 冒烟：生成
+  `app/page.tsx` 与 `app/globals.css`，并通过标题、四个颜色 token、响应式规则和可信源码校验。
+  该用例没有调用 Design Agent，测试输出仅写入系统临时目录。
+- PostgreSQL checkpointer 在关闭第一组连接后由新连接恢复 CSS，TSX 调用次数保持为 0。
+- Product Workflow 正式服务初始化 checkpoint schema 后，`/livez` 返回 200，目录返回 `code-langgraph`，共 10 个候选。
+- Temporal CLI 1.8.3 / Server 1.31.2 真实启动；第二个 Activity 执行时停止 Worker 和 Server，使用同一 SQLite 历史库重启后完成剩余步骤，第一个 Activity 未重跑。
+- Dispatch Engine 全量 Go 测试通过；真实恢复测试默认跳过，需显式设置 `AICP_TEMPORAL_DEV_SERVER_TEST=1`，下载目录使用测试临时目录并在结束后清理。
+
+除明确标注的单次 Coding 冒烟外，其余恢复验证不调用 DeepSeek。所有验证均不连接 AWS、
+不修改链上状态。本机面试演示方案已经确定；线上 Temporal 选用 Cloud、自托管或其他部署
+方式仍是上线前的运维决策，需补充监控、备份、容量和费用评估。

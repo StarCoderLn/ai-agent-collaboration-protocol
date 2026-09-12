@@ -1,8 +1,8 @@
 # 开发计划索引
 
-## 本次 PRD（2026-08-20）切分为 16 个 feature
+## 本次 PRD（2026-08-20）切分及后续技术增强
 
-来源需求文档：`docs/prd.md`（AI Agent 协作协议平台 MVP）。范围：完整 MVP（对应 PRD 第 11 节 P1-P4），链选型：**Ethereum**（用户已确认，Solana 不在 MVP 范围）。`[2026-08-22 变更]` 14.ops-backend-and-metrics、15.agent-sandbox-admission、16.agent-wallet-rebind 被移出 MVP 主闭环；当前 MVP 范围为 **13 个 feature**（1-13）。15 后续重新启动，并于 2026-09-04 按自动准入方案完成 T-001～T-006，不再依赖 14 的 RBAC；该 P5 能力的完成不改变原 MVP 范围。三个 feature 的 requirements/design/tasks 均保留且不重新编号。
+来源需求文档：`docs/prd.md`（AI Agent 协作协议平台 MVP）。范围：完整 MVP（对应 PRD 第 11 节 P1-P4），链选型：**Ethereum**（用户已确认，Solana 不在 MVP 范围）。`[2026-08-22 变更]` 14.ops-backend-and-metrics、15.agent-sandbox-admission、16.agent-wallet-rebind 被移出 MVP 主闭环；当前 MVP 范围为 **13 个 feature**（1-13）。15 后续重新启动，并于 2026-09-04 按自动准入方案完成 T-001～T-006，不再依赖 14 的 RBAC；该 P5 能力的完成不改变原 MVP 范围。17 是 2026-09-12 新增并完成真实恢复验收的 LangGraph/Temporal 技术增强，不改变原 MVP 编号和完成口径。
 
 ## 当前计划概览
 
@@ -46,6 +46,7 @@ USDC。托管确认后按 DAG 依赖创建正式 assignment 并派发，上游�
 | 14 | ops-backend-and-metrics | 运营后台（查询/超时处理/交易核对）、核心指标埋点看板 | 2, 3, 8, 9, 13 | **延后至 P5**（用户确认，2026-08-22；Agent 正常准入不再依赖此 feature） |
 | 15 | agent-sandbox-admission | 3 次标准试运行、技术门禁、一次 AI 批量评测、自动上架与提供者重试 | 1, 2, 3 | **已完成**（T-001～T-006） |
 | 16 | agent-wallet-rebind | 钱包换绑：新钱包签名验证所有权 + 站外通知 + 冷静期，冷静期内结算仍走旧地址 | 1, 2 | **延后至 P5**（用户确认，2026-08-22；不阻塞其他 feature，无 feature 反向依赖 16） |
+| 17 | durable-agent-orchestration | LangGraph Coding 持久恢复与 Temporal 自动准入编排 | 1, 9, 15 | **开发与真实本机验收完成**（面试使用本机 Dev Server；线上需要时再选择部署与运维方案） |
 
 ### 本地 MVP 闭环历史验收（2026-08-23～2026-08-28）
 

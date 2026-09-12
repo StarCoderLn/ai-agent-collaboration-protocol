@@ -1,8 +1,8 @@
 # 正式多 Agent 工作流与制品契约
 
-> 状态：v0.6 正式任务工作流权威契约
+> 状态：v0.7 正式任务工作流权威契约
 >
-> 日期：2026-09-06
+> 日期：2026-09-12
 >
 > 关联：`docs/prd.md` 2.1.1、feature 1、4、6、8～12
 
@@ -54,17 +54,18 @@ blocked
 - 用户明确发布 PRD 服务需求时才创建独立需求节点；页面不新增购买开关。
 - 研究、文档和通用任务：生成一个与分类相符的交付节点。
 
-PRD、设计和 Coding 每类提供三种可比较实现：
+PRD、设计各有三种可比较实现，Coding 另有一个 LangGraph 持久恢复候选：
 
-| 能力 | DeepSeek 直连 | Mastra 编排 | 自研状态机 |
-| --- | --- | --- | --- |
-| PRD | `prd-direct` | `prd-mastra` | `prd-state-machine` |
-| 设计 | `design-direct` | `design-mastra` | `design-state-machine` |
-| Coding | `code-direct` | `code-mastra` | `code-state-machine` |
+| 能力 | DeepSeek 直连 | Mastra 编排 | 自研状态机 | LangGraph |
+| --- | --- | --- | --- | --- |
+| PRD | `prd-direct` | `prd-mastra` | `prd-state-machine` | — |
+| 设计 | `design-direct` | `design-mastra` | `design-state-machine` | — |
+| Coding | `code-direct` | `code-mastra` | `code-state-machine` | `code-langgraph` |
 
-三个实现使用同一 DeepSeek 模型，差异来自单次生成、多阶段 Mastra 编排，以及可靠
-状态机的“TSX 验收 → CSS 消费已验收 TSX → 失败片段局部修复”。平台可以展示最多三个
-候选，但一次节点只锁定并执行一个 Agent，不会为了比较自动产生三倍调用和结算成本。
+候选使用同一 DeepSeek 模型。差异来自单次生成、多阶段 Mastra 编排，以及自研状态机或
+LangGraph 的“TSX 验收 → CSS 消费已验收 TSX → 失败片段局部修复”。`code-langgraph`
+另外通过 PostgreSQL checkpoint 支持跨连接恢复。平台一次节点只锁定并执行一个 Agent，
+不会为了比较自动产生多份模型调用和结算成本。
 
 ## 4. 制品依赖
 

@@ -14,20 +14,22 @@ JSON 方式，不需要安装此 SDK。SDK 面向平台自建 Agent，以及需�
 防重放和自管幂等的高级接入方。完整用法与产物格式见 [`agent-sdk/README.md`](agent-sdk/README.md)。当前 `0.1.x`
 作为 workspace package 验证，尚未发布 npm，多实例共享持久化适配器仍是生产发布前置项。
 
-## PRD → 设计 → Coding 九个候选 Agent
+## PRD → 设计 → Coding 十个候选 Agent
 
-`product-workflow/` 提供三类能力，每类恰好三个真实执行策略：
+`product-workflow/` 提供三类能力。PRD 与设计各有三个候选，Coding 在相同制品契约下
+增加一个使用 StateGraph 和 PostgreSQL checkpoint 的 LangGraph 候选：
 
-| 步骤 | DeepSeek 直连 | Mastra 编排 | 自研状态机 |
-| --- | --- | --- | --- |
-| PRD | `prd-direct` | `prd-mastra` | `prd-state-machine` |
-| 设计 | `design-direct` | `design-mastra` | `design-state-machine` |
-| Coding | `code-direct` | `code-mastra` | `code-state-machine` |
+| 步骤 | DeepSeek 直连 | Mastra 编排 | 自研状态机 | LangGraph |
+| --- | --- | --- | --- | --- |
+| PRD | `prd-direct` | `prd-mastra` | `prd-state-machine` | — |
+| 设计 | `design-direct` | `design-mastra` | `design-state-machine` | — |
+| Coding | `code-direct` | `code-mastra` | `code-state-machine` | `code-langgraph` |
 
 直连策略调用一次模型，作为速度与费用基线；Mastra 策略先生成覆盖计划，再生成结构化
 制品；自研状态机显式执行分析、生成、评审和最多一次修复。三种策略使用相同 DeepSeek
 模型，避免把模型差异错误归因给 Agent 架构。页面默认只执行用户选中的一个候选，不会
-为了凑齐三个结果自动产生三倍费用。
+为了凑齐多个结果自动产生额外费用。`code-langgraph` 把 TSX 与 CSS 建模为独立节点，
+可信校验失败只局部修复一次；基础设施失败后从持久 checkpoint 继续。
 
 三个步骤依次交付 `RequirementsArtifact`、`DesignArtifact` 和 `CodeArtifact`。设计 Agent
 只交付结构化 `DesignSpec`；平台可信渲染器根据同一规范生成 1440 桌面端与 390 移动端
@@ -39,12 +41,12 @@ SVG 设计稿，作为用户主要验收产物和 Coding Agent 的视觉事实�
 
 ### 核心代码阅读顺序
 
-1. `product-workflow/src/catalog.ts`：9 个 Agent ID、展示名称和真实策略映射。
+1. `product-workflow/src/catalog.ts`：10 个 Agent ID、展示名称和真实策略映射。
 2. `product-workflow/src/domain.ts`：三类输入输出 schema、可信字段补齐和原型安全约束。
 3. `product-workflow/src/agents/prd/`：三个 PRD Agent 的独立核心实现。
 4. `product-workflow/src/agents/design/`：三个设计 Agent 的独立核心实现。
-5. `product-workflow/src/agents/coding/`：三个 Coding Agent 的独立核心实现。
-6. `product-workflow/src/executors.ts`：只按九个稳定 Agent ID 路由，不包含模型策略分支。
+5. `product-workflow/src/agents/coding/`：四个 Coding Agent 的独立核心实现，包括 LangGraph StateGraph。
+6. `product-workflow/src/executors.ts`：只按十个稳定 Agent ID 路由，不包含模型策略分支。
 7. `product-workflow/src/model-client.ts`：DeepSeek JSON/TSX 客户端与代码安全校验。
 8. `agent-sdk/src/`：共用验签、幂等、HTTP、正式接单和结果回传基础设施。
 9. `product-workflow/src/formal-dispatch.ts`：工作流特有的制品适配、进度阶段和返工恢复。
@@ -67,16 +69,16 @@ pnpm --filter @aicp/product-workflow-agents dev
 ```
 
 服务默认监听 `127.0.0.1:9202`。完整体验应使用仓库根目录的 `scripts/local-mvp.mjs`
-启动平台、注册 9 个 Agent，再从任务发布页创建和托管真实任务；任务详情会展示正式
+启动平台、注册 10 个 Agent，再从任务发布页创建和托管真实任务；任务详情会展示正式
 节点、候选、分配、执行与制品。手动单独启动时按 `product-workflow/.env.example` 配置
 `WORKFLOW_AGENT_SECRET`，并确保分发引擎注册信息使用同一服务地址和凭据。所有密钥都
 只能位于服务端环境变量，变量名不得添加 `NEXT_PUBLIC_`。
 
-后续平台可以使用 LangGraph 编排这些步骤，但被编排的 Agent 不需要由 LangGraph 开发。
-LangGraph 只负责平台侧节点顺序、分支、暂停与恢复；每个节点仍通过框架无关的 HTTP/AICP
-协议调用，因此 Mastra Agent、自研 Agent 和其他语言服务可以出现在同一张执行图中。只有
-某个 Agent 内部本身需要循环、checkpoint 或人工中断恢复时，才需要在该 Agent 内引入
-LangGraph。
+当前 `code-langgraph` 已在单个 Coding Agent 内使用 LangGraph StateGraph、条件边和
+PostgreSQL checkpoint；它不接管平台任务、托管和结算状态。跨服务的自动准入步骤由
+Temporal Workflow 编排，Agent 调用、DeepSeek、数据库和生命周期迁移位于 Activity。
+平台多 Agent DAG 仍通过框架无关的 HTTP/AICP 协议交换版本化制品，因此 Mastra、自研
+状态机、LangGraph 和其他语言实现可以出现在同一个正式任务中。
 
 ## 可手动快速上架的 Mastra Agent
 

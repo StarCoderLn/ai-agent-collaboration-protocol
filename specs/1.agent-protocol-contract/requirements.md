@@ -53,7 +53,7 @@
 - [x] [AC-005] 协议规格文档可供第三方团队独立阅读并据此实现一个测试 Agent 的最小可用集成。
 - [x] [AC-006] `[v2 新增]` 携带 `call_type=sandbox` 的请求可在审计记录和统计查询中被明确标记和排除，不会计入 Agent 的正式任务历史或评分样本。
 - [x] [AC-007] `[v3 新增]` 超过 TTL 的 `idempotency_records`、`used_nonces` 记录会被清理任务删除；未过期的记录不受影响；清理任务本身幂等（重复执行不报错、不误删未过期记录）。
-- [x] [AC-008] `[v5 新增]` `@aicp/agent-sdk` 与 Go 共享签名测试向量；现有论文 Agent 和 9 个产品工作流 Agent 实际复用 SDK 的协议、幂等及 Node HTTP 边界，接入示例不再复制协议实现。
+- [x] [AC-008] `[v5 新增，2026-09-12 更新]` `@aicp/agent-sdk` 与 Go 共享签名测试向量；现有论文 Agent 和 10 个产品工作流 Agent 实际复用 SDK 的协议、幂等及 Node HTTP 边界，接入示例不再复制协议实现。
 - [x] [AC-009] `[v6 新增]` 快速 Agent 可在无密钥或 Bearer Token 两种情况下通过同域 `/healthz` 测试，并以一次同步响应返回 1～3 个受支持产物；内部转交暂时失败时只重试已保存结果，不重复调用 Agent。快速 Agent 不生成生命周期 Webhook，历史 HMAC Agent 继续生成。
 
 ## 依赖

@@ -474,7 +474,7 @@ Agent 接入协议保持框架无关：第三方提供者可以使用 Mastra、L
 | --- | --- | --- | --- | --- | --- |
 | Mastra | TypeScript/Next.js 团队，自建 Agent 和中等复杂工作流 | 原生支持 Agent 与图工作流，包括顺序、分支、并行、暂停/恢复 | Agent、Workflow、Memory、Evals、Observability 和服务集成较完整 | 核心与企业功能的许可证边界需在采用前复核；团队需接受其运行时与存储抽象 | 已用于论文 Agent 与 PRD/设计/Coding 的 Mastra 候选，继续作为可比较实现之一 |
 | LangChain | 快速创建标准 Agent，以及模型、工具、RAG 和第三方集成 | **支持标准 Agent 编排**，例如模型—工具调用循环、高层 Chain 和中间件；复杂自定义工作流由其底层/配套的 LangGraph 承担 | 高层抽象、生态广、组件丰富，适合快速开发 | 不适合直接表达任意状态图、复杂分支/循环和精细 checkpoint；这类需求需直接使用 LangGraph | 简单或标准工具调用 Agent 可直接采用；需要自定义执行图时升级到 LangGraph |
-| LangGraph | 复杂、有状态、长时运行、需要中断/恢复与人工介入的 Agent 图 | **专门支持自定义 Agent/工作流编排**，开发者显式定义状态、节点、边、分支、循环和 checkpoint | 低层可控、持久执行、Memory、Human-in-the-loop；有 Python 和 TypeScript 实现 | 抽象更底层，状态 schema、checkpoint 和部署运维需自行设计更多 | 当流程超出 LangChain 标准 Agent 循环，或 Python 生态需求超过 Mastra 时采用 |
+| LangGraph | 复杂、有状态、长时运行、需要中断/恢复与人工介入的 Agent 图 | **专门支持自定义 Agent/工作流编排**，开发者显式定义状态、节点、边、分支、循环和 checkpoint | 低层可控、持久执行、Memory、Human-in-the-loop；有 Python 和 TypeScript 实现 | 抽象更底层，状态 schema、checkpoint 和部署运维需自行设计更多 | 已用于 `code-langgraph`：StateGraph 分离 TSX/CSS 节点，PostgreSQL checkpoint 支持局部恢复；继续作为 Coding 独立候选而非全平台唯一运行时 |
 
 LangChain 与 LangGraph 的关系不是“一个有 Agent、另一个有编排”，而是两层抽象：LangChain 提供标准 Agent 架构和高层组件，因此具备标准 Agent 编排能力；LangGraph 是低层编排运行时，用于自定义执行图和高级控制。当前 LangChain 官方资料也明确建议：需要更高级的自定义或 Agent orchestration 时使用 LangGraph。
 
@@ -488,12 +488,14 @@ LangChain 与 LangGraph 的关系不是“一个有 Agent、另一个有编排�
 - 同一能力的多个候选必须拥有不同稳定 Agent ID，并用相同任务验证质量、成本和失败恢复；
   不允许在一个 Agent ID 内用隐藏开关维护多个难以追踪的运行时。
 
-当前 `product-workflow` 已用 DeepSeek 直连、Mastra 和自研状态机实现三组可比较候选；
-LangGraph 尚未接入。后续只有在需要框架级 checkpoint、复杂分支或人工中断恢复时才引入
-LangGraph，并作为新的独立 Agent 实现验收。任何 Agent 框架都不承担平台级资金与交易
-状态编排。
+当前 `product-workflow` 已用 DeepSeek 直连、Mastra 和自研状态机实现三组正式候选；
+`code-langgraph` 使用显式节点、条件修复与 PostgreSQL checkpointer 实现局部恢复，并以独立
+Agent ID 进入正式目录。Dispatch Engine 的 Temporal 模式复用现有三次沙箱、技术门禁、质量
+评测和生命周期迁移模块；`postgres` 与 `temporal` 运行模式互斥，避免双 Worker 消费。
+任何 Agent 框架都不承担平台级资金与交易状态编排；真实本机停机恢复已经通过，云端 Temporal
+部署与运维方案仍需冻结。
 
-参考资料（查阅于 2026-08-19）：[Mastra 官方文档](https://mastra.ai/docs)、[Mastra 官方仓库](https://github.com/mastra-ai/mastra)、[LangChain.js 官方文档](https://docs.langchain.com/oss/javascript/langchain/overview)、[LangChain.js 官方仓库](https://github.com/langchain-ai/langchainjs)、[LangGraph.js 官方文档](https://docs.langchain.com/oss/javascript/langgraph/overview)、[LangGraph.js 官方仓库](https://github.com/langchain-ai/langgraphjs)。
+参考资料：[Mastra 官方文档](https://mastra.ai/docs)、[Mastra 官方仓库](https://github.com/mastra-ai/mastra)、[LangChain.js 官方文档](https://docs.langchain.com/oss/javascript/langchain/overview)、[LangChain.js 官方仓库](https://github.com/langchain-ai/langchainjs)、[LangGraph.js 官方文档](https://docs.langchain.com/oss/javascript/langgraph/overview)、[LangGraph.js 官方仓库](https://github.com/langchain-ai/langgraphjs)（2026-08-19 查阅）；[Temporal 生产部署](https://docs.temporal.io/production-deployment)、[Temporal Cloud 价格](https://docs.temporal.io/cloud/pricing)（2026-09-12 查阅）。
 
 ## 11. 迭代拆分与交付顺序
 
@@ -506,7 +508,7 @@ LangGraph，并作为新的独立 Agent 实现验收。任何 Agent 框架都不
 - 完成任务状态机、Agent 接入协议和合约接口规格。
 - 定义分类、标签、V0 匹配规则和评分口径。
 - 冻结任务可见性、手动/自动分配和机器验收边界。
-- 用同一条样例工作流完成 Mastra 技术验证；若不满足需求，标准 Agent 场景评估 LangChain，自定义复杂编排场景评估 LangGraph。
+- `[2026-09-12 已完成]` 使用同一套输入与制品契约验证 Mastra、自研状态机和 LangGraph Coding 候选；LangGraph 的真实 DeepSeek 输出与 PostgreSQL checkpoint 恢复均已通过。
 - 完成威胁建模与合约审计计划。
 
 退出条件：产品、后端、合约和测试对核心状态及资金流达成一致，所有 P0 决策有负责人和截止时间。
