@@ -4,6 +4,7 @@ import {
 	getConnection,
 	getTransactionCount,
 	readContract,
+	reconnect,
 	sendTransaction,
 	signMessage,
 	switchChain,
@@ -15,6 +16,7 @@ import {
 	connectWalletSession,
 	ensureEscrowAllowance,
 	logoutWalletSession,
+	restoreAuthorizedWalletConnection,
 	sendEscrowTransaction,
 	WalletRequestTimeoutError,
 } from "./wallet-session";
@@ -24,6 +26,7 @@ vi.mock("wagmi/actions", () => ({
 	getConnection: vi.fn(),
 	getTransactionCount: vi.fn(),
 	readContract: vi.fn(),
+	reconnect: vi.fn(),
 	sendTransaction: vi.fn(),
 	signMessage: vi.fn(),
 	switchChain: vi.fn(),
@@ -116,6 +119,23 @@ describe("wagmi wallet session", () => {
 			chainId: 31_337,
 		});
 		expect(connect).not.toHaveBeenCalled();
+	});
+
+	it("仅在服务端会话恢复后静默重连已授权的 MetaMask", async () => {
+		vi.mocked(reconnect).mockResolvedValue([]);
+
+		await expect(restoreAuthorizedWalletConnection()).resolves.toBeUndefined();
+
+		expect(reconnect).toHaveBeenCalledWith(wagmiConfig, {
+			connectors: [metaMaskConnector],
+		});
+		expect(connect).not.toHaveBeenCalled();
+	});
+
+	it("静默重连失败时保留服务端登录恢复路径", async () => {
+		vi.mocked(reconnect).mockRejectedValue(new Error("extension unavailable"));
+
+		await expect(restoreAuthorizedWalletConnection()).resolves.toBeUndefined();
 	});
 
 	it("logs out through the server without disconnecting the MetaMask connector", async () => {

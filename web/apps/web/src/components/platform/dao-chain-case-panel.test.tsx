@@ -47,6 +47,28 @@ describe("链上仲裁案件侧栏", () => {
 		vi.restoreAllMocks();
 		vi.unstubAllGlobals();
 	});
+	it.each([
+		[
+			"DAO_CASE_OPERATOR_INSUFFICIENT_FUNDS",
+			"案件操作账户缺少 Sepolia ETH 支付 Gas；平台补充后会继续处理，任务资金仍被冻结。",
+		],
+		[
+			"DAO_REWARD_POOL_INSUFFICIENT",
+			"仲裁奖励池需要补充 YD 后才能继续处理，任务资金仍被冻结。",
+		],
+	] as const)("向用户说明可恢复的 %s 原因", (lastErrorCode, message) => {
+		render(
+			<LocaleProvider initialLocale="zh-CN">
+				<DaoChainCasePanel
+					disputeId="10000000-0000-4000-8000-000000000001"
+					info={{ ...info(), lastErrorCode }}
+					evidence={[]}
+					onRefresh={vi.fn()}
+				/>
+			</LocaleProvider>,
+		);
+		expect(screen.getByRole("status")).toHaveTextContent(message);
+	});
 	it.each(["zh-CN", "en"] as const)(
 		"%s 广播失败后保留原哈希，未经回执核验不能重复签名",
 		async (locale) => {

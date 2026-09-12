@@ -14,6 +14,7 @@ import {
 	listTaskCategories,
 	listWorkflowFeedback,
 	prepareTaskEscrow,
+	submitTaskDisputeEvidenceWithOptionalFile,
 	submitTaskEscrowTransaction,
 	submitWorkflowNodeFeedback,
 	subscribeTaskEvents,
@@ -642,6 +643,59 @@ describe("formal task API client", () => {
 		expect(new Headers(init?.headers).get("idempotency-key")).toBe(
 			"workflow-feedback-contract-test",
 		);
+	});
+
+	it("submits only the strict attachment reference after uploading evidence bytes", async () => {
+		const disputeId = "66666666-6666-4666-8666-666666666666";
+		const objectId = "77777777-7777-4777-8777-777777777777";
+		const sha256 = `0x${"ab".repeat(32)}`;
+		const storageRef = `evidence-db:${objectId}:${sha256.slice(2)}`;
+		vi.mocked(fetch)
+			.mockResolvedValueOnce(
+				Response.json(
+					{
+						id: objectId,
+						name: "evidence.txt",
+						mimeType: "text/plain",
+						sizeBytes: "8",
+						storageRef,
+						sha256,
+					},
+					{ status: 201 },
+				),
+			)
+			.mockResolvedValueOnce(
+				Response.json(
+					{
+						disputeId,
+						evidenceId: "88888888-8888-4888-8888-888888888888",
+						party: "publisher",
+						submittedAt: "2026-09-12T00:00:00.000Z",
+						statusVersion: "2",
+					},
+					{ status: 201 },
+				),
+			);
+
+		await submitTaskDisputeEvidenceWithOptionalFile(
+			disputeId,
+			"真实附件终验证据",
+			new File(["evidence"], "evidence.txt", { type: "text/plain" }),
+			"evidence-upload-contract-test",
+		);
+
+		const [, submitInit] = vi.mocked(fetch).mock.calls[1] ?? [];
+		expect(JSON.parse(String(submitInit?.body))).toEqual({
+			description: "真实附件终验证据",
+			attachments: [
+				{
+					name: "evidence.txt",
+					mimeType: "text/plain",
+					sizeBytes: "8",
+					storageRef,
+				},
+			],
+		});
 	});
 
 	it("subscribes to the authoritative arbitration confirmation event names", () => {

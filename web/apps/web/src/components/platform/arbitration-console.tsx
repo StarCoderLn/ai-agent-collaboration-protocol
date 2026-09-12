@@ -7,8 +7,10 @@ import { Textarea } from "@web/ui/components/textarea";
 import {
 	AlertTriangle,
 	CheckCircle2,
+	Download,
 	Loader2,
 	LockKeyhole,
+	Paperclip,
 	ReceiptText,
 	RefreshCw,
 	Scale,
@@ -24,9 +26,12 @@ import DaoChainCasePanel from "@/components/platform/dao-chain-case-panel";
 import PageBackLink from "@/components/platform/page-back-link";
 import {
 	decideTaskDispute,
+	downloadTaskDisputeEvidenceAttachment,
 	getTaskDispute,
+	submitTaskDisputeEvidenceWithOptionalFile,
 	TaskApiRequestError,
 	type TaskDispute,
+	taskDisputeEvidenceAttachmentDownloadUrl,
 } from "@/lib/api/tasks";
 import { formatDate } from "@/lib/platform/format";
 import { formatMinorAmount, MVP_CURRENCY } from "@/lib/platform/money";
@@ -52,8 +57,37 @@ export default function ArbitrationConsole({
 		"agent_at_fault" | "agent_not_at_fault" | "shared" | "not_determined"
 	>("agent_at_fault");
 	const [reason, setReason] = useState("");
+	const [evidenceDescription, setEvidenceDescription] = useState("");
+	const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
 	const [busy, setBusy] = useState(false);
+	const [downloadingAttachment, setDownloadingAttachment] = useState<
+		string | null
+	>(null);
 	const [message, setMessage] = useState<string | null>(null);
+
+	async function downloadAttachment(
+		dispute: TaskDispute,
+		attachment: TaskDispute["evidence"][number]["attachments"][number],
+	) {
+		setDownloadingAttachment(attachment.storageRef);
+		setMessage(null);
+		try {
+			const file = await downloadTaskDisputeEvidenceAttachment(
+				dispute.id,
+				attachment,
+			);
+			const objectUrl = URL.createObjectURL(file.content);
+			const link = document.createElement("a");
+			link.href = objectUrl;
+			link.download = file.fileName;
+			link.click();
+			URL.revokeObjectURL(objectUrl);
+		} catch (error) {
+			setMessage(apiMessage(error, t));
+		} finally {
+			setDownloadingAttachment(null);
+		}
+	}
 
 	const load = useCallback(
 		(signal?: AbortSignal) => {
@@ -154,6 +188,28 @@ export default function ArbitrationConsole({
 			await getTaskDispute(dispute.id).then((next) =>
 				setState({ kind: "loaded", dispute: next }),
 			);
+		} catch (error) {
+			setMessage(apiMessage(error, t));
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	async function submitEvidence(dispute: TaskDispute) {
+		const description = evidenceDescription.trim();
+		if (description.length === 0) return;
+		setBusy(true);
+		setMessage(null);
+		try {
+			await submitTaskDisputeEvidenceWithOptionalFile(
+				dispute.id,
+				description,
+				evidenceFile,
+				`dispute-evidence:${crypto.randomUUID()}`,
+			);
+			setEvidenceDescription("");
+			setEvidenceFile(null);
+			setState({ kind: "loaded", dispute: await getTaskDispute(dispute.id) });
 		} catch (error) {
 			setMessage(apiMessage(error, t));
 		} finally {
@@ -298,6 +354,47 @@ export default function ArbitrationConsole({
 											submitter: entry.submittedBy,
 										})}
 									</p>
+									{entry.attachments.length > 0 && (
+										<ul className="mt-3 flex flex-col gap-2">
+											{entry.attachments.map((attachment) => {
+												const href = taskDisputeEvidenceAttachmentDownloadUrl(
+													dispute.id,
+													attachment.storageRef,
+												);
+												return (
+													<li key={attachment.storageRef}>
+														{href === null ? (
+															<span className="text-muted-foreground text-sm">
+																{attachment.name}
+															</span>
+														) : (
+															<button
+																type="button"
+																aria-label={t("下载附件 {name}", {
+																	name: attachment.name,
+																})}
+																disabled={downloadingAttachment !== null}
+																onClick={() =>
+																	void downloadAttachment(dispute, attachment)
+																}
+																className="inline-flex min-h-10 max-w-full cursor-pointer items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-primary text-sm transition-colors hover:bg-primary/10"
+															>
+																{downloadingAttachment ===
+																attachment.storageRef ? (
+																	<Loader2 className="size-4 shrink-0 animate-spin" />
+																) : (
+																	<Download className="size-4 shrink-0" />
+																)}
+																<span className="truncate">
+																	{attachment.name}
+																</span>
+															</button>
+														)}
+													</li>
+												);
+											})}
+										</ul>
+									)}
 								</li>
 							))}
 							{dispute.evidence.length === 0 && (
@@ -306,6 +403,54 @@ export default function ArbitrationConsole({
 								</li>
 							)}
 						</ol>
+						{dispute.status === "evidence_collection" &&
+							(!dispute.chainArbitration ||
+								dispute.chainArbitration.status === "evidence") &&
+							new Date(dispute.evidenceDeadline).getTime() > Date.now() &&
+							dispute.viewerRole !== "arbitrator" && (
+								<div className="border-t p-5">
+									<label
+										className="font-medium text-sm"
+										htmlFor="arbitration-evidence-description"
+									>
+										{t("补充文字证据")}
+									</label>
+									<Textarea
+										id="arbitration-evidence-description"
+										className="mt-2 min-h-24"
+										value={evidenceDescription}
+										onChange={(event) =>
+											setEvidenceDescription(event.target.value)
+										}
+									/>
+									<label
+										className="mt-3 flex cursor-pointer items-center gap-2 rounded-lg border border-primary/30 border-dashed bg-primary/5 px-3 py-2 text-sm"
+										htmlFor="arbitration-evidence-file"
+									>
+										<Paperclip className="size-4 text-primary" />
+										<span className="truncate">
+											{evidenceFile?.name ?? t("添加证据文件（可选）")}
+										</span>
+									</label>
+									<Input
+										id="arbitration-evidence-file"
+										type="file"
+										className="sr-only"
+										accept="application/pdf,image/png,image/jpeg,text/plain"
+										onChange={(event) =>
+											setEvidenceFile(event.target.files?.[0] ?? null)
+										}
+									/>
+									<Button
+										className="mt-3"
+										disabled={busy || evidenceDescription.trim().length === 0}
+										onClick={() => void submitEvidence(dispute)}
+									>
+										{busy && <Loader2 className="size-4 animate-spin" />}
+										{t("提交证据")}
+									</Button>
+								</div>
+							)}
 					</article>
 				</section>
 				<aside>

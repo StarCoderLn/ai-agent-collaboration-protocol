@@ -1573,6 +1573,79 @@ export async function uploadTaskDisputeEvidenceObject(
 	return parseSuccess(response, uploadedEvidenceObjectSchema);
 }
 
+/**
+ * 文件对象必须先通过服务端计算并固化 SHA-256，再与文字证据绑定。页面只提交一个
+ * 可选 File，不能各自复制“先上传、后绑定”的顺序或自行拼接可信 storageRef。
+ */
+export async function submitTaskDisputeEvidenceWithOptionalFile(
+	disputeId: string,
+	description: string,
+	file: File | null,
+	idempotencyKey: string,
+) {
+	const uploaded = file
+		? await uploadTaskDisputeEvidenceObject(disputeId, file)
+		: null;
+	// 上传响应还包含对象 ID 和展示用摘要；证据写接口是严格契约，只接收附件引用字段。
+	// 在这里收窄边界，避免把两个接口各自的响应/请求模型意外耦合在一起。
+	const attachments =
+		uploaded === null
+			? []
+			: [
+					{
+						name: uploaded.name,
+						mimeType: uploaded.mimeType,
+						sizeBytes: uploaded.sizeBytes,
+						storageRef: uploaded.storageRef,
+					},
+				];
+	return submitTaskDisputeEvidence(
+		disputeId,
+		{ description, attachments },
+		idempotencyKey,
+	);
+}
+
+/**
+ * 只有服务端签发的数据库证据引用可以转换为下载地址。旧版外部引用继续只展示元数据，
+ * 避免页面把任意 storageRef 当成可信 URL，或绕过卷宗下载接口的身份与哈希复核。
+ */
+export function taskDisputeEvidenceAttachmentDownloadUrl(
+	disputeId: string,
+	storageRef: string,
+): string | null {
+	const objectId = evidenceObjectId(storageRef);
+	if (objectId === null) return null;
+	return `${API_BASE_URL}/disputes/${taskPathId(disputeId)}/attachments/${encodeURIComponent(objectId)}`;
+}
+
+export async function downloadTaskDisputeEvidenceAttachment(
+	disputeId: string,
+	attachment: Readonly<{ name: string; storageRef: string }>,
+): Promise<Readonly<{ fileName: string; content: Blob }>> {
+	const objectId = evidenceObjectId(attachment.storageRef);
+	if (objectId === null) {
+		throw new TaskApiRequestError(404, {
+			error_code: "EVIDENCE_OBJECT_NOT_DOWNLOADABLE",
+			message: "该历史附件没有可验证的文件内容",
+			retryable: false,
+		});
+	}
+	const response = await request(
+		`/disputes/${taskPathId(disputeId)}/attachments/${encodeURIComponent(objectId)}`,
+		{ credentials: "include" },
+	);
+	return { fileName: attachment.name, content: await response.blob() };
+}
+
+function evidenceObjectId(storageRef: string): string | null {
+	const match =
+		/^evidence-db:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):[0-9a-f]{64}$/i.exec(
+			storageRef,
+		);
+	return match?.[1]?.toLowerCase() ?? null;
+}
+
 export async function decideTaskDispute(
 	disputeId: string,
 	input: Readonly<{

@@ -73,7 +73,7 @@ import {
 	rematchTaskCandidates,
 	requestTaskRework,
 	retryFailedTaskExecution,
-	submitTaskDisputeEvidence,
+	submitTaskDisputeEvidenceWithOptionalFile,
 	submitTaskEscrowTransaction,
 	submitTaskRating,
 	submitWorkflowNodeFeedback,
@@ -90,7 +90,6 @@ import {
 	type TaskResult,
 	type TaskStatus,
 	updateTaskMatchCriteria,
-	uploadTaskDisputeEvidenceObject,
 	type WorkflowFeedback,
 	type WorkflowFeedbackInput,
 	type WorkflowFeedbackStrength,
@@ -2411,17 +2410,10 @@ function DisputePanel({
 								disabled={busy || evidence.trim().length === 0}
 								onClick={() =>
 									run("submit-evidence", async () => {
-										const attachments = evidenceFile
-											? [
-													await uploadTaskDisputeEvidenceObject(
-														dispute.id,
-														evidenceFile,
-													),
-												]
-											: [];
-										await submitTaskDisputeEvidence(
+										await submitTaskDisputeEvidenceWithOptionalFile(
 											dispute.id,
-											{ description: evidence.trim(), attachments },
+											evidence.trim(),
+											evidenceFile,
 											key("dispute-evidence"),
 										);
 										setEvidence("");

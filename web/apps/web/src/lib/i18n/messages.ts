@@ -1466,6 +1466,7 @@ export const EN_MESSAGES = {
 		"Sorted by submission time · {count} entries",
 	"附件 {count} 个 · 提交者 {submitter}":
 		"{count} attachments · submitted by {submitter}",
+	"下载附件 {name}": "Download attachment {name}",
 	"尚无证据，不能仅凭争议标题作出决定。":
 		"No evidence has been submitted; a decision cannot rely on the dispute title alone.",
 	不可逆资金决定: "Irreversible fund decision",

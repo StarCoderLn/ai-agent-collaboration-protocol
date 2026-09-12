@@ -11,6 +11,7 @@ import {
 	getConnection,
 	getTransactionCount,
 	readContract,
+	reconnect,
 	sendTransaction,
 	signMessage,
 	switchChain,
@@ -84,6 +85,19 @@ export async function restoreWalletSession(): Promise<WalletSession | null> {
 				chainId: parsed.data.chainId,
 			}
 		: null;
+}
+
+/**
+ * 服务端会话确认有效后，才静默恢复已经授权给本站的 MetaMask 连接。Wagmi 的 reconnect
+ * 会先调用 connector.isAuthorized()（eth_accounts）；未授权时直接返回，不触发账户选择、
+ * 网络切换或签名弹窗。失败只表示扩展当前不可用，不能据此撤销仍然有效的 SIWE 会话。
+ */
+export async function restoreAuthorizedWalletConnection(): Promise<void> {
+	try {
+		await reconnect(wagmiConfig, { connectors: [metaMaskConnector] });
+	} catch {
+		// 交易入口仍会在用户手势内显式连接；静默恢复失败不应阻断页面身份恢复。
+	}
 }
 
 export async function connectWalletSession(): Promise<WalletSession> {

@@ -12,12 +12,18 @@ const mocks = vi.hoisted(() => ({
 		status: "connected",
 		address: "0x2222222222222222222222222222222222222222",
 	},
-	restoreWalletSession: vi.fn(async () => ({
-		walletAddress: "0x1111111111111111111111111111111111111111",
-		chainId: 31_337,
-	})),
+	restoreWalletSession: vi.fn(
+		async (): Promise<{
+			walletAddress: string;
+			chainId: number;
+		} | null> => ({
+			walletAddress: "0x1111111111111111111111111111111111111111",
+			chainId: 31_337,
+		}),
+	),
 	connectWalletSession: vi.fn(),
 	logoutWalletSession: vi.fn(async () => undefined),
+	restoreAuthorizedWalletConnection: vi.fn(async () => undefined),
 }));
 
 vi.mock("wagmi", () => ({ useConnection: () => mocks.connection }));
@@ -25,6 +31,7 @@ vi.mock("@/lib/wallet/wallet-session", () => ({
 	restoreWalletSession: mocks.restoreWalletSession,
 	connectWalletSession: mocks.connectWalletSession,
 	logoutWalletSession: mocks.logoutWalletSession,
+	restoreAuthorizedWalletConnection: mocks.restoreAuthorizedWalletConnection,
 }));
 
 describe("WalletSessionProvider", () => {
@@ -62,7 +69,21 @@ describe("WalletSessionProvider", () => {
 		fireEvent.click(screen.getByRole("button", { name: "connect" }));
 
 		expect(mocks.connectWalletSession).not.toHaveBeenCalled();
+		expect(mocks.restoreAuthorizedWalletConnection).toHaveBeenCalledTimes(1);
 		expect(screen.getByText("connected")).toBeInTheDocument();
+	});
+
+	it("没有服务端会话时不访问钱包扩展", async () => {
+		mocks.restoreWalletSession.mockResolvedValueOnce(null);
+		mocks.connection.status = "disconnected";
+		render(
+			<WalletSessionProvider>
+				<SessionProbe />
+			</WalletSessionProvider>,
+		);
+
+		expect(await screen.findByText("disconnected")).toBeInTheDocument();
+		expect(mocks.restoreAuthorizedWalletConnection).not.toHaveBeenCalled();
 	});
 
 	it("changes to disconnected only after server logout succeeds", async () => {

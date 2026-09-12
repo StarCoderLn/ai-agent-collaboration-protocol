@@ -17,6 +17,7 @@ import { subscribeAuthSessionExpired } from "@/lib/wallet/session-expiry";
 import {
 	connectWalletSession,
 	logoutWalletSession,
+	restoreAuthorizedWalletConnection,
 	restoreWalletSession,
 } from "@/lib/wallet/wallet-session";
 
@@ -61,7 +62,9 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
 	});
 	useEffect(() => {
 		let active = true;
-		restoreWalletSession().then((session) => {
+		restoreWalletSession().then(async (session) => {
+			if (!active) return;
+			if (session !== null) await restoreAuthorizedWalletConnection();
 			if (!active) return;
 			setState(
 				session === null

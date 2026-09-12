@@ -354,13 +354,7 @@ export default function DaoChainCasePanel({
 					role="status"
 					className="mt-4 rounded-xl border border-warning/20 bg-warning/5 p-3 text-sm leading-6"
 				>
-					{info.lastErrorCode === "DAO_PANEL_INSUFFICIENT"
-						? en
-							? "Waiting for enough eligible jurors. Your task funds remain frozen."
-							: "正在等待足够的合格成员，任务资金继续冻结。"
-						: en
-							? "Case progression needs attention. No early payout will be made."
-							: "案件推进遇到问题，需要检查后恢复。不会提前释放任务资金。"}
+					{caseProgressErrorMessage(info.lastErrorCode, en)}
 				</p>
 			)}
 			{canVote && (
@@ -690,6 +684,27 @@ export default function DaoChainCasePanel({
 			)}
 		</section>
 	);
+}
+
+function caseProgressErrorMessage(code: string, en: boolean): string {
+	if (code === "DAO_PANEL_INSUFFICIENT") {
+		return en
+			? "Waiting for enough eligible jurors. Your task funds remain frozen."
+			: "正在等待足够的合格成员，任务资金继续冻结。";
+	}
+	if (code === "DAO_CASE_OPERATOR_INSUFFICIENT_FUNDS") {
+		return en
+			? "The case operator needs Sepolia ETH for gas. Processing resumes after the platform funds it; your task funds remain frozen."
+			: "案件操作账户缺少 Sepolia ETH 支付 Gas；平台补充后会继续处理，任务资金仍被冻结。";
+	}
+	if (code === "DAO_REWARD_POOL_INSUFFICIENT") {
+		return en
+			? "The arbitration reward pool needs more YD before processing can continue. Your task funds remain frozen."
+			: "仲裁奖励池需要补充 YD 后才能继续处理，任务资金仍被冻结。";
+	}
+	return en
+		? "Case progression needs attention. No early payout will be made."
+		: "案件推进遇到问题，需要检查后恢复。不会提前释放任务资金。";
 }
 
 function compensationStatus(
