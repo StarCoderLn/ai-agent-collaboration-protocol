@@ -95,6 +95,9 @@ func TestAutomaticAdmissionRepositoryPostgresPersistsEvaluationAndIdempotentRetr
 	if err = repository.FinishRound(ctx, claim, evaluation, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	if err = repository.FinishRound(ctx, claim, evaluation, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("相同评测的完成 Activity 重放必须幂等：%v", err)
+	}
 	loaded, err := repository.LoadEvaluation(ctx, automaticAdmissionAgentID, automaticAdmissionRoundID)
 	if err != nil || loaded == nil || !loaded.TechnicalPassed || loaded.Score != 76 || loaded.Summary != "质量未达到自动准入阈值" {
 		t.Fatalf("评测证据读取不完整：record=%+v err=%v", loaded, err)

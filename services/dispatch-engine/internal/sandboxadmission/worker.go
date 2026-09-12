@@ -213,6 +213,15 @@ func (w *Worker) evaluate(ctx context.Context, result Result) (EvaluationDecisio
 	}, nil
 }
 
+// EvaluateSandboxResult 暴露与旧 Worker 完全相同的技术门禁和质量评测规则，供 Temporal
+// Activity 复用。它不保存结果，也不迁移生命周期，事务边界仍由调用方显式控制。
+func (w *Worker) EvaluateSandboxResult(ctx context.Context, result Result) (EvaluationDecision, error) {
+	if w.Evaluator == nil {
+		return EvaluationDecision{}, errors.New("automatic admission evaluator is not configured")
+	}
+	return w.evaluate(ctx, result)
+}
+
 func (w *Worker) now() time.Time {
 	if w.Now != nil {
 		return w.Now().UTC()

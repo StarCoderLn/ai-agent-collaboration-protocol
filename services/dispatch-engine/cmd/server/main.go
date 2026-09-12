@@ -23,12 +23,17 @@ import (
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/sandboxadmission"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/store"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/tasktransition"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/temporaladmission"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/webhook"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/kms"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.temporal.io/sdk/activity"
+	temporalclient "go.temporal.io/sdk/client"
+	temporalworker "go.temporal.io/sdk/worker"
+	temporalworkflow "go.temporal.io/sdk/workflow"
 )
 
 func main() {
@@ -67,6 +72,10 @@ func run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+	}
+	admissionEngine, err := admissionEngineFromEnvironment(admissionEnabled)
+	if err != nil {
+		return err
 	}
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -151,6 +160,37 @@ func run(ctx context.Context) error {
 		},
 		Lifecycle: &store.AgentLifecycleRepository{Pool: pool},
 		Lease:     15 * time.Minute,
+	}
+	var temporalClient temporalclient.Client
+	var temporalWorker temporalworker.Worker
+	var temporalStarter *temporaladmission.Starter
+	if admissionEngine == "temporal" {
+		temporalClient, err = temporalclient.Dial(temporalclient.Options{
+			HostPort:  envOrDefault("TEMPORAL_ADDRESS", temporalclient.DefaultHostPort),
+			Namespace: envOrDefault("TEMPORAL_NAMESPACE", temporalclient.DefaultNamespace),
+		})
+		if err != nil {
+			return errors.New("temporal is unavailable")
+		}
+		defer temporalClient.Close()
+		taskQueue := envOrDefault("TEMPORAL_ADMISSION_TASK_QUEUE", temporaladmission.DefaultTaskQueue)
+		temporalWorker = temporalworker.New(temporalClient, taskQueue, temporalworker.Options{})
+		temporalWorker.RegisterWorkflowWithOptions(temporaladmission.AdmissionWorkflow, temporalworkflow.RegisterOptions{Name: temporaladmission.WorkflowName})
+		activities := &temporaladmission.Activities{
+			Repository: automaticAdmissionRepository, Sandbox: automaticAdmissionWorker.Sandbox,
+			Evaluator: automaticAdmissionWorker, Lifecycle: automaticAdmissionWorker.Lifecycle,
+		}
+		temporalWorker.RegisterActivityWithOptions(activities.RunSandbox, activity.RegisterOptions{Name: temporaladmission.RunSandboxActivityName})
+		temporalWorker.RegisterActivityWithOptions(activities.Evaluate, activity.RegisterOptions{Name: temporaladmission.EvaluateActivityName})
+		temporalWorker.RegisterActivityWithOptions(activities.ApplyDecision, activity.RegisterOptions{Name: temporaladmission.ApplyDecisionActivityName})
+		temporalWorker.RegisterActivityWithOptions(activities.ReleaseRound, activity.RegisterOptions{Name: temporaladmission.ReleaseRoundActivityName})
+		if err = temporalWorker.Start(); err != nil {
+			return err
+		}
+		defer temporalWorker.Stop()
+		temporalStarter = &temporaladmission.Starter{
+			Repository: automaticAdmissionRepository, Client: temporalClient, TaskQueue: taskQueue,
+		}
 	}
 	verifier := &protocol.Verifier{
 		Keys:   store.CredentialKeyResolver{Pool: pool, Decryptor: transport.decryptor},
@@ -280,19 +320,31 @@ func run(ctx context.Context) error {
 	// 新 Agent 无需等待人工审核：Worker 自动补建初始轮次，并串行完成三次隔离调用和
 	// 一次批量质量评测。所有运行状态都在数据库中，进程退出后下一实例会从租约恢复。
 	admissionDone := make(chan struct{})
-	if admissionEnabled {
+	if admissionEngine != "disabled" {
 		go func() {
 			defer close(admissionDone)
 			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
 			for {
-				result, admissionErr := automaticAdmissionWorker.RunOnce(ctx, 50)
+				var processed, passed bool
+				var admissionErr error
+				if admissionEngine == "temporal" {
+					result, startErr := temporalStarter.RunOnce(ctx, 50)
+					processed, admissionErr = result.Started, startErr
+				} else {
+					result, workerErr := automaticAdmissionWorker.RunOnce(ctx, 50)
+					processed, passed, admissionErr = result.Processed, result.Passed, workerErr
+				}
 				if admissionErr != nil && !errors.Is(admissionErr, context.Canceled) {
 					// 不记录测试任务、Agent 产物或评测响应，防止不可信内容进入基础日志。
 					log.Printf("automatic agent admission had a recoverable failure")
 				}
-				if result.Processed {
-					log.Printf("automatic agent admission completed: passed=%t", result.Passed)
+				if processed {
+					if admissionEngine == "temporal" {
+						log.Printf("automatic agent admission workflow started")
+					} else {
+						log.Printf("automatic agent admission completed: passed=%t", passed)
+					}
 				}
 				select {
 				case <-ctx.Done():
@@ -432,4 +484,15 @@ func booleanEnvOrDefault(name string, fallback bool) (bool, error) {
 		return false, nil
 	}
 	return false, errors.New(name + " must be true or false")
+}
+
+func admissionEngineFromEnvironment(enabled bool) (string, error) {
+	if !enabled {
+		return "disabled", nil
+	}
+	engine := envOrDefault("AGENT_ADMISSION_ENGINE", "postgres")
+	if engine != "postgres" && engine != "temporal" {
+		return "", errors.New("AGENT_ADMISSION_ENGINE must be postgres or temporal")
+	}
+	return engine, nil
 }

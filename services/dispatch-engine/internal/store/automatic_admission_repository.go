@@ -210,6 +210,19 @@ func (r *AutomaticAdmissionRepository) FinishRound(
 		return err
 	}
 	if result.RowsAffected() != 1 {
+		// Activity 可能已提交成功但在返回前断线。相同评测得到的终态是幂等重放，
+		// 不能让 Temporal 把一次成功提交永久重试成失败。
+		var persistedStatus, persistedModel string
+		var persistedScore int
+		err = r.Pool.QueryRow(ctx, `
+			SELECT status,COALESCE(final_score,0),COALESCE(evaluator_model,'')
+			  FROM sandbox_admission_rounds
+			 WHERE id=$1 AND agent_id=$2 AND attempt_no=$3 AND completed_at IS NOT NULL`,
+			claim.RoundID, claim.AgentID, claim.AttemptNo,
+		).Scan(&persistedStatus, &persistedScore, &persistedModel)
+		if err == nil && persistedStatus == status && persistedScore == evaluation.Score && persistedModel == evaluation.Model {
+			return nil
+		}
 		return sandboxadmission.ErrRunLeaseLost
 	}
 	return nil
@@ -232,6 +245,15 @@ func (r *AutomaticAdmissionRepository) ReleaseRound(
 		return err
 	}
 	if result.RowsAffected() != 1 {
+		var status string
+		err = r.Pool.QueryRow(ctx, `
+			SELECT status FROM sandbox_admission_rounds
+			 WHERE id=$1 AND agent_id=$2 AND attempt_no=$3`,
+			claim.RoundID, claim.AgentID, claim.AttemptNo,
+		).Scan(&status)
+		if err == nil && status == "queued" {
+			return nil
+		}
 		return sandboxadmission.ErrRunLeaseLost
 	}
 	return nil

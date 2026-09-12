@@ -160,52 +160,109 @@ func (s *Service) RunSandboxTest(ctx context.Context, command Command) (Result, 
 		return Result{}, errors.New("sandbox round target is incomplete")
 	}
 
-	secret := ""
 	callsStarted := 0
-	defer func() { secret = "" }()
 	for runNo := 1; runNo <= RunsPerRound; runNo++ {
-		claim, claimed, claimErr := s.Repository.ClaimRun(ctx, command.AgentID, command.RoundID, runNo, now, lease)
-		if claimErr != nil {
-			return Result{}, claimErr
+		started, runErr := s.runPreparedStep(ctx, plan, runNo, now, lease)
+		if runErr != nil {
+			return Result{}, runErr
 		}
-		if !claimed {
-			continue
-		}
-		if secret == "" && plan.EncryptedCredential != "" {
-			secret, err = s.Decryptor.DecryptCredential(ctx, plan.EncryptedCredential)
-			if err != nil || secret == "" {
-				_ = s.Repository.ReleaseRun(ctx, claim)
-				return Result{}, errors.New("sandbox signing credential is unavailable")
-			}
-		}
-		callsStarted++
-		testInput, inputErr := testInputForRun(plan, runNo)
-		if inputErr != nil {
-			_ = s.Repository.ReleaseRun(ctx, claim)
-			return Result{}, inputErr
-		}
-		outcome, callErr := s.Caller.Call(ctx, CallRequest{
-			AgentID: command.AgentID, RoundID: command.RoundID, RunNo: runNo,
-			Endpoint: plan.Endpoint, IntegrationMode: plan.IntegrationMode,
-			Secret: secret, Body: testInput,
-			IdempotencyKey: sandboxIdempotencyKey(command.RoundID, runNo),
-		})
-		if callErr != nil {
-			_ = s.Repository.ReleaseRun(ctx, claim)
-			return Result{}, callErr
-		}
-		completedAt := now
-		if s.Now != nil {
-			completedAt = s.Now().UTC()
-		} else {
-			completedAt = time.Now().UTC()
-		}
-		if err = s.Repository.CompleteRun(ctx, claim, outcome, completedAt); err != nil {
-			return Result{}, err
+		if started {
+			callsStarted++
 		}
 	}
-	secret = ""
+	return s.loadPreparedResult(ctx, plan, callsStarted)
+}
+
+// RunSandboxStep 供持久工作流把每次外部 Agent 调用放入独立 Activity。仓储租约与稳定
+// 幂等键仍是最终防重边界，因此 Temporal Activity 重试不会产生第四次逻辑调用。
+func (s *Service) RunSandboxStep(ctx context.Context, command Command, runNo int) (Run, error) {
+	if s.Repository == nil || s.Decryptor == nil || s.Caller == nil || runNo < 1 || runNo > RunsPerRound {
+		return Run{}, errors.New("sandbox admission step is not configured")
+	}
+	now := time.Now().UTC()
+	if s.Now != nil {
+		now = s.Now().UTC()
+	}
+	lease := s.Lease
+	if lease <= 0 {
+		lease = 2 * time.Minute
+	}
+	plan, err := s.Repository.PrepareRound(ctx, command.AgentID, command.RoundID, now)
+	if err != nil {
+		return Run{}, err
+	}
+	if len(plan.TestInput) == 0 || plan.Endpoint == "" ||
+		(plan.IntegrationMode != "http_json" && plan.EncryptedCredential == "") {
+		return Run{}, errors.New("sandbox round target is incomplete")
+	}
+	if _, err = s.runPreparedStep(ctx, plan, runNo, now, lease); err != nil {
+		return Run{}, err
+	}
 	runs, err := s.Repository.ListRound(ctx, command.AgentID, command.RoundID)
+	if err != nil {
+		return Run{}, err
+	}
+	for _, run := range runs {
+		if run.RunNo == runNo {
+			return run, nil
+		}
+	}
+	return Run{}, ErrRoundInconsistent
+}
+
+// LoadSandboxResult 只读取已经持久化的三次调用证据，供质量评测 Activity 使用。
+func (s *Service) LoadSandboxResult(ctx context.Context, command Command) (Result, error) {
+	now := time.Now().UTC()
+	if s.Now != nil {
+		now = s.Now().UTC()
+	}
+	plan, err := s.Repository.PrepareRound(ctx, command.AgentID, command.RoundID, now)
+	if err != nil {
+		return Result{}, err
+	}
+	return s.loadPreparedResult(ctx, plan, 0)
+}
+
+func (s *Service) runPreparedStep(ctx context.Context, plan RoundPlan, runNo int, now time.Time, lease time.Duration) (bool, error) {
+	claim, claimed, err := s.Repository.ClaimRun(ctx, plan.AgentID, plan.RoundID, runNo, now, lease)
+	if err != nil || !claimed {
+		return false, err
+	}
+	secret := ""
+	defer func() { secret = "" }()
+	if plan.EncryptedCredential != "" {
+		secret, err = s.Decryptor.DecryptCredential(ctx, plan.EncryptedCredential)
+		if err != nil || secret == "" {
+			_ = s.Repository.ReleaseRun(ctx, claim)
+			return false, errors.New("sandbox signing credential is unavailable")
+		}
+	}
+	testInput, err := testInputForRun(plan, runNo)
+	if err != nil {
+		_ = s.Repository.ReleaseRun(ctx, claim)
+		return false, err
+	}
+	outcome, err := s.Caller.Call(ctx, CallRequest{
+		AgentID: plan.AgentID, RoundID: plan.RoundID, RunNo: runNo, Endpoint: plan.Endpoint,
+		IntegrationMode: plan.IntegrationMode, Secret: secret, Body: testInput,
+		IdempotencyKey: sandboxIdempotencyKey(plan.RoundID, runNo),
+	})
+	if err != nil {
+		_ = s.Repository.ReleaseRun(ctx, claim)
+		return false, err
+	}
+	completedAt := time.Now().UTC()
+	if s.Now != nil {
+		completedAt = s.Now().UTC()
+	}
+	if err = s.Repository.CompleteRun(ctx, claim, outcome, completedAt); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Service) loadPreparedResult(ctx context.Context, plan RoundPlan, callsStarted int) (Result, error) {
+	runs, err := s.Repository.ListRound(ctx, plan.AgentID, plan.RoundID)
 	if err != nil {
 		return Result{}, err
 	}
@@ -221,7 +278,7 @@ func (s *Service) RunSandboxTest(ctx context.Context, command Command) (Result, 
 		testInputs = append(testInputs, testInput)
 	}
 	return Result{
-		AgentID: command.AgentID, RoundID: command.RoundID,
+		AgentID: plan.AgentID, RoundID: plan.RoundID,
 		AgentName: plan.AgentName, Capability: plan.Capability, TestInputs: testInputs,
 		Runs: runs, CallsStarted: callsStarted,
 	}, nil
