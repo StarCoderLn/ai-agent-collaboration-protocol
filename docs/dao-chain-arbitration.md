@@ -1,6 +1,6 @@
 # 独立链上 DAO 仲裁
 
-更新日期：2026-09-10。案件、Escrow、奖励池、Chainlink VRF v2.5 subscription 与 8 名创始仲裁员已在 Sepolia 启用；真实奖励付款已经确认。新版案件已分别完成中位数结算、参与不足恢复退款，以及钱包付费申诉、终审结算和保证金取回闭环。有期限恢复与申诉资金路径均已有公共测试网证据。
+更新日期：2026-09-12。案件、Escrow、奖励池、Chainlink VRF v2.5 subscription 与 8 名创始仲裁员已在 Sepolia 启用；真实奖励付款已经确认。新版案件已分别完成中位数结算、参与不足恢复退款，以及钱包付费申诉、终审结算和保证金取回闭环。真实文件附件的上传、鉴权下载、摘要复核、钱包锚定与刷新恢复也已完成公共测试网验收。
 
 ## 用户流程与资金边界
 
@@ -139,7 +139,7 @@ USDC 仲裁服务费不会自动变成 YD 奖励，奖励池需要平台独立�
 3. VRF 网络参数、subscription、充值和 consumer 注册已经完成；8 个创始钱包的 Gas、YD 与 100 YD 质押也已完成。
 4. 首个案件因首审零票自动升级，五人终审同样错过投票窗口并进入旧合约 `stalled`。链上只读复核确认对应 Escrow 仍为 `Deposited`，12 USDC、已释放 0；旧 Escrow 不可重绑且旧案件合约没有恢复入口，这笔测试资金只能记录为旧部署损失并另行补偿，不能伪装成原托管退款。
 5. 新版首个 5 USDC 案件完成首审 0%/50%/100% 无多数升级和终审 0%/0%/50%/50%/100% 投票；终审规则对有效比例取中位数，结果为 50%，Escrow 已按 2.5 USDC 发布者退款、2.5 USDC Agent 毛额完成结算，平台费 0.1 USDC 从 Agent 毛额扣除。
-6. 文件原始字节已由 0048 的内容寻址 `BYTEA` 存储保护，文字证据的钱包锚定已经完成；真实文件附件的上传、授权下载和钱包锚定仍需跨端验收。异地备份/恢复演练与第三方合约审计仍是正式资金上线前条件。
+6. 文件原始字节已由 0048 的内容寻址 `BYTEA` 存储保护；文字与真实文件附件的上传、鉴权下载、摘要复核和钱包锚定均已完成跨端验收。异地备份/恢复演练与第三方合约审计仍是正式资金上线前条件。
 
 部署脚本需要显式配置：
 
@@ -183,7 +183,7 @@ API 启用变量见 `services/business-api/.env.example`。Anvil 仍使用本地
 
 - 最新有期限恢复基线：Foundry 40/40 通过，覆盖申诉冻结、终审中位数、候选资格、VRF 回调防伪与重放、证据、奖励守恒、恢复窗口、公开兜底及错误结算拒绝。
 - 最新 DAO/争议专项：API 15/15、Web 21/21 通过，两端类型检查与生产构建通过；历史阶段性全量与专项结果保留在下方日期记录中。
-- Sepolia 人工验收已完成真实 VRF、首审、钱包付费申诉、终审、50% 结算、参与不足恢复退款、奖励付款和保证金领取；在线到账提示与分页记录也已完成浏览器验收。文件附件跨端验收仍按任务清单保持未完成。
+- Sepolia 人工验收已完成真实 VRF、首审、钱包付费申诉、终审、50% 结算、参与不足恢复退款、奖励付款、保证金领取及真实文件附件跨端流程；在线到账提示与分页记录也已完成浏览器验收。
 - 2026-09-06 经用户批准执行体验库 `0041`：只读复核为 v41、dirty=false，原有 2 个任务保留；争议、证据、成员镜像仍各为 0，新案件表为空，证据保护触发器已安装，DAO 概览可读。此前未迁移 v40 的兼容检查同样通过。
 - 迁移后在独立库复跑 DAO 服务、争议集成、案件契约及 RPC 回归：4 个测试文件、19 项通过；未在体验库写入测试案件。
 - 100 YD 门槛专项：DAO 合约 6 项、本地启动器 13 项、API 配置 2 项测试通过；覆盖 99/100 边界、旧 1000 YD 质押不变与退出仍可全额取回。
@@ -199,13 +199,15 @@ API 启用变量见 `services/business-api/.env.example`。Anvil 仍使用本地
 - 2026-09-09 新版中位数真实闭环：任务 `1e934cba-8f25-4ce3-9ceb-083384ad2216` 托管 5 USDC；争议 `fd60aaff-91e0-47c4-a56f-287356cc451f` 两次真实 VRF 分案成功，终审五票中位数为 50%。`WorkflowSettled` 交易 `0x72d7b49e6b66529e621145876792dd554a35566cbcca8656dca437ca4f706f0b` 确认后，Escrow 为 Released、累计释放 2.5 USDC，发布者退款 2.5 USDC。
 - 2026-09-09 恢复真实闭环：任务 `ec9fc5e7-06ff-4d62-bb9e-ef3e18054ef0` 以 1.5 USDC 单节点报价完成 Deposit；争议 `54baac2b-7dd5-44f6-ab03-8c6ddcdcc856` 完成两次真实 VRF 分案。首审 0%/50%/100% 后无多数升级终审；终审只提交 0% 和 100% 两票，截止后 `closeRound` 确认进入 Recovery。恢复角色随后以 0% 和理由承诺裁决，Escrow 的 `DisputeRefunded` 确认后任务为 `refunded`、争议为 `executed`、资金解冻。链上 `escrowOf` 为 amount 1.5 USDC、released 0、state `Refunded`，新 Escrow 的 USDC 余额为 0。
 - 2026-09-10 钱包申诉真实闭环：任务 `9df9f07a-8041-4308-a718-22b940973414`、争议 `f3677596-a692-421a-b5d2-d8b3b9b4694c` 完成 1 USDC 保证金与 0.1 USDC 服务费支付、三人首审、五人终审和 50% 裁决。1.5 USDC 托管最终向 Agent/发布者各分配 0.75 USDC 毛额，平台费 0.05 USDC，Agent 实收 0.70 USDC；8 名有效投票者各 10 YD 均已付款。发布者随后主动领取 1 USDC 保证金，Sepolia 链上 `usdcCredit` 复核为 0。
-- 未完成：旧部署中已 `stalled` 的 12 USDC 无法由不可升级旧合约原路退款。平台独立补偿条款和可恢复付款器已落库，但付款钱包尚缺 12 Sepolia USDC，且尚未获得具体付款广播授权。真实文件附件的跨端上传/下载验收、异地备份/恢复演练和正式资金上线前第三方审计仍待完成。恢复窗口到期后的无权限公开 `finalizeRecovery` 已由合约测试覆盖，本次 Sepolia 案件在窗口内由受权角色及时恢复，未再次等待 30 分钟。
+- 2026-09-12 真实附件终验：任务 `ad2c3042-b47b-4db4-9ad3-760a6ef592b6`、争议 `a67e40b3-2f0e-49a2-8674-1ad1331bb417` 上传 278 字节 `sepolia-dao-browser-evidence.txt`。证据 `84ae2d29-360c-4881-a9e8-0d02b15081a7` 绑定对象 `4d187cac-617e-4918-a86d-59e2011af85f`；浏览器下载文件与源文件 SHA-256 同为 `91f095898dcd708860ba411beea4ac65931cd219bc2a2967685488c94c81c6d0`，无 Cookie 下载返回 401。锚定交易 `0xde5028a722ecbb9652e2a9c461f37eea9fad57323140ed42cdbc9d0f02170cb7` 在区块 `11683927` 成功，事件字段与数据库内容承诺一致，刷新后下载与锚定状态正确恢复。
+- 未完成：旧部署中已 `stalled` 的 12 USDC 无法由不可升级旧合约原路退款。平台独立补偿条款和可恢复付款器已落库，但付款钱包尚缺 12 Sepolia USDC，且尚未获得具体付款广播授权。正式环境异地备份/恢复演练和正式资金上线前第三方审计仍待完成。恢复窗口到期后的无权限公开 `finalizeRecovery` 已由合约测试覆盖，本次 Sepolia 案件在窗口内由受权角色及时恢复，未再次等待 30 分钟。
 
-### Sepolia 真实案件交易清单（更新至 2026-09-10）
+### Sepolia 真实案件交易清单（更新至 2026-09-12）
 
 - 5 USDC 中位数案件：Deposit `0xb05a499bd06b0908e20b0e9992f041010a01e5dec31ae59cd32d1479232e9fec`；open `0xef058d7f53a45f92f5a962975ca612bf78e7324c353354c985c3ed100b89e96a`；首审 request/select/close 分别为 `0xfbf765f754947853771a6e060cc980ce8a658a75e5f0fc2393cad6304c7b60e7`、`0x3570c87b39f5e4833846cfb07a18bf0c057e512fe30907a5ea40757a02c0fad6`、`0x62913e99b055c2d6311272b176aabadc0aa73c410abb3d90d74cd79bfe387884`；终审 request/select/close 分别为 `0x88c35bf0951255b07786bdeaca8c127dda67cf330676cae4124df2463864b11b`、`0x9c8c1b5d331250306a745b180851363a733b745ac756b34766484b1cdba89ffd`、`0x7cc2616c1ef5808e2571f33ee7130541b5d1a766785586f041a2935b2fbc1608`；结算为 `0x72d7b49e6b66529e621145876792dd554a35566cbcca8656dca437ca4f706f0b`。首审三票为 `0x1b5cef61d6bdab95c8b79bc4e355afcc9bd9a82b91acf5ce6c4f530ef929b834`、`0xe1186ccb7e1d4e9b7d403af147a56559ffde74adbe75cb6244321ae1a917f636`、`0x3201cfd61af09f0361752a77bb9cf03f746c71e15290fb07a38516b21917c759`；终审五票为 `0x62914fbb263e46927e31bed675ee57c77e03d8f1e526727323e29abe47de5ea3`、`0x56cb763686da0c82987e0ee324ac11973929a372aa9645806ac840301b262ea2`、`0x28b682f096d31e68c02f12e6f5df3a5670e8126a0a2b18fe65aac6ecd7b1efc2`、`0x18bbd240c5472bfb38c57e61478e3789e577ca3a46869879dd5f4f6fe06e6e8b`、`0x4003ba6c6466a0b0ca72cf9cf83ca4524a9869a0fffb56b055c4d56a59c2b33a`。
 - 1.5 USDC Recovery 案件：Deposit `0xbc9ad3ace724483a2ff387f7033736855d40454bfbcfed8ae2c39ecf5c8e36fe`；open `0xabdb5f05583fea1a9c241c46a23bf5b89e63d93d9a6dfa6a9c60f5e96614e833`；首审 request/select/close 分别为 `0x1acf76e3a2c520aca07f8445c6fd359d917db62f790383b6dae4426aa52f35ed`、`0xe8d54de02153d7d2176a3222e22cee542494ac4887bebe7d0902a12d9e373aac`、`0x39a2395fa28d949b91fa87bace05cea568d6b65624912797deee14768f1fb21b`；首审三票为 `0xe7f51932f006018fedadea10d56c120819634a56ff6ffc96239c0eba31a5c7a2`、`0x2a8577ce0d92fa1605eb745ad10495941d4a3987bc748cce5932c4793cd350dd`、`0x438b87e1e2d676380f58091e0058c278ca150fe1ef639d7cc2847908bcedc3fd`；终审 request/select/close 分别为 `0x7b9f1ff0ce357c44f9bbd2892ca28f4c21f62eb58c9266a2c6fc3e768efc5229`、`0x9699dfafa497c7f306c70e27c51f8e21ea2e42087c3a4aafeb53bb71f09323e5`、`0x7d89a7c94d44f6f8f4e61fbee31a4e9bd0b40584f4746d1e5e9be9a79dda7768`；终审两票为 `0xa7857a80277ccfe0d99defa3659439d8a10038a1e878106371b06f3344f42329`、`0x0415770e45ecb1b5ae932fc0bc01105f45961e1c1976eb7c431e9b9ee0cb9a9f`；恢复裁决 `0xe56cd2166162cc3443645cc35e015e4a10768ee931c146c63e21b379744a3ea6`；全额退款 `0x5bd869c71f1aa8d8f9c4f486c77153e6268733bbf19020f7b8a2f0129783afad`。
 - 1.5 USDC 付费申诉案件：Deposit `0x3c4f4db464af1045e0116fc43273b1faed3e8ce407338087fdbbaa6a736bb39f`；open `0xca82b8b3481493ebdad429e45479c23fb6a2666820cb6a47f8793188425f1047`；首审三票为 `0x10bc3c9b1480b6f92e5ac29ceaba9052a4c5d9af3468cb72376066e6f49d2ba9`、`0x0745092ea1b8504bba44cf1a8024fb010b81fcc9e9699c66a16cd649f2dc046c`、`0x886713917abfe09d39a00403c1bb50ece38add373eacf3327f5f67105ca25da2`；终审五票为 `0x5ad39b7057d25c5b0a0e4f211628edf09bd434e64e1fa89c0fb6d24bfdc70093`、`0xc3b8a7895675ca08ddc0b2ced6e6f312c16e7e7db6a9ca4923ae8e5260f50e43`、`0xd80456ab0a33cfb2c70d4ab9a568e93776e045d226ead2060144f278a0f707ee`、`0xa130c4c5b3cf84f5d7b9c4d5c33b8e348d78d71e7c7851bb9c92174a80259da2`、`0x4f5cd825699b4c9fd34c1c08709059f728d649beba3cccfeaa161e57d5230358`；50% 结算为 `0xad2a3fb08a2d2a38f39df561e46dd5d98a1207049fd1de6248a2d0c39e10cfce`。保证金领取后按当前钱包读取 `usdcCredit=0`。
+- 1.5 USDC 真实附件案件：open `0x3912f31659f98ec0c4180907dbc6e2707bc8f31b789a5e97d7342843303e2a91`；证据锚定 `0xde5028a722ecbb9652e2a9c461f37eea9fad57323140ed42cdbc9d0f02170cb7`；链上 case key 为 `0xc302cd841d4f40cca7fdf9de27ba32f38065538049cd1ffbca4a4b4939fcbcff`。
 
 ### 自动发放增量验证
 
