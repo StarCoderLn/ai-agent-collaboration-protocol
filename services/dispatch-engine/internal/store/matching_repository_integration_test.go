@@ -285,12 +285,35 @@ func TestPendingInitialWorkflowNodesRetriesAutomaticNodeWithFrozenCandidates(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = pool.Exec(ctx, `
+	var distributionRecordID string
+	err = pool.QueryRow(ctx, `
 		INSERT INTO job_distribution_records(
 		 task_id,workflow_node_id,rule_version,input_fingerprint,input_snapshot,candidates,filter_reasons
 		) VALUES ($1,$2,'ranking-v1','frozen-before-dispatch','{}'::jsonb,
 		 '[{"agentId":"80000000-0000-4000-8000-000000000002","quoteMinor":"7000000"}]'::jsonb,
-		 '{}'::jsonb)`, integrationTaskID, integrationNodeID)
+		 '{}'::jsonb) RETURNING id::text`, integrationTaskID, integrationNodeID).Scan(&distributionRecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO agents(
+		 id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,
+		 pricing_type,price_amount,price_currency,service_endpoint,email,status,
+		 estimated_duration_seconds,response_minutes
+		) VALUES ($1,'0x1111111111111111111111111111111111111111',
+		 '0x1111111111111111111111111111111111111111','超时恢复 Agent',$2,'自动分配',
+		 ARRAY['agent'],'fixed',7000000,'USDC','http://127.0.0.1:3999/agent',
+		 'timeout-recovery@example.com','active',1800,1)`, integrationAgentID, integrationCategory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const failedAssignmentID = "80000000-0000-4000-8000-000000000006"
+	_, err = pool.Exec(ctx, `
+		INSERT INTO task_assignments(
+		 id,task_id,workflow_node_id,agent_id,distribution_record_id,agreed_amount_minor,
+		 status,assigned_by,accept_by,responded_at
+		) VALUES ($1,$2,$3,$4,$5,7000000,'accept_failed','system:auto',now()-interval '1 minute',now())`,
+		failedAssignmentID, integrationTaskID, integrationNodeID, integrationAgentID, distributionRecordID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,6 +334,18 @@ func TestPendingInitialWorkflowNodesRetriesAutomaticNodeWithFrozenCandidates(t *
 	// 能被扫描到，不能把“数据库里没有其他待处理业务”当成被测契约的一部分。
 	if !found {
 		t.Fatalf("automatic node with frozen candidates must remain retryable: got=%+v want=%+v", targets, want)
+	}
+	input, err := (&MatchingRepository{Pool: pool}).LoadWorkflowNodeInput(
+		ctx, integrationTaskID, integrationNodeID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 接单拒绝和接单超时都会落为 accept_failed。下一次派发必须把这条终态分配纳入
+	// 幂等身份，否则会重放第一次已经失败的派发记录，节点将永久卡在 matching。
+	if input.PreviousAssignmentID != failedAssignmentID {
+		t.Fatalf("accept_failed assignment must create replacement identity: got=%q want=%q",
+			input.PreviousAssignmentID, failedAssignmentID)
 	}
 }
 

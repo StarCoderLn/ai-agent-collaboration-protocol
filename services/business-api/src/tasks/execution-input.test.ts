@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   acceptResultInputSchema,
   executionStatusInputSchema,
+	resultSubmissionInputSchema,
   workflowExecutionStatusInputSchema,
 } from "./execution-input";
 
@@ -41,6 +42,22 @@ describe("execution input contracts", () => {
       message: "请确认是否需要额外导出 JSON Schema。",
     }).success).toBe(true);
   });
+
+	it("接受标准 Content-Type 参数并只持久化基础 MIME", () => {
+		const parsed = resultSubmissionInputSchema.parse({
+			agentId: AGENT_ID,
+			assignmentId: ASSIGNMENT_ID,
+			results: [{
+				kind: "inline",
+				summary: "资料调研报告",
+				mimeType: "text/markdown; charset=utf-8",
+				content: "# 调研结果",
+				generatedAt: "2026-09-13T05:25:20.000Z",
+			}],
+		});
+
+		expect(parsed.results[0]?.mimeType).toBe("text/markdown");
+	});
 
   it("rejects an ETA before the report and unbounded attention text", () => {
     expect(executionStatusInputSchema.safeParse({

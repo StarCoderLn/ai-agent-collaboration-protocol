@@ -164,14 +164,20 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		).Scan(&input.Task.ID, &input.Task.CategoryID, &input.Task.Tags, &input.Task.BudgetMinor, &input.Task.Currency,
 			&input.Task.Deadline, &input.TaskUpdatedAt, &status, &input.AssignmentMode)
 	} else {
+		// accept_failed 同时覆盖 Agent 主动拒绝和接单超时；cancelled 覆盖发布者对执行失败
+		// 发起的显式恢复。两者都已经结束旧 assignment，下一次派发必须把其 ID 写入新的
+		// 幂等键。pending_ack/accepted 仍返回空值，防止正在接单或执行时创建重复分配。
 		err = tx.QueryRow(ctx,
 			`SELECT task.id::text,node.category_id::text,node.tags,
 			        COALESCE(node.price_preference_minor,0),
 			        task.currency,task.deadline,GREATEST(task.updated_at,node.updated_at),node.status,
 			        task.assignment_mode_config->>'mode',
 			        COALESCE((
-			          SELECT CASE WHEN assignment.status='cancelled' THEN assignment.id::text ELSE '' END
-			            FROM task_assignments assignment
+			        SELECT CASE
+			                 WHEN assignment.status IN ('accept_failed','cancelled')
+			                 THEN assignment.id::text ELSE ''
+			               END
+			          FROM task_assignments assignment
 			           WHERE assignment.workflow_node_id=node.id
 			           ORDER BY assignment.assigned_at DESC,assignment.id DESC
 			           LIMIT 1

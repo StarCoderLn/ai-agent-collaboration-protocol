@@ -2,7 +2,12 @@ import { z } from "zod";
 
 const uuid = z.string().uuid();
 const isoTime = z.string().datetime({ offset: true });
-const mimeType = z.string().trim().min(1).max(200).regex(/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i);
+// Agent 可以按 HTTP Content-Type 发送 `type/subtype; parameter=value`；参数描述字符集或
+// 传输方式，不属于持久化制品种类。平台在唯一输入边界提取基础媒体类型，使所有接入
+// 模式和失败重投共享同一规则，同时继续拒绝缺少合法 type/subtype 的输入。
+const mimeType = z.string().trim().min(1).max(200)
+  .transform((value) => value.split(";", 1)[0]?.trim() ?? "")
+  .pipe(z.string().regex(/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i));
 const integerString = z.string().regex(/^(0|[1-9]\d{0,18})$/);
 
 const executionProgressInputSchema = z.object({
