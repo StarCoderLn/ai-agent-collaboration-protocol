@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveAppLocale } from "./locale";
-import { type MessageId, translate } from "./messages";
+import { type MessageId, translate, translateKnownText } from "./messages";
 
 describe("application locale boundary", () => {
 	it("uses a saved preference before browser language negotiation", () => {
@@ -27,5 +27,15 @@ describe("application locale boundary", () => {
 
 	it("英文目录遇到动态未知键时回退源文案，不让次要翻译缺失导致整页崩溃", () => {
 		expect(translate("en", "未来新增状态" as MessageId)).toBe("未来新增状态");
+	});
+
+	it("只翻译平台内置的动态目录文案，保留用户自定义名称", () => {
+		expect(translateKnownText("en", "网页调研助手")).toBe(
+			"Web Research Assistant",
+		);
+		expect(translateKnownText("en", "Alice 的品牌写作助手")).toBe(
+			"Alice 的品牌写作助手",
+		);
+		expect(translateKnownText("zh-CN", "网页调研助手")).toBe("网页调研助手");
 	});
 });

@@ -94,7 +94,7 @@ import {
 	type WorkflowFeedbackInput,
 	type WorkflowFeedbackStrength,
 } from "@/lib/api/tasks";
-import type { MessageId } from "@/lib/i18n/messages";
+import { type MessageId, translateKnownText } from "@/lib/i18n/messages";
 import {
 	deadlineIsoToLocalDate,
 	localDateToDeadlineIso,
@@ -1643,7 +1643,9 @@ function CandidateSelection({
 								</span>
 								<div>
 									<div className="flex flex-wrap items-center gap-2">
-										<h3 className="font-semibold">{candidate.name}</h3>
+										<h3 className="font-semibold">
+											{translateKnownText(locale, candidate.name)}
+										</h3>
 										{index === 0 && (
 											<span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] text-secondary-foreground">
 												{t("排序第一")}
@@ -2563,7 +2565,7 @@ function WorkflowFeedbackPanel({
 	busy: boolean;
 	run: (label: string, action: () => Promise<unknown>) => Promise<void>;
 }) {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
 	const nodes = workflow.nodes.filter(
 		(node) => node.status === "accepted" && node.assignment !== null,
 	);
@@ -2621,7 +2623,9 @@ function WorkflowFeedbackPanel({
 										{node.title}
 									</span>
 									<span className="mt-0.5 block truncate text-muted-foreground text-xs">
-										{node.assignment?.agentName}
+										{node.assignment === null
+											? "—"
+											: translateKnownText(locale, node.assignment.agentName)}
 									</span>
 								</span>
 							</button>
@@ -2663,7 +2667,7 @@ function WorkflowFeedbackForm({
 	busy: boolean;
 	onSubmit: (input: WorkflowFeedbackInput) => Promise<void>;
 }) {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
 	const [quality, setQuality] = useState(5);
 	const [communication, setCommunication] = useState(5);
 	const [comment, setComment] = useState("");
@@ -2677,7 +2681,9 @@ function WorkflowFeedbackForm({
 				<div>
 					<p className="text-muted-foreground text-xs">{t("当前评价")}</p>
 					<h3 className="mt-1 font-semibold text-xl">
-						{node.assignment?.agentName}
+						{node.assignment === null
+							? "—"
+							: translateKnownText(locale, node.assignment.agentName)}
 					</h3>
 					<p className="mt-1 text-muted-foreground text-sm">{node.title}</p>
 				</div>

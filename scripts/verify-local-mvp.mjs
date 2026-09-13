@@ -177,10 +177,10 @@ async function main() {
 	await advanceChain("escrow-sync");
 	await waitForTaskStatus(taskId, sessionCookie, ["matching"], 60_000);
 
-	console.log("4/10 执行真实匹配并选择快速代码生成 Agent");
+	console.log("4/10 执行真实匹配并选择页面速建师");
 	const candidates = await waitForCandidates(taskId, sessionCookie, 60_000);
 	if (!candidates.candidates.some((candidate) => candidate.agentId === CODE_AGENT_ID)) {
-		throw new Error("匹配结果没有包含已上架的快速代码生成 Agent");
+		throw new Error("匹配结果没有包含已上架的页面速建师");
 	}
 	const assigned = await api(`/api/tasks/${taskId}/assignments`, {
 		method: "POST", cookie: sessionCookie, key: key("assign"), body: { agentId: CODE_AGENT_ID }, schema: AssignmentSchema,

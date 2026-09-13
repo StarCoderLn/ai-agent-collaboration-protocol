@@ -591,7 +591,7 @@ describe("formal task API client", () => {
 			workflowNodeId,
 			assignmentId,
 			agentId,
-			agentName: "可靠前端开发 Agent",
+			agentName: "前端交付专家",
 			quality: 5,
 			communication: 4,
 			comment: "设计还原准确，页面可以直接体验。",

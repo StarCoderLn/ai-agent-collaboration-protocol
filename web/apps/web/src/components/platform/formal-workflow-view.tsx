@@ -67,6 +67,8 @@ import {
 	type WorkflowAcceptancePreview,
 	type WorkflowArtifact,
 } from "@/lib/api/tasks";
+import type { AppLocale } from "@/lib/i18n/locale";
+import { translateKnownText } from "@/lib/i18n/messages";
 import {
 	deadlineIsoToLocalDate,
 	localDateToDeadlineIso,
@@ -558,7 +560,7 @@ function WorkflowRootNode({ data }: NodeProps<RootGraphNode>) {
 }
 
 function WorkflowStageNode({ data }: NodeProps<StageGraphNode>) {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
 	const node = data.node;
 	return (
 		<button
@@ -602,9 +604,11 @@ function WorkflowStageNode({ data }: NodeProps<StageGraphNode>) {
 			<h3 className="mt-1 line-clamp-1 font-semibold text-sm">{node.title}</h3>
 			<div className="mt-3 flex items-center justify-between gap-3 text-[10px] text-muted-foreground">
 				<span>
-					{node.assignment?.agentName ??
-						node.selection?.agentName ??
-						t("等待分配 Agent")}
+					{node.assignment?.agentName !== undefined
+						? translateKnownText(locale, node.assignment.agentName)
+						: node.selection?.agentName !== undefined
+							? translateKnownText(locale, node.selection.agentName)
+							: t("等待分配 Agent")}
 				</span>
 				<span>{workflowNodePriceLabel(node, data.currency, t)}</span>
 			</div>
@@ -621,6 +625,7 @@ function WorkflowStageNode({ data }: NodeProps<StageGraphNode>) {
 }
 
 function WorkflowAgentNode({ data }: NodeProps<AgentGraphNode>) {
+	const { locale } = useLocale();
 	return (
 		<article
 			data-testid={`formal-agent-${data.id}`}
@@ -639,7 +644,9 @@ function WorkflowAgentNode({ data }: NodeProps<AgentGraphNode>) {
 					<Bot className="size-4" />
 				</span>
 				<div className="min-w-0 flex-1">
-					<h4 className="truncate font-semibold text-xs">{data.name}</h4>
+					<h4 className="truncate font-semibold text-xs">
+						{translateKnownText(locale, data.name)}
+					</h4>
 					<p className="mt-1 truncate text-[10px] text-muted-foreground">
 						{data.status}
 					</p>
@@ -671,7 +678,7 @@ function WorkflowStageNavigator({
 	retryingNodeId: string | null;
 	onSelect: (nodeId: string) => void;
 }) {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
 	const copy = workflowStageNavigatorCopy(viewMode, t);
 	return (
 		<section className="overflow-hidden rounded-2xl border border-primary/20 bg-card">
@@ -710,7 +717,9 @@ function WorkflowStageNavigator({
 							</div>
 							<p className="mt-2 font-medium text-sm">{node.title}</p>
 							<p className="mt-1 truncate text-muted-foreground text-xs">
-								{node.assignment?.agentName ?? t("等待分配 Agent")}
+								{node.assignment?.agentName === undefined
+									? t("等待分配 Agent")
+									: translateKnownText(locale, node.assignment.agentName)}
 							</p>
 						</button>
 					);
@@ -1250,15 +1259,17 @@ function WorkflowAllocationSummary({
 	onConfirmSelectionUnlock(): Promise<void>;
 	busy: boolean;
 }) {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
 	return (
 		<div className="flex min-h-65 items-center justify-center px-6 py-10 text-center">
 			<div className="max-w-lg">
 				<Bot className="mx-auto size-10 text-secondary" />
 				<h3 className="mt-4 font-semibold text-xl">
-					{node.assignment?.agentName ??
-						node.selection?.agentName ??
-						t("等待该阶段选择 Agent")}
+					{node.assignment?.agentName !== undefined
+						? translateKnownText(locale, node.assignment.agentName)
+						: node.selection?.agentName !== undefined
+							? translateKnownText(locale, node.selection.agentName)
+							: t("等待该阶段选择 Agent")}
 				</h3>
 				<p className="mt-2 text-muted-foreground text-sm leading-7">
 					{node.assignment === null
@@ -1348,7 +1359,7 @@ function WorkflowExecutionSummary({
 	busy: boolean;
 	run: RunAction;
 }) {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
 	// 返工会保留上一版产物供审计和对比，因此“存在产物”不能代表本轮执行已完成。
 	// 当前节点状态才是唯一权威来源，避免 rework/executing 被旧产物误画成绿色完成态。
 	const completed = ["awaiting_review", "accepted"].includes(node.status);
@@ -1415,7 +1426,10 @@ function WorkflowExecutionSummary({
 						/>
 						<SummaryValue
 							label={t("执行 Agent")}
-							value={node.assignment?.agentName ?? "—"}
+							value={displayWorkflowAgentName(
+								locale,
+								node.assignment?.agentName,
+							)}
 							preferSingleLine
 							className="sm:w-fit sm:max-w-full"
 						/>
@@ -1449,7 +1463,10 @@ function WorkflowExecutionSummary({
 						/>
 						<SummaryValue
 							label={t("执行 Agent")}
-							value={node.assignment?.agentName ?? "—"}
+							value={displayWorkflowAgentName(
+								locale,
+								node.assignment?.agentName,
+							)}
 						/>
 					</div>
 					<Button
@@ -1518,7 +1535,7 @@ function WorkflowExecutionSummary({
 					/>
 					<SummaryValue
 						label={t("执行 Agent")}
-						value={node.assignment?.agentName ?? "—"}
+						value={displayWorkflowAgentName(locale, node.assignment?.agentName)}
 						preferSingleLine
 						className="sm:w-fit sm:max-w-full"
 					/>
@@ -1870,7 +1887,7 @@ function WorkflowCandidateSelection({
 	replacing: boolean;
 	onCancel(): void;
 }) {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
 	const candidates = node.candidateRecord?.candidates ?? [];
 	const filterReasons = node.candidateRecord?.filterReasons ?? {};
 	const deadlineBlocked =
@@ -2029,7 +2046,9 @@ function WorkflowCandidateSelection({
 							>
 								<div className="flex items-start justify-between gap-3">
 									<div className="min-w-0">
-										<p className="truncate font-semibold">{candidate.name}</p>
+										<p className="truncate font-semibold">
+											{translateKnownText(locale, candidate.name)}
+										</p>
 										<p className="mt-1 text-[11px] text-muted-foreground">
 											{t("当前偏好排序")} #{index + 1} ·{" "}
 											{confidenceLabel(candidate.confidence ?? "low", t)}
@@ -3212,4 +3231,11 @@ function artifactAsResult(artifact: WorkflowArtifact) {
 
 function key(scope: string): string {
 	return `${scope}:${crypto.randomUUID()}`;
+}
+
+function displayWorkflowAgentName(
+	locale: AppLocale,
+	name: string | undefined,
+): string {
+	return name === undefined ? "—" : translateKnownText(locale, name);
 }

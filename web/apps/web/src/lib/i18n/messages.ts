@@ -558,6 +558,9 @@ export const EN_MESSAGES = {
 	已选择的技能标签: "Selected skill tags",
 	"另有 {count} 个技能标签": "{count} more skill tags",
 	研究分析: "Research & analysis",
+	"产品需求与 PRD": "Product requirements & PRD",
+	产品界面设计: "Product interface design",
+	软件开发: "Software development",
 	内容写作: "Content writing",
 	图片设计: "Image design",
 	视频制作: "Video production",
@@ -1019,34 +1022,60 @@ export const EN_MESSAGES = {
 	已验收: "Approved",
 	失败: "Failed",
 	"DeepSeek 直连": "Direct DeepSeek",
-	"快速需求整理 Agent": "Rapid Requirements Agent",
+	需求速成师: "Rapid Requirements Writer",
 	"一次生成结构化 PRD，速度和成本基线。":
 		"Generate a structured PRD in one call for the speed and cost baseline.",
 	"Mastra 编排": "Mastra Orchestration",
-	"Mastra 需求分析 Agent": "Mastra Requirements Agent",
+	产品需求策划师: "Product Requirements Strategist",
 	"先规划覆盖范围，再由 Mastra 生成完整需求制品。":
 		"Plan coverage first, then use Mastra to generate the complete requirements artifact.",
 	自研状态机: "Custom State Machine",
-	"深度需求拆解 Agent": "Deep Requirements Agent",
+	需求质量顾问: "Requirements Quality Advisor",
 	"分析、生成、评审并最多修复一次。":
 		"Analyze, generate, review, and apply up to one repair pass.",
-	"快速界面设计 Agent": "Rapid Interface Design Agent",
+	界面速创师: "Rapid Interface Designer",
 	"一次生成设计 token、页面、组件与交互规范。":
 		"Generate design tokens, pages, components, and interaction rules in one call.",
-	"Mastra 产品设计 Agent": "Mastra Product Design Agent",
+	产品体验设计师: "Product Experience Designer",
 	"先规划需求覆盖，再生成结构化设计稿。":
 		"Plan requirements coverage before generating the structured design artifact.",
-	"设计评审与完善 Agent": "Design Review & Refinement Agent",
+	设计质量顾问: "Design Quality Advisor",
 	"显式校验交互、响应式、无障碍和素材覆盖。":
 		"Explicitly validate interaction, responsiveness, accessibility, and asset coverage.",
-	"快速代码生成 Agent": "Rapid Code Generation Agent",
+	页面速建师: "Rapid Page Builder",
 	"直接生成文件树、代码、运行说明和测试计划。":
 		"Directly generate the file tree, code, run instructions, and test plan.",
-	"Mastra 编程 Agent": "Mastra Coding Agent",
+	产品前端开发师: "Product Frontend Developer",
 	"先规划实现范围，再生成可运行代码制品。":
 		"Plan implementation scope before generating a runnable code artifact.",
 	"规划测试修复 Coding Agent": "Plan-Test-Repair Coding Agent",
-	"可靠前端开发 Agent": "Reliable Frontend Development Agent",
+	前端交付专家: "Frontend Delivery Specialist",
+	复杂前端开发专家: "Complex Frontend Specialist",
+	网页调研助手: "Web Research Assistant",
+	"产品需求澄清、PRD 编写与可执行任务拆分":
+		"Clarify product requirements, write PRDs, and break work into executable tasks",
+	"Mastra 产品需求分析、PRD 编写与任务拆分":
+		"Analyze product requirements with Mastra, write PRDs, and break down tasks",
+	"深度需求分析、风险检查、PRD 与任务拆分":
+		"Analyze requirements and risks in depth, then produce a PRD and executable tasks",
+	"产品界面设计、设计系统与响应式规范":
+		"Design product interfaces, design systems, and responsive specifications",
+	"Mastra 产品设计、组件规范与交互设计":
+		"Plan product design, component specifications, and interactions with Mastra",
+	"设计评审、无障碍、响应式与完整状态设计":
+		"Review designs for accessibility, responsiveness, and complete interface states",
+	"TypeScript 与 Next.js 代码生成和测试计划":
+		"Generate TypeScript and Next.js code with a test plan",
+	"Mastra 编程、文件生成、运行说明与测试计划":
+		"Build with Mastra and deliver project files, run instructions, and a test plan",
+	"规划、编码、静态检查、测试与一次修复":
+		"Plan, implement, run static checks and tests, and apply one repair pass",
+	"LangGraph 持久检查点、局部恢复与前端代码生成":
+		"Generate frontend code with durable checkpoints and partial recovery through LangGraph",
+	"使用 Stagehand 浏览公开网页，交付包含来源、访问时间和失败清单的结构化研究报告":
+		"Browse public webpages with Stagehand and deliver a structured research report with sources, access times, and failed visits",
+	"根据指定公开网页收集、核对并整理信息，交付带来源、访问时间与异常说明的结构化调研报告":
+		"Collect, verify, and organize information from specified public webpages, then deliver a structured report with sources, access times, and visit issues",
 	"规划、编码、静态评审并最多修复一次。":
 		"Plan, code, statically review, and apply up to one repair pass.",
 	设计: "Design",
@@ -2079,4 +2108,17 @@ export function translate(
 			return value === undefined ? placeholder : String(value);
 		},
 	);
+}
+
+/**
+ * 数据库中同时存在平台内置文案和用户自定义文案。只翻译明确收录在平台
+ * 目录中的值，可以让内置 Agent 跟随界面语言，同时避免把用户起的名称或描述误当成
+ * 翻译键。
+ */
+export function translateKnownText(locale: AppLocale, value: string): string {
+	return isMessageId(value) ? translate(locale, value) : value;
+}
+
+function isMessageId(value: string): value is MessageId {
+	return Object.hasOwn(EN_MESSAGES, value);
 }

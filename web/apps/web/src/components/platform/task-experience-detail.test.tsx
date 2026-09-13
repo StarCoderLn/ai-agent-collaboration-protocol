@@ -539,7 +539,7 @@ describe("formal task detail", () => {
 				name: "评价每个阶段的实际交付",
 			}),
 		).toBeInTheDocument();
-		expect(screen.getAllByText("快速需求整理 Agent").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("需求速成师").length).toBeGreaterThan(0);
 
 		fireEvent.click(screen.getByRole("tab", { name: "查看交付验收阶段详情" }));
 		expect(settlementTab).toHaveClass("text-success");
@@ -1571,13 +1571,13 @@ function formalWorkflowFixture(): FormalWorkflow {
 				acceptedAt: "2026-08-29T00:20:00.000Z",
 				selection: {
 					agentId,
-					agentName: "快速需求整理 Agent",
+					agentName: "需求速成师",
 					agreedAmountMinor: "12000000",
 				},
 				assignment: {
 					id: "55555555-5555-4555-8555-555555555555",
 					agentId,
-					agentName: "快速需求整理 Agent",
+					agentName: "需求速成师",
 					status: "accepted",
 					agreedAmountMinor: "12000000",
 					acceptBy: "2026-08-29T00:10:00.000Z",
@@ -1687,7 +1687,7 @@ function planningWorkflowFixture(
 				acceptedAt: null,
 				selection: {
 					agentId,
-					agentName: "快速需求整理 Agent",
+					agentName: "需求速成师",
 					agreedAmountMinor: quotedTotalMinor,
 				},
 				assignment: null,
@@ -1730,7 +1730,7 @@ function reselectionWorkflowFixture(): FormalWorkflow {
 						{
 							...sharedCandidate,
 							agentId,
-							name: "快速需求整理 Agent",
+							name: "需求速成师",
 						},
 						{
 							...sharedCandidate,

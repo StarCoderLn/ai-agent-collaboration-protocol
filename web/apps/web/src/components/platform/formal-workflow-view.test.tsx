@@ -1619,7 +1619,7 @@ function failedDesignWorkflowFixture(): FormalWorkflow {
 		assignment: {
 			id: "55555555-5555-4555-8555-555555555556",
 			agentId: "88888888-8888-4888-8888-888888888888",
-			agentName: "Mastra 产品设计 Agent",
+			agentName: "产品体验设计师",
 			status: "accepted",
 			agreedAmountMinor: "22000000",
 			acceptBy: "2026-08-29T00:10:00.000Z",

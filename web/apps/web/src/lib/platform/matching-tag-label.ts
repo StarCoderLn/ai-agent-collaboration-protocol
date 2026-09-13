@@ -12,6 +12,22 @@ const LABELS_BY_CANONICAL: Readonly<
 		en: "Academic research",
 		"zh-CN": "学术研究",
 	},
+	"browser-agent": {
+		en: "Web browsing",
+		"zh-CN": "网页浏览",
+	},
+	stagehand: {
+		en: "Adaptive browsing",
+		"zh-CN": "智能浏览",
+	},
+	"web-research": {
+		en: "Information research",
+		"zh-CN": "资料调研",
+	},
+	langgraph: {
+		en: "Durable workflow",
+		"zh-CN": "持续执行",
+	},
 };
 
 export function matchingTagLabel(tag: string, locale: AppLocale): string {

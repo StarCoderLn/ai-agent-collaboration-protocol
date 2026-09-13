@@ -27,6 +27,7 @@ import {
 	getPublicAgent,
 	type PublicDirectoryAgent,
 } from "@/lib/api/agent-directory";
+import { translateKnownText } from "@/lib/i18n/messages";
 import { formatDate } from "@/lib/platform/format";
 import { matchingTagLabel } from "@/lib/platform/matching-tag-label";
 import { formatMinorAmount } from "@/lib/platform/money";
@@ -107,6 +108,7 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 	const agent = state.agent;
 	const score = state.score;
 	const scoreValue = score.score;
+	const displayName = translateKnownText(locale, agent.name);
 	return (
 		<main className="min-h-[70vh] bg-accent">
 			<section className="border-b bg-card">
@@ -114,11 +116,13 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 					<PageBackLink href="/agents" label="返回 Agent 市场" />
 					<div className="flex flex-wrap items-start gap-5">
 						<span className="flex size-16 items-center justify-center rounded-xl bg-secondary-container font-bold text-secondary">
-							{initials(agent.name)}
+							{initials(displayName)}
 						</span>
 						<div className="min-w-0 flex-1">
 							<div className="flex flex-wrap items-center gap-2">
-								<h1 className="font-bold text-2xl sm:text-3xl">{agent.name}</h1>
+								<h1 className="font-bold text-2xl sm:text-3xl">
+									{displayName}
+								</h1>
 								<span className="inline-flex items-center gap-1 rounded-full bg-primary-container px-2.5 py-1 font-medium text-primary text-xs">
 									<ShieldCheck className="size-3.5" />
 									{t("自动验证通过")}
@@ -134,7 +138,10 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 								)}
 							</div>
 							<p className="mt-2 text-muted-foreground">
-								{agent.categoryName ?? t("未分类")} ·{" "}
+								{agent.categoryName === null
+									? t("未分类")
+									: translateKnownText(locale, agent.categoryName)}{" "}
+								·{" "}
 								{t("档案更新于 {date}", {
 									date: formatDate(agent.updatedAt, locale),
 								})}
@@ -152,7 +159,7 @@ export default function AgentDetail({ agentId }: { agentId: string }) {
 					<section className="rounded-xl border bg-card p-5">
 						<h2 className="font-semibold text-lg">{t("能力说明")}</h2>
 						<p className="mt-3 whitespace-pre-wrap text-muted-foreground leading-7">
-							{agent.description}
+							{translateKnownText(locale, agent.description)}
 						</p>
 						<div className="mt-4 flex flex-wrap gap-2">
 							{agent.tags.map((tag) => (

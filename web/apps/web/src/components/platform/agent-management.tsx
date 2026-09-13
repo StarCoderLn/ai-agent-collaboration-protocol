@@ -33,6 +33,7 @@ import {
 	retryAgentAdmission,
 	transitionOwnedAgent,
 } from "@/lib/api/agent-directory";
+import { translateKnownText } from "@/lib/i18n/messages";
 import { formatDate, shortId } from "@/lib/platform/format";
 import { formatMinorAmount } from "@/lib/platform/money";
 
@@ -281,15 +282,16 @@ function ManagedAgentCard({
 }) {
 	const { locale, t } = useLocale();
 	const busy = operation?.agentId === agent.id;
+	const displayName = translateKnownText(locale, agent.name);
 	return (
 		<article className="rounded-xl border bg-card">
 			<div className="flex flex-wrap items-start gap-4 p-5">
 				<span className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-secondary-container font-bold text-secondary">
-					{initials(agent.name)}
+					{initials(displayName)}
 				</span>
 				<div className="min-w-0 flex-1">
 					<div className="flex flex-wrap items-center gap-2">
-						<h2 className="font-semibold text-lg">{agent.name}</h2>
+						<h2 className="font-semibold text-lg">{displayName}</h2>
 						<AgentStatus
 							status={agent.status}
 							pauseReason={agent.pauseReason}
@@ -312,14 +314,17 @@ function ManagedAgentCard({
 						)}
 					</div>
 					<p className="mt-1 text-muted-foreground text-sm">
-						{agent.categoryName ?? t("未分类")} ·{" "}
+						{agent.categoryName === null
+							? t("未分类")
+							: translateKnownText(locale, agent.categoryName)}{" "}
+						·{" "}
 						{formatMinorAmount(
 							agent.pricing.amountMinor,
 							agent.pricing.currency,
 						)}
 					</p>
 					<p className="mt-3 line-clamp-2 max-w-3xl text-muted-foreground text-sm leading-6">
-						{agent.description}
+						{translateKnownText(locale, agent.description)}
 					</p>
 				</div>
 				<div className="flex flex-wrap gap-2">

@@ -224,7 +224,7 @@ describe("workflow domain contracts", () => {
 		expect(globalStyles).toContain("--primary:#123456");
 		expect(globalStyles).toContain("--secondary:#abcdef");
 		expect(globalStyles).toContain("background:#f5f5f5");
-		expect(artifact.implementationSummary).toContain("快速代码生成 Agent");
+		expect(artifact.implementationSummary).toContain("页面速建师");
 		expect(artifact.testPlan).toContain("运行 pnpm install 与 pnpm build，确认 TypeScript 和 Next.js 构建通过");
 	});
 });

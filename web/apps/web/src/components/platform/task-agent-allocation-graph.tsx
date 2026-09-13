@@ -32,6 +32,7 @@ import type {
 	TaskExecutionStatus,
 	TaskStatus,
 } from "@/lib/api/tasks";
+import { translateKnownText } from "@/lib/i18n/messages";
 import { shortId } from "@/lib/platform/format";
 import { formatMinorAmount } from "@/lib/platform/money";
 
@@ -100,10 +101,14 @@ export default function TaskAgentAllocationGraph({
 	execution: TaskExecutionStatus | null;
 	currency: string;
 }) {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
 	const allAgents = useMemo(
-		() => buildAgentPresentations(candidates, assignment),
-		[candidates, assignment],
+		() =>
+			buildAgentPresentations(candidates, assignment).map((agent) => ({
+				...agent,
+				name: translateKnownText(locale, agent.name),
+			})),
+		[assignment, candidates, locale],
 	);
 	// 只有等待接单或已经接单的 assignment 才代表当前真实执行关系。拒绝和取消记录仍
 	// 属于历史匹配证据，不能继续在主图中高亮成正在参与任务的 Agent。

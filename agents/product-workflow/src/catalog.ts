@@ -48,7 +48,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     priceMinor: "1500000",
     step: "requirements",
     strategy: "direct",
-    name: "快速需求整理 Agent",
+    name: "需求速成师",
     description: "DeepSeek 单次结构化生成，速度快、成本最低，作为直接调用基线。",
   },
   {
@@ -60,7 +60,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     priceMinor: "2000000",
     step: "requirements",
     strategy: "mastra",
-    name: "Mastra 需求分析 Agent",
+    name: "产品需求策划师",
     description: "使用 Mastra 的结构化输出约束生成完整 PRD 与任务拆解。",
   },
   {
@@ -72,7 +72,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     priceMinor: "3000000",
     step: "requirements",
     strategy: "state-machine",
-    name: "深度需求拆解 Agent",
+    name: "需求质量顾问",
     description: "显式执行分析、生成和校验状态，优先发现遗漏、冲突与未知问题。",
   },
   {
@@ -84,7 +84,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     priceMinor: "2000000",
     step: "design",
     strategy: "direct",
-    name: "快速界面设计 Agent",
+    name: "界面速创师",
     description: "直接生成结构化设计规范，由平台渲染桌面与移动设计稿，作为速度和成本基线。",
   },
   {
@@ -96,7 +96,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     priceMinor: "3000000",
     step: "design",
     strategy: "mastra",
-    name: "Mastra 产品设计 Agent",
+    name: "产品体验设计师",
     description: "由 Mastra 规划结构化设计，并由平台生成可验收设计稿，强调需求到视觉的可追溯性。",
   },
   {
@@ -108,7 +108,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     priceMinor: "4000000",
     step: "design",
     strategy: "state-machine",
-    name: "设计评审与完善 Agent",
+    name: "设计质量顾问",
     description: "先分析评审设计，再输出包含真实内容、状态和响应式规则的结构化设计规范。",
   },
   {
@@ -120,7 +120,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     priceMinor: "3000000",
     step: "code",
     strategy: "direct",
-    name: "快速代码生成 Agent",
+    name: "页面速建师",
     description: "DeepSeek 直接继承已验收 DesignSpec 并实现交互，作为速度和成本基线。",
   },
   {
@@ -132,7 +132,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     priceMinor: "4000000",
     step: "code",
     strategy: "mastra",
-    name: "Mastra 编程 Agent",
+    name: "产品前端开发师",
     description: "使用 Mastra 规划并按已验收 DesignSpec 完成代码实现。",
   },
   {
@@ -144,7 +144,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     priceMinor: "5000000",
     step: "code",
     strategy: "state-machine",
-    name: "可靠前端开发 Agent",
+    name: "前端交付专家",
     description: "先验收页面结构，再基于已验收 TSX 生成样式；失败时只重做对应片段。",
   },
   {
@@ -156,7 +156,7 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     priceMinor: "5000000",
     step: "code",
     strategy: "langgraph",
-    name: "LangGraph 前端开发 Agent",
+    name: "复杂前端开发专家",
     description: "持久保存已验收页面片段，服务恢复后只继续尚未完成的生成步骤。",
   },
 ];

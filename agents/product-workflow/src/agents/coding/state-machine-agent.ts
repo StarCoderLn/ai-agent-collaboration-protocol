@@ -9,7 +9,7 @@ import {
 import { assertAgentInput, type RunContext, type WorkflowAgentDependencies, type WorkflowExecutor } from "../shared/contracts.js";
 
 /**
- * 可靠前端开发 Agent v2：先验收 TSX，再把该份 TSX 原样交给 CSS 步骤。每段最多进行
+ * 前端交付专家 v2：先验收 TSX，再把该份 TSX 原样交给 CSS 步骤。每段最多进行
  * 一次局部修复；CSS 失败不会重新生成页面，避免已经正确的结构在重试中发生漂移。
  */
 export class CodingStateMachineAgent implements WorkflowExecutor {

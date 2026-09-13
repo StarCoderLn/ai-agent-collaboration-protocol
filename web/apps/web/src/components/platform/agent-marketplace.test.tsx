@@ -6,6 +6,7 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LocaleProvider } from "@/components/i18n/locale-provider";
 import AgentMarketplace from "./agent-marketplace";
 
 const agent = {
@@ -135,6 +136,56 @@ describe("AgentMarketplace", () => {
 		expect(
 			await screen.findByText("真实目录 Coding Agent"),
 		).toBeInTheDocument();
+	});
+
+	it("英文界面翻译平台内置 Agent，但不改写用户自定义目录数据", async () => {
+		const builtInAgent = {
+			...agent,
+			name: "网页调研助手",
+			categoryName: "研究分析",
+			description:
+				"根据指定公开网页收集、核对并整理信息，交付带来源、访问时间与异常说明的结构化调研报告",
+		};
+		const customAgent = {
+			...agent,
+			id: "83100000-0000-4000-8000-000000000002",
+			name: "Alice 的品牌写作助手",
+			categoryName: "用户自定义分类",
+			description: "用户自定义能力说明",
+		};
+		vi.mocked(fetch).mockImplementation((input) => {
+			const url = String(input);
+			if (url.includes("/market/agents")) {
+				return Promise.resolve(
+					Response.json({
+						agents: [builtInAgent, customAgent],
+						total: 2,
+						limit: 9,
+						offset: 0,
+					}),
+				);
+			}
+			if (url.endsWith("/categories")) {
+				return Promise.resolve(Response.json({ categories }));
+			}
+			return Promise.reject(new Error(`Unexpected request: ${url}`));
+		});
+
+		render(
+			<LocaleProvider initialLocale="en">
+				<AgentMarketplace />
+			</LocaleProvider>,
+		);
+
+		expect(
+			await screen.findByText("Web Research Assistant"),
+		).toBeInTheDocument();
+		expect(screen.getByText("Research & analysis")).toBeInTheDocument();
+		expect(
+			screen.getByText(/Collect, verify, and organize information/),
+		).toBeInTheDocument();
+		expect(screen.getByText("用户自定义能力说明")).toBeInTheDocument();
+		expect(screen.getByText("Alice 的品牌写作助手")).toBeInTheDocument();
 	});
 
 	it("shows a controlled error state and can retry", async () => {
