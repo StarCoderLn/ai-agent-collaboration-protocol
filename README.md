@@ -125,7 +125,15 @@ PRD 与设计阶段各有 **DeepSeek 直连、Mastra 编排、自研状态机** 
 
 ## 产品入口
 
-完整服务启动后访问 [http://localhost:3001](http://localhost:3001)：
+当前项目演示、钱包连接和真实测试网验收统一访问
+[http://localhost:3011](http://localhost:3011)。端口由启动器明确区分，不会在运行时自动切换：
+
+| 启动方式 | Web 端口 | 链环境 | 使用场景 |
+| --- | --- | --- | --- |
+| `node scripts/sepolia-mvp.mjs` | `3011` | Sepolia（Chain ID `11155111`） | 当前默认演示与钱包验收 |
+| `node scripts/local-mvp.mjs` | `3001` | 本机 Anvil（Chain ID `31337`） | 需要隔离本地链时显式使用 |
+
+在当前默认的 3011 服务中可以访问：
 
 | 页面 | 路径 | 用途 |
 | --- | --- | --- |
@@ -148,7 +156,7 @@ AICP 将用户界面、业务事实、任务派发、Agent 执行与链上资金
 | Web | Next.js 16、React 19、TypeScript strict、Tailwind CSS | 用户界面、钱包交互、制品隔离预览 |
 | 业务 API | Next.js Route Handlers、Zod、PostgreSQL、SIWE | 任务、Agent、工作流、评分、争议和审计 |
 | 派发引擎 | Go、Temporal Go SDK | 候选匹配、原子分配、协议签名、幂等、重试，以及可恢复的自动准入编排 |
-| Agent | DeepSeek、Mastra、LangGraph、OpenAlex、PptxGenJS、自研状态机 | PRD、设计、Coding、图片、PPT 和论文写作等真实执行能力 |
+| Agent | DeepSeek、Mastra、LangGraph、Stagehand、OpenAlex、PptxGenJS、自研状态机 | PRD、设计、Coding、网页研究、图片、PPT 和论文写作等真实执行能力 |
 | 链与钱包 | Solidity、Foundry、wagmi、viem | USDC 托管、原子多 Agent 结算、DAO 质押、退款和钱包连接 |
 
 LangGraph Coding Agent 使用 PostgreSQL 检查点完成条件分支、局部修复和服务恢复；Temporal
@@ -224,7 +232,7 @@ DATABASE_URL="$DATABASE_URL" node scripts/local-mvp.mjs
 
 1. 启动项目私有的 loopback Anvil 链，并从 `.local/anvil/state.json` 恢复上次状态；
 2. 首次启动时部署测试 USDC 与 Escrow、准备测试资产，后续启动复用原合约和余额；
-3. 注册 10 个 PRD、设计与 Coding Agent；
+3. 注册 10 个 PRD、设计与 Coding Agent，以及 1 个网页调研助手；
 4. 启动 Product Workflow Agent、Business API、Go Dispatch Engine 和 Web；
 5. 在所有健康检查通过后输出 [http://localhost:3001](http://localhost:3001)。
 
@@ -293,7 +301,7 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 
 ```text
 .
-├── agents/                    # Agent SDK、图片/PPT/论文与正式产品工作流 Agent
+├── agents/                    # Agent SDK、Browser/图片/PPT/论文与正式产品工作流 Agent
 │   └── agent-sdk/             # 可发布的 @aicp/agent-sdk 接入运行时
 ├── contracts/escrow/          # USDC Escrow 合约与 Foundry 测试
 ├── docs/                      # PRD、设计系统、协议与制品契约
@@ -333,7 +341,7 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 - [LangGraph 与 Temporal 编排说明](./docs/langgraph-temporal-orchestration.md) — StateGraph、PostgreSQL checkpoint、Temporal 自动准入和部署边界
 - [DAO 奖励与链上仲裁](./docs/dao-chain-arbitration.md) — Sepolia 部署、真实案件证据、资金边界和剩余上线条件
 - [DAO 仲裁任务清单](./specs/13.dispute-and-arbitration/tasks.md) — 已完成项、外部验收项和当前权威状态
-- [Agent SDK 与平台自建 Agent](./agents/README.md) — 接入 SDK、十个产品工作流 Agent 与图片/PPT/论文 Agent
+- [Agent SDK 与平台自建 Agent](./agents/README.md) — 接入 SDK、产品工作流、Stagehand Browser 与内容 Agent
 - [工程方法论](./docs/engineering-philosophy.md) — 项目工程决策与验证原则
 - [开发计划](./specs/PLAN.md) — Feature 边界、依赖和当前任务状态
 

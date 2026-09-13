@@ -27,6 +27,7 @@ describe("local workflow Agent bootstrap", () => {
       AICP_LOCAL_DEMO_MODE: "true",
       DATABASE_URL: "postgres://user:pass@127.0.0.1:55432/aicp",
       WORKFLOW_AGENT_PUBLIC_URL: "http://127.0.0.1:9202/",
+      AICP_LOCAL_ARBITRATOR_ADDRESS: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
     }, database);
     expect(count).toBe(10);
     expect(database.calls[0]?.text).toBe("BEGIN");
@@ -44,5 +45,16 @@ describe("local workflow Agent bootstrap", () => {
     expect(credentialWrites[0]?.values[1]).toMatch(/^local-dev:/);
     const roleWrite = database.calls.find((call) => call.text.includes("INSERT INTO platform_actor_roles"));
     expect(roleWrite?.values).toEqual(["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]);
+  });
+
+  it("does not add an Anvil arbitrator while syncing the Sepolia catalog", async () => {
+    const database = new RecordingDatabase();
+    await bootstrapLocalAgents({
+      AICP_LOCAL_DEMO_MODE: "true",
+      DATABASE_URL: "postgres://user:pass@127.0.0.1:55432/aicp",
+      WORKFLOW_AGENT_PUBLIC_URL: "http://127.0.0.1:9202/",
+    }, database);
+
+    expect(database.calls.some((call) => call.text.includes("INSERT INTO platform_actor_roles"))).toBe(false);
   });
 });

@@ -171,3 +171,4 @@
 - [6.escrow-sync-and-wallet] 本地 Anvil 交易须读 pending nonce，避免钱包跨实例缓存造成队列空洞。
 - [13.dispute-and-arbitration] 本地 TestYD 不得覆盖钱包目录中的 Sepolia 产品 YD。
 - [3.agent-health-lifecycle] 新标识、冷启动资金风控和评分置信度须使用各自事实，禁止复用阈值。
+- [18.stagehand-browser-agent] Sepolia 演示须用统一启动器恢复服务，禁止遗漏 9202。

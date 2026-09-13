@@ -9,9 +9,9 @@ const EnvironmentSchema = z.object({
   AICP_LOCAL_DEMO_MODE: z.literal("true"),
   DATABASE_URL: z.url(),
   WORKFLOW_AGENT_PUBLIC_URL: z.url().default("http://127.0.0.1:9202"),
-  // Anvil 第二个公开开发账户。与发布者账户分离，才能在本地真实验证服务端角色授权。
-  AICP_LOCAL_ARBITRATOR_ADDRESS: z.string().regex(/^0x[0-9a-fA-F]{40}$/)
-    .default("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+  // 只有 Anvil 启动器显式传入时才补内部仲裁员。Sepolia 复用本目录同步逻辑，但其
+  // 仲裁成员来自真实链上配置，绝不能因为同步 Agent 而混入 Anvil 开发账户。
+  AICP_LOCAL_ARBITRATOR_ADDRESS: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
 });
 
 type QueryResult = Readonly<{ rowCount: number | null }>;
@@ -82,12 +82,14 @@ export async function bootstrapLocalAgents(
         [agent.platformId],
       );
     }
-    await database.query(
-      `INSERT INTO platform_actor_roles(actor_id,role,granted_by)
-       VALUES (lower($1),'arbitrator','local-mvp-bootstrap')
-       ON CONFLICT (actor_id,role) DO UPDATE SET granted_by=EXCLUDED.granted_by`,
-      [parsed.AICP_LOCAL_ARBITRATOR_ADDRESS],
-    );
+    if (parsed.AICP_LOCAL_ARBITRATOR_ADDRESS !== undefined) {
+      await database.query(
+        `INSERT INTO platform_actor_roles(actor_id,role,granted_by)
+         VALUES (lower($1),'arbitrator','local-mvp-bootstrap')
+         ON CONFLICT (actor_id,role) DO UPDATE SET granted_by=EXCLUDED.granted_by`,
+        [parsed.AICP_LOCAL_ARBITRATOR_ADDRESS],
+      );
+    }
     await database.query("COMMIT");
     return WORKFLOW_AGENT_CATALOG.length;
   } catch (error) {

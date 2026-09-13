@@ -30,6 +30,7 @@ const LOCAL_DAO_MINIMUM_STAKE_MINOR = (100n * 10n ** 18n).toString();
 const PORTS = Object.freeze({
   anvil: readPort("AICP_ANVIL_PORT", 8545),
   workflow: readPort("AICP_WORKFLOW_AGENT_PORT", 9202),
+  browser: readPort("AICP_BROWSER_AGENT_PORT", 9304),
   business: readPort("AICP_BUSINESS_API_PORT", 3100),
   dispatch: readPort("AICP_DISPATCH_PORT", 3200),
   web: readPort("AICP_WEB_PORT", 3001),
@@ -37,6 +38,7 @@ const PORTS = Object.freeze({
 const URLS = Object.freeze({
   anvil: `http://127.0.0.1:${PORTS.anvil}`,
   workflow: `http://127.0.0.1:${PORTS.workflow}`,
+  browser: `http://127.0.0.1:${PORTS.browser}`,
   business: `http://127.0.0.1:${PORTS.business}`,
   dispatch: `http://127.0.0.1:${PORTS.dispatch}`,
   web: `http://127.0.0.1:${PORTS.web}`,
@@ -139,9 +141,23 @@ async function main() {
     cwd: path.join(ROOT, "agents/agent-sdk"),
   });
 
-  await runOnce("本地 9-Agent 目录", NODE, [TSX, "src/local-bootstrap.ts"], {
+  await runOnce("本地产品 Agent 目录", NODE, [TSX, "src/local-bootstrap.ts"], {
     cwd: path.join(ROOT, "agents/product-workflow"),
-    env: { AICP_LOCAL_DEMO_MODE: "true", DATABASE_URL, WORKFLOW_AGENT_PUBLIC_URL: URLS.workflow },
+    env: {
+      AICP_LOCAL_DEMO_MODE: "true",
+      AICP_LOCAL_ARBITRATOR_ADDRESS: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      DATABASE_URL,
+      WORKFLOW_AGENT_PUBLIC_URL: URLS.workflow,
+    },
+  });
+  await runOnce("网页调研助手目录", NODE, [TSX, "src/local-bootstrap.ts"], {
+    cwd: path.join(ROOT, "agents/browser-research"),
+    env: {
+      AICP_LOCAL_DEMO_MODE: "true",
+      AICP_PLATFORM_AGENT_OWNER_ADDRESS: ANVIL_ACCOUNT,
+      DATABASE_URL,
+      BROWSER_AGENT_PUBLIC_URL: URLS.browser,
+    },
   });
 
 	// 本地 MVP 是开发验收入口，Agent 源码变化后应与 Next.js 一样自动重载；否则页面
@@ -161,6 +177,28 @@ async function main() {
     },
   });
   await waitForService(workflow, "Product Workflow Agent", () => probeJson(`${URLS.workflow}/livez`, WorkflowStatusSchema));
+
+  // Stagehand 会启动 Chromium，本身已经占用较多文件描述符；Browser Agent 使用稳定
+  // 单进程运行，避免再为整个 workspace 建立 watch 句柄导致 EMFILE 和内存持续增长。
+  const browserAgent = start("网页调研助手", NODE, [TSX, "src/index.ts"], {
+    cwd: path.join(ROOT, "agents/browser-research"),
+    env: {
+      DEEPSEEK_API_KEY: apiKey,
+      DEEPSEEK_BASE_URL: paperEnv.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+      DEEPSEEK_MODEL: paperEnv.DEEPSEEK_MODEL ?? "deepseek-chat",
+      AGENT_HOST: "127.0.0.1",
+      AGENT_PORT: String(PORTS.browser),
+      AGENT_PUBLIC_BASE_URL: URLS.browser,
+      AGENT_API_KEY: agentSecret,
+      AGENT_ARTIFACT_DIR: path.join(ROOT, ".local/artifacts/browser-research"),
+      AGENT_RESPONSE_CACHE_DIR: path.join(ROOT, ".local/responses/browser-research"),
+    },
+  });
+  await waitForService(browserAgent, "网页调研助手", () => probeJson(
+    `${URLS.browser}/healthz`,
+    ServiceStatusSchema,
+    { authorization: `Bearer ${agentSecret}` },
+  ));
 
   const business = start("Business API", NODE, [NEXT_BUSINESS, "dev", "--hostname", "127.0.0.1", "--port", String(PORTS.business)], {
     cwd: path.join(ROOT, "services/business-api"),
@@ -683,6 +721,7 @@ async function assertApplicationPortsAvailable() {
   const services = [
     ["Web", PORTS.web, "AICP_WEB_PORT"],
     ["Product Workflow Agent", PORTS.workflow, "AICP_WORKFLOW_AGENT_PORT"],
+    ["网页调研助手", PORTS.browser, "AICP_BROWSER_AGENT_PORT"],
     ["Business API", PORTS.business, "AICP_BUSINESS_API_PORT"],
     ["Dispatch Engine", PORTS.dispatch, "AICP_DISPATCH_PORT"],
   ];
@@ -722,9 +761,9 @@ async function waitForService(managed, label, probe) {
 	throw new Error(`${label} did not pass its readiness contract within 30 seconds`);
 }
 
-async function probeJson(url, schema) {
+async function probeJson(url, schema, headers = undefined) {
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(750) });
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(750) });
     if (!response.ok) return false;
     return schema.safeParse(await response.json()).success;
   } catch {

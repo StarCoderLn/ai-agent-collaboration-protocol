@@ -17,8 +17,8 @@
 
 平台主要负责 Agent 发现、任务匹配、执行调度、过程追踪、结果交付、资金托管和争议
 处理。第三方 Agent 仍运行在提供者自己的环境中，平台只通过统一协议调用，不托管其
-代码、模型或运行环境。平台可以运营自建参考 Agent；当前已有论文调研 Agent 和正式
-PRD、设计、Coding Agent，既用于协议联调与质量比较，也可以在通过同一准入和派发边界后
+代码、模型或运行环境。平台可以运营自建参考 Agent；当前已有 Stagehand 网页调研助手、
+论文调研 Agent 和正式 PRD、设计、Coding Agent，既用于协议联调与质量比较，也可以在通过同一准入和派发边界后
 承接真实任务，不改变“生态 Agent 主要由第三方提供”的定位。
 
 ### 1.2 核心价值
@@ -475,6 +475,7 @@ Agent 接入协议保持框架无关：第三方提供者可以使用 Mastra、L
 | Mastra | TypeScript/Next.js 团队，自建 Agent 和中等复杂工作流 | 原生支持 Agent 与图工作流，包括顺序、分支、并行、暂停/恢复 | Agent、Workflow、Memory、Evals、Observability 和服务集成较完整 | 核心与企业功能的许可证边界需在采用前复核；团队需接受其运行时与存储抽象 | 已用于论文 Agent 与 PRD/设计/Coding 的 Mastra 候选，继续作为可比较实现之一 |
 | LangChain | 快速创建标准 Agent，以及模型、工具、RAG 和第三方集成 | **支持标准 Agent 编排**，例如模型—工具调用循环、高层 Chain 和中间件；复杂自定义工作流由其底层/配套的 LangGraph 承担 | 高层抽象、生态广、组件丰富，适合快速开发 | 不适合直接表达任意状态图、复杂分支/循环和精细 checkpoint；这类需求需直接使用 LangGraph | 简单或标准工具调用 Agent 可直接采用；需要自定义执行图时升级到 LangGraph |
 | LangGraph | 复杂、有状态、长时运行、需要中断/恢复与人工介入的 Agent 图 | **专门支持自定义 Agent/工作流编排**，开发者显式定义状态、节点、边、分支、循环和 checkpoint | 低层可控、持久执行、Memory、Human-in-the-loop；有 Python 和 TypeScript 实现 | 抽象更底层，状态 schema、checkpoint 和部署运维需自行设计更多 | 已用于 `code-langgraph`：StateGraph 分离 TSX/CSS 节点，PostgreSQL checkpoint 支持局部恢复；继续作为 Coding 独立候选而非全平台唯一运行时 |
+| Stagehand | 页面结构易变、需要语义理解的浏览器 Agent 与少量高价值验收 | `observe`、`act`、`extract` 和 Playwright 风格浏览器 API；不承担平台业务状态编排 | 自愈语义操作、结构化提取、页面变化适应性和浏览器可观测性 | 模型与浏览器有成本；提示注入、SSRF、登录态、不可逆操作和失败定位必须单独治理 | 已用于 `browser-research` 网页调研助手，并提供只读自然语言页面冒烟；固定资金与 DAO 回归继续使用确定性断言 |
 
 LangChain 与 LangGraph 的关系不是“一个有 Agent、另一个有编排”，而是两层抽象：LangChain 提供标准 Agent 架构和高层组件，因此具备标准 Agent 编排能力；LangGraph 是低层编排运行时，用于自定义执行图和高级控制。当前 LangChain 官方资料也明确建议：需要更高级的自定义或 Agent orchestration 时使用 LangGraph。
 
@@ -495,7 +496,15 @@ Agent ID 进入正式目录。Dispatch Engine 的 Temporal 模式复用现有三
 任何 Agent 框架都不承担平台级资金与交易状态编排；真实本机停机恢复已经通过，云端 Temporal
 部署与运维方案仍需冻结。
 
-参考资料：[Mastra 官方文档](https://mastra.ai/docs)、[Mastra 官方仓库](https://github.com/mastra-ai/mastra)、[LangChain.js 官方文档](https://docs.langchain.com/oss/javascript/langchain/overview)、[LangChain.js 官方仓库](https://github.com/langchain-ai/langchainjs)、[LangGraph.js 官方文档](https://docs.langchain.com/oss/javascript/langgraph/overview)、[LangGraph.js 官方仓库](https://github.com/langchain-ai/langgraphjs)（2026-08-19 查阅）；[Temporal 生产部署](https://docs.temporal.io/production-deployment)、[Temporal Cloud 价格](https://docs.temporal.io/cloud/pricing)（2026-09-12 查阅）。
+`browser-research` 使用 Stagehand 4.1 在独立无登录浏览器中读取任务明确给出的公开 URL，
+由 LangGraph 推进最多 20 个页面并隔离单页失败，输出来源 URL、访问时间、结构化事实和
+失败列表。Stagehand 通过官方 ClientLLM 复用平台现有 DeepSeek 配置，适配层集中转换消息、
+工具调用和 JSON 输出，无需新增其他模型供应商 Key。应用层拒绝私网、实例元数据、非标准端口和未授权重定向；线上还必须用出站
+代理或网络策略抵御 DNS 重绑定。网页文字始终视为不可信数据，不能触发登录、表单提交、
+下载、资金、DAO 或平台数据库写入。Stagehand 自然语言验收只补充少量语义检查，固定
+关键流程仍由 Vitest、Playwright 和链上/数据库集成测试保护。
+
+参考资料：[Mastra 官方文档](https://mastra.ai/docs)、[Mastra 官方仓库](https://github.com/mastra-ai/mastra)、[LangChain.js 官方文档](https://docs.langchain.com/oss/javascript/langchain/overview)、[LangChain.js 官方仓库](https://github.com/langchain-ai/langchainjs)、[LangGraph.js 官方文档](https://docs.langchain.com/oss/javascript/langgraph/overview)、[LangGraph.js 官方仓库](https://github.com/langchain-ai/langgraphjs)（2026-08-19 查阅）；[Temporal 生产部署](https://docs.temporal.io/production-deployment)、[Temporal Cloud 价格](https://docs.temporal.io/cloud/pricing)（2026-09-12 查阅）；[Stagehand v4 介绍](https://docs.stagehand.dev/v4/first-steps/introduction)、[成本优化](https://docs.stagehand.dev/v4/best-practices/cost-optimization)、[部署实践](https://docs.stagehand.dev/v4/best-practices/deployments)（2026-09-13 查阅）。
 
 ## 11. 迭代拆分与交付顺序
 
@@ -509,6 +518,7 @@ Agent ID 进入正式目录。Dispatch Engine 的 Temporal 模式复用现有三
 - 定义分类、标签、V0 匹配规则和评分口径。
 - 冻结任务可见性、手动/自动分配和机器验收边界。
 - `[2026-09-12 已完成]` 使用同一套输入与制品契约验证 Mastra、自研状态机和 LangGraph Coding 候选；LangGraph 的真实 DeepSeek 输出与 PostgreSQL checkpoint 恢复均已通过。
+- `[2026-09-13 已完成]` Stagehand 网页调研助手、公开 URL 边界、逐页失败隔离、平台目录和本机启动链路已完成；真实 DeepSeek 公网研究、运行中 Web 的 `observe`/`extract` 自然语言冒烟、Agent 市场详情与 9304 健康检查均已通过。平台付费研究任务已完成匹配、1.5 USDC Sepolia 托管、派发、双格式交付、人工验收和链上结算，Agent 实收 1.45 USDC。
 - 完成威胁建模与合约审计计划。
 
 退出条件：产品、后端、合约和测试对核心状态及资金流达成一致，所有 P0 决策有负责人和截止时间。

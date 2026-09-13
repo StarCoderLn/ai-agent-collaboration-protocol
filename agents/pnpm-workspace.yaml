@@ -4,6 +4,7 @@ packages:
   - "image-generation"
   - "presentation-generation"
   - "product-workflow"
+  - "browser-research"
 
 allowBuilds:
   esbuild: true

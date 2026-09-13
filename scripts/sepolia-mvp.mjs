@@ -18,6 +18,10 @@ const TSX = path.join(
 	ROOT,
 	"agents/product-workflow/node_modules/tsx/dist/cli.mjs",
 );
+const SDK_TSC = path.join(
+	ROOT,
+	"agents/agent-sdk/node_modules/typescript/bin/tsc",
+);
 const NEXT_WEB = path.join(
 	ROOT,
 	"web/apps/web/node_modules/next/dist/bin/next",
@@ -31,12 +35,14 @@ const INTERNAL_TOKEN =
 	process.env.DISPATCH_INTERNAL_TOKEN ?? LOCAL_INTERNAL_TOKEN;
 const PORTS = Object.freeze({
 	workflow: readPort("AICP_WORKFLOW_AGENT_PORT", 9202),
+	browser: readPort("AICP_BROWSER_AGENT_PORT", 9304),
 	business: readPort("AICP_BUSINESS_API_PORT", 3100),
 	dispatch: readPort("AICP_DISPATCH_PORT", 3200),
 	web: readPort("AICP_WEB_PORT", 3011),
 });
 const URLS = Object.freeze({
 	workflow: `http://127.0.0.1:${PORTS.workflow}`,
+	browser: `http://127.0.0.1:${PORTS.browser}`,
 	business: `http://127.0.0.1:${PORTS.business}`,
 	dispatch: `http://127.0.0.1:${PORTS.dispatch}`,
 	web: `http://127.0.0.1:${PORTS.web}`,
@@ -65,6 +71,7 @@ async function main() {
 	);
 	const password = readKeychainPassword(manifest);
 	validateWalletBindings(environment, manifest);
+	const platformAgentWallet = platformAdminAddress(environment, manifest);
 	const recoveryEnabled = await validateSepoliaDeployment(environment);
 	await validateDatabaseVersion(recoveryEnabled);
 
@@ -74,6 +81,30 @@ async function main() {
 	const apiKey = required(paperEnvironment, "DEEPSEEK_API_KEY");
 	const agentSecret = required(paperEnvironment, "WORKFLOW_AGENT_SECRET");
 	if (agentSecret.length < 16) throw new Error("WORKFLOW_AGENT_SECRET 长度不足");
+
+	// Sepolia 演示仍通过本机 Agent 服务执行任务，因此目录端点必须在每次启动时与当前
+	// 端口配置幂等同步。同步只写 PostgreSQL，不部署合约，也不会广播链上交易。
+	await runOnce("Agent SDK", NODE, [SDK_TSC, "-p", "tsconfig.build.json"], {
+		cwd: path.join(ROOT, "agents/agent-sdk"),
+		env: {},
+	});
+	await runOnce("产品 Agent 目录", NODE, [TSX, "src/local-bootstrap.ts"], {
+		cwd: path.join(ROOT, "agents/product-workflow"),
+		env: {
+			AICP_LOCAL_DEMO_MODE: "true",
+			DATABASE_URL,
+			WORKFLOW_AGENT_PUBLIC_URL: URLS.workflow,
+		},
+	});
+	await runOnce("网页调研助手目录", NODE, [TSX, "src/local-bootstrap.ts"], {
+		cwd: path.join(ROOT, "agents/browser-research"),
+		env: {
+			AICP_LOCAL_DEMO_MODE: "true",
+			AICP_PLATFORM_AGENT_OWNER_ADDRESS: platformAgentWallet,
+			DATABASE_URL,
+			BROWSER_AGENT_PUBLIC_URL: URLS.browser,
+		},
+	});
 
 	const workflow = start(
 		"Product Workflow Agent",
@@ -97,6 +128,43 @@ async function main() {
 		},
 	);
 	await waitForService(workflow, "Product Workflow Agent", `${URLS.workflow}/livez`);
+
+	const browserAgent = start(
+		"网页调研助手",
+		NODE,
+		// Stagehand 会独立管理 Chromium；这里不启用源码 watch，避免开发机为大依赖树
+		// 持续保留文件句柄并触发 EMFILE。代码变更后重启启动器即可加载新版本。
+		[TSX, "src/index.ts"],
+		{
+			cwd: path.join(ROOT, "agents/browser-research"),
+			env: {
+				DEEPSEEK_API_KEY: apiKey,
+				DEEPSEEK_BASE_URL:
+					paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+				DEEPSEEK_MODEL:
+					paperEnvironment.DEEPSEEK_MODEL ?? "deepseek-chat",
+				AGENT_HOST: "127.0.0.1",
+				AGENT_PORT: String(PORTS.browser),
+				AGENT_PUBLIC_BASE_URL: URLS.browser,
+				AGENT_API_KEY: agentSecret,
+				AGENT_ARTIFACT_DIR: path.join(
+					ROOT,
+					".local/artifacts/browser-research",
+				),
+				AGENT_RESPONSE_CACHE_DIR: path.join(
+					ROOT,
+					".local/responses/browser-research",
+				),
+			},
+		},
+	);
+	await waitForService(
+		browserAgent,
+		"网页调研助手",
+		`${URLS.browser}/healthz`,
+		true,
+		{ authorization: `Bearer ${agentSecret}` },
+	);
 
 	const chainEnvironment = {
 		...environment,
@@ -282,6 +350,21 @@ function validateWalletBindings(environment, manifest) {
 	}
 }
 
+function platformAdminAddress(environment, manifest) {
+	const wallet = manifest.wallets.find((entry) => entry.role === "admin");
+	if (
+		wallet === undefined ||
+		!/^0x[0-9a-fA-F]{40}$/.test(wallet.address) ||
+		wallet.address.toLowerCase() !==
+			required(environment, "DAO_CASE_ADMIN").toLowerCase()
+	) {
+		// 网页调研助手的目录所有者也是当前本机演示的收款地址。必须和已部署案件合约的
+		// 管理员绑定一致，避免清单被替换后把后续测试 USDC 结算到陌生地址。
+		throw new Error("SEPOLIA_ADMIN_WALLET_BINDING_MISMATCH");
+	}
+	return wallet.address;
+}
+
 function readKeychainPassword(manifest) {
 	const result = spawnSync(
 		"/usr/bin/security",
@@ -356,9 +439,34 @@ function start(label, command, arguments_, options) {
 	return managed;
 }
 
-async function waitForService(managed, label, url, expectJson = true) {
+async function runOnce(label, command, arguments_, options) {
+	const outcome = await new Promise((resolve) => {
+		const child = spawn(command, arguments_, {
+			cwd: options.cwd,
+			env: { ...process.env, ...options.env },
+			stdio: "inherit",
+		});
+		child.once("error", (error) => resolve({ error }));
+		child.once("exit", (code, signal) => resolve({ code, signal }));
+	});
+	if ("error" in outcome) {
+		throw new Error(`${label} 启动失败：${outcome.error.message}`);
+	}
+	if (outcome.code !== 0) {
+		const reason = outcome.signal === null ? `code ${outcome.code}` : `signal ${outcome.signal}`;
+		throw new Error(`${label} 执行失败：${reason}`);
+	}
+}
+
+async function waitForService(
+	managed,
+	label,
+	url,
+	expectJson = true,
+	headers = undefined,
+) {
 	for (let attempt = 0; attempt < 30; attempt += 1) {
-		const probe = fetch(url, { signal: AbortSignal.timeout(1_000) })
+		const probe = fetch(url, { headers, signal: AbortSignal.timeout(1_000) })
 			.then(async (response) => {
 				if (!response.ok) return false;
 				if (!expectJson) return true;

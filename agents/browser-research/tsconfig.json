@@ -1,0 +1,4 @@
+{
+	"extends": "../agent-sdk/tsconfig.json",
+	"include": ["src/**/*.ts", "test/**/*.ts"]
+}

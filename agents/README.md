@@ -69,7 +69,7 @@ pnpm --filter @aicp/product-workflow-agents dev
 ```
 
 服务默认监听 `127.0.0.1:9202`。完整体验应使用仓库根目录的 `scripts/local-mvp.mjs`
-启动平台、注册 10 个 Agent，再从任务发布页创建和托管真实任务；任务详情会展示正式
+启动平台、注册 10 个产品工作流 Agent 和网页调研助手，再从任务发布页创建和托管真实任务；任务详情会展示正式
 节点、候选、分配、执行与制品。手动单独启动时按 `product-workflow/.env.example` 配置
 `WORKFLOW_AGENT_SECRET`，并确保分发引擎注册信息使用同一服务地址和凭据。所有密钥都
 只能位于服务端环境变量，变量名不得添加 `NEXT_PUBLIC_`。
@@ -80,7 +80,21 @@ Temporal Workflow 编排，Agent 调用、DeepSeek、数据库和生命周期迁
 平台多 Agent DAG 仍通过框架无关的 HTTP/AICP 协议交换版本化制品，因此 Mastra、自研
 状态机、LangGraph 和其他语言实现可以出现在同一个正式任务中。
 
-## 可手动快速上架的 Mastra Agent
+## 可上架的独立 Agent
+
+Stagehand Browser Agent 位于 `browser-research/`，默认端口 `9304`。它读取任务中明确给出的
+公开 URL，以自然语言提取结构化证据，并交付带来源和失败清单的 Markdown/JSON 报告。
+Stagehand 通过官方 `ClientLLM` 接口复用现有 DeepSeek 配置，无需增加另一家模型供应商 Key。
+LangGraph 负责逐页推进和单页失败隔离。该 Agent 每次使用独立无登录浏览器，限制为 5 个
+域名、20 个页面且默认单并发；不登录、不提交表单、不下载。完整安全边界和运行方式见
+[`browser-research/README.md`](browser-research/README.md)。
+
+自然语言页面验收也由该目录提供，但只作为现有确定性测试的补充：`qa:smoke` 对本机
+`/tasks` 执行一次 Stagehand `observe()` 与 Schema `extract()`，不会替代 Vitest、Playwright
+或资金/DAO 状态断言。2026-09-13 已使用真实 DeepSeek 完成公网研究、运行中 Web 的两项
+语义验收，并完成网页调研助手从平台匹配到 Sepolia 结算的付费任务闭环。
+
+### 可手动快速上架的 Mastra Agent
 
 下面三个 Agent 使用独立目录和端口，模型决策均由 Mastra `Agent` 完成；HTTP、Bearer、
 幂等和文件下载复用 `@aicp/agent-sdk` 的快速模式。第三方接入不需要安装 SDK。

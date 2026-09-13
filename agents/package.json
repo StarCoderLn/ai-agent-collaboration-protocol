@@ -7,6 +7,7 @@
     "check": "pnpm -r check",
     "predev:market-agents": "pnpm --filter @aicp/agent-sdk build",
     "dev:market-agents": "pnpm --parallel --filter @aicp/image-generation-agent --filter @aicp/presentation-generation-agent --filter @aicp/paper-writing-agent dev:server",
+    "dev:browser-research": "pnpm --filter @aicp/browser-research-agent dev",
     "test": "pnpm -r test"
   }
 }
