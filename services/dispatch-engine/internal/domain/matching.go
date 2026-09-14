@@ -17,20 +17,21 @@ type AgentDeliveryCase struct {
 }
 
 type AgentCandidate struct {
-	ID                string
-	Name              string
-	CategoryID        string
-	Tags              []string
-	State             AgentState
-	PriceMinor        int64
-	Currency          string
-	Score             float64
-	Completed         int
-	EstimatedDuration time.Duration
-	ResponseMinutes   int
-	CurrentLoad       int
-	RatingSampleSize  int
-	PriorWeight       int
+	ID                    string
+	Name                  string
+	CategoryID            string
+	Tags                  []string
+	CapabilityDescription string `json:"-"`
+	State                 AgentState
+	PriceMinor            int64
+	Currency              string
+	Score                 float64
+	Completed             int
+	EstimatedDuration     time.Duration
+	ResponseMinutes       int
+	CurrentLoad           int
+	RatingSampleSize      int
+	PriorWeight           int
 	// ProbationCompletedTaskThreshold 是解除冷启动报价限制所需的真实结算任务数。
 	// 它与评分先验权重分开：前者控制早期资金风险，后者只描述评分证据置信度。
 	ProbationCompletedTaskThreshold int
@@ -47,6 +48,7 @@ type MatchTask struct {
 	ID          string
 	CategoryID  string
 	Tags        []string
+	Description string `json:"-"`
 	BudgetMinor int64
 	Currency    string
 	Deadline    time.Time
@@ -95,6 +97,9 @@ func ValidateHardConstraints(task MatchTask, agent AgentCandidate, now time.Time
 type RankedCandidate struct {
 	Agent       AgentCandidate
 	MatchedTags []string
+	// SemanticSimilarity 只记录 V1 召回证据，不参与 V0 规则权重。向量负责缩小候选集，
+	// 候选内顺序仍由版本化规则决定，避免在产品尚未确认权重时偷偷引入混合评分。
+	SemanticSimilarity *float64
 	// RankScore 使用整数避免浮点排序在不同平台/版本间出现边界差异；Score 原始值只在
 	// 进入排序前量化一次。相同输入和规则版本会得到逐位相同的结果。
 	RankScore int64

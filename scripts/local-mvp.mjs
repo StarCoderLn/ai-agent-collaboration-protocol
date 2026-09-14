@@ -104,6 +104,7 @@ async function main() {
   assertDistinctPorts(PORTS);
   const paperEnv = parseEnv(await readFile(path.join(ROOT, "agents/paper-writing/.env"), "utf8"));
   const apiKey = required(paperEnv, "DEEPSEEK_API_KEY");
+  const openAIKey = required(paperEnv, "OPENAI_API_KEY");
   const agentSecret = required(paperEnv, "WORKFLOW_AGENT_SECRET");
   if (agentSecret.length < 16) throw new Error("WORKFLOW_AGENT_SECRET must contain at least 16 characters");
 
@@ -244,6 +245,10 @@ async function main() {
 	  // DeepSeek 密钥，不再要求为审核流程维护第二套本地凭证。
 	  DEEPSEEK_API_KEY: apiKey,
 	  DEEPSEEK_BASE_URL: paperEnv.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+	  // V1 语义匹配只把 OpenAI 密钥注入 Dispatch Engine；浏览器和其他 Agent
+	  // 无需持有该凭据，避免一个前端或第三方执行入口扩大密钥暴露面。
+	  MATCHING_SEMANTIC_ENABLED: "true",
+	  OPENAI_API_KEY: openAIKey,
 	  AGENT_ADMISSION_EVALUATOR_MODEL: process.env.AGENT_ADMISSION_EVALUATOR_MODEL ?? "deepseek-chat",
 	  AGENT_ADMISSION_ENGINE: process.env.AGENT_ADMISSION_ENGINE ?? "postgres",
 	  TEMPORAL_ADDRESS: process.env.TEMPORAL_ADDRESS ?? "127.0.0.1:7233",

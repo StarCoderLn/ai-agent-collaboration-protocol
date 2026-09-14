@@ -87,6 +87,13 @@ func TestMatchingRepositoryPostgresVerticalSlice(t *testing.T) {
 	}
 	insertAgent(integrationAgentID, "符合约束的 Agent", 7000000)
 	insertAgent(overBudgetAgentID, "超出预算的 Agent", 9000000)
+	// 共享验收库的历史结算价格会改变冷启动分位数。fixture 显式使用完整历史上界，
+	// 让本测试只验证预算是软偏好，不被库中无关历史任务随机改写前置条件。
+	if _, err = pool.Exec(ctx, `
+		INSERT INTO agent_status_config(agent_id,probation_budget_cap_percentile)
+		VALUES($1,1),($2,1)`, integrationAgentID, overBudgetAgentID); err != nil {
+		t.Fatal(err)
+	}
 
 	repository := &MatchingRepository{Pool: pool}
 	service := matching.Service{Repository: repository, Now: time.Now}
@@ -191,6 +198,11 @@ func TestInitialMatchCoordinatorPostgresAutomaticallyLocksFrozenTopCandidate(t *
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err = pool.Exec(ctx, `
+		INSERT INTO agent_status_config(agent_id,probation_budget_cap_percentile)
+		VALUES($1,1),($2,1)`, integrationAgentID, overBudgetAgentID); err != nil {
+		t.Fatal(err)
 	}
 
 	matchingRepository := &MatchingRepository{Pool: pool}

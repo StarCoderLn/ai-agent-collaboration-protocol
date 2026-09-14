@@ -60,6 +60,10 @@ type NodeRow = {
 	attention_message: string | null;
   candidate_record_id: string | null;
   candidate_rule_version: string | null;
+  candidate_matching_mode: string | null;
+  candidate_semantic_model: string | null;
+  candidate_semantic_query_ms: number | null;
+  candidate_fallback_reason: string | null;
   candidates: unknown;
   filter_reasons: unknown;
   final_selection_agent_id: string | null;
@@ -167,6 +171,10 @@ export type FormalWorkflowGraph = Readonly<{
     candidateRecord: null | Readonly<{
       id: string;
       ruleVersion: string;
+      matchingMode: string;
+      semanticModel: string | null;
+      semanticQueryMs: number | null;
+      fallbackReason: string | null;
       candidates: unknown;
       filterReasons: unknown;
       finalSelectionAgentId: string | null;
@@ -386,7 +394,12 @@ async function findFormalWorkflow(db: QueryExecutor, taskId: string): Promise<Fo
 			execution.progress,execution.execution_state,execution.failure_code,
 			execution.failure_stage,execution.attention_message,
             distribution.id::text AS candidate_record_id,
-            distribution.rule_version AS candidate_rule_version,distribution.candidates,
+            distribution.rule_version AS candidate_rule_version,
+            distribution.matching_mode AS candidate_matching_mode,
+            distribution.semantic_model AS candidate_semantic_model,
+            distribution.semantic_query_ms AS candidate_semantic_query_ms,
+            distribution.fallback_reason AS candidate_fallback_reason,
+            distribution.candidates,
             distribution.filter_reasons,
             distribution.final_selection_agent_id::text
        FROM task_workflow_nodes node
@@ -526,6 +539,10 @@ async function findFormalWorkflow(db: QueryExecutor, taskId: string): Promise<Fo
           : {
               id: node.candidate_record_id,
               ruleVersion: node.candidate_rule_version,
+              matchingMode: node.candidate_matching_mode ?? "rules_v0",
+              semanticModel: node.candidate_semantic_model,
+              semanticQueryMs: node.candidate_semantic_query_ms,
+              fallbackReason: node.candidate_fallback_reason,
               candidates: node.candidates,
               // 空候选同样是一次完整、可审计的匹配结果。必须把硬条件过滤原因返回给
               // 页面，否则“全部被过滤”会被误解成“尚未生成候选记录”。

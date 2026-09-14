@@ -152,7 +152,7 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 	var status string
 	if workflowNodeID == "" {
 		err = tx.QueryRow(ctx,
-			`SELECT task.id::text, task.category_id::text, task.tag_names,
+			`SELECT task.id::text, task.category_id::text, task.tag_names,task.description,
 		        CASE WHEN assignment_mode_config->>'mode'='automatic'
 		             THEN LEAST(budget_max_minor, (assignment_mode_config->>'priceCapMinor')::bigint)
 		             ELSE budget_max_minor END,
@@ -161,14 +161,14 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		   FROM tasks task
 		  WHERE task.id=$1
 		    AND NOT EXISTS (SELECT 1 FROM task_workflow_runs run WHERE run.task_id=task.id)`, taskID,
-		).Scan(&input.Task.ID, &input.Task.CategoryID, &input.Task.Tags, &input.Task.BudgetMinor, &input.Task.Currency,
+		).Scan(&input.Task.ID, &input.Task.CategoryID, &input.Task.Tags, &input.Task.Description, &input.Task.BudgetMinor, &input.Task.Currency,
 			&input.Task.Deadline, &input.TaskUpdatedAt, &status, &input.AssignmentMode)
 	} else {
 		// accept_failed 同时覆盖 Agent 主动拒绝和接单超时；cancelled 覆盖发布者对执行失败
 		// 发起的显式恢复。两者都已经结束旧 assignment，下一次派发必须把其 ID 写入新的
 		// 幂等键。pending_ack/accepted 仍返回空值，防止正在接单或执行时创建重复分配。
 		err = tx.QueryRow(ctx,
-			`SELECT task.id::text,node.category_id::text,node.tags,
+			`SELECT task.id::text,node.category_id::text,node.tags,node.description,
 			        COALESCE(node.price_preference_minor,0),
 			        task.currency,task.deadline,GREATEST(task.updated_at,node.updated_at),node.status,
 			        task.assignment_mode_config->>'mode',
@@ -186,7 +186,7 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 			   JOIN task_workflow_runs run ON run.id=node.workflow_run_id
 			   JOIN tasks task ON task.id=node.task_id
 			  WHERE task.id=$1 AND node.id=$2 AND run.status IN ('planning','running')`, taskID, workflowNodeID,
-		).Scan(&input.Task.ID, &input.Task.CategoryID, &input.Task.Tags, &input.Task.BudgetMinor, &input.Task.Currency,
+		).Scan(&input.Task.ID, &input.Task.CategoryID, &input.Task.Tags, &input.Task.Description, &input.Task.BudgetMinor, &input.Task.Currency,
 			&input.Task.Deadline, &input.TaskUpdatedAt, &status, &input.AssignmentMode, &input.PreviousAssignmentID)
 		input.WorkflowNodeID = workflowNodeID
 	}
@@ -221,7 +221,7 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT a.id::text, a.name, a.category_id::text, a.tags, a.status,
+		SELECT a.id::text, a.name, a.category_id::text, a.tags,a.capability_desc, a.status,
 		       COALESCE(a.pause_reason,''), a.price_amount, a.price_currency,
 		       COALESCE(score.score, 3.5)::float8,
 		       COALESCE(completed.count, 0)::int,
@@ -327,7 +327,7 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		var estimatedSeconds int64
 		var dimensionsJSON, casesJSON []byte
 		if err = rows.Scan(
-			&candidate.ID, &candidate.Name, &candidate.CategoryID, &candidate.Tags, &statusValue,
+			&candidate.ID, &candidate.Name, &candidate.CategoryID, &candidate.Tags, &candidate.CapabilityDescription, &statusValue,
 			&pauseReason, &candidate.PriceMinor, &candidate.Currency, &candidate.Score, &candidate.Completed,
 			&estimatedSeconds, &candidate.ResponseMinutes, &candidate.CurrentLoad,
 			&candidate.RatingSampleSize, &candidate.PriorWeight,
@@ -388,14 +388,17 @@ func (r *MatchingRepository) save(ctx context.Context, record matching.Record, w
 	}
 	inserted, err := scanDistribution(r.Pool.QueryRow(ctx, `
 		INSERT INTO job_distribution_records (
-		  task_id, workflow_node_id, rule_version, input_fingerprint, input_snapshot, candidates, filter_reasons
-		) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb)
+		  task_id, workflow_node_id, rule_version, input_fingerprint, input_snapshot, candidates, filter_reasons,
+		  matching_mode,semantic_model,semantic_query_ms,fallback_reason
+		) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8,$9,$10,$11)
 		ON CONFLICT DO NOTHING
 		RETURNING id::text, task_id::text, COALESCE(workflow_node_id::text,''), rule_version, input_fingerprint,
 		          input_snapshot, candidates, filter_reasons,
-		          COALESCE(final_selection_agent_id::text,''), created_at`,
+		          COALESCE(final_selection_agent_id::text,''), created_at,
+		          matching_mode,COALESCE(semantic_model,''),COALESCE(semantic_query_ms,0),COALESCE(fallback_reason,'')`,
 		record.TaskID, nullableNodeID(record.WorkflowNodeID), record.RuleVersion, record.InputFingerprint,
-		record.InputSnapshot, candidates, reasons,
+		record.InputSnapshot, candidates, reasons, record.MatchingMode, nullableText(record.SemanticModel),
+		nullableQueryDuration(record.MatchingMode, record.SemanticQueryMS), nullableText(record.FallbackReason),
 	))
 	if err == nil {
 		return inserted, nil
@@ -422,7 +425,8 @@ func (r *MatchingRepository) LatestWorkflowNode(ctx context.Context, taskID, wor
 const distributionSelect = `
 	SELECT id::text, task_id::text, COALESCE(workflow_node_id::text,''), rule_version, input_fingerprint,
 	       input_snapshot, candidates, filter_reasons,
-	       COALESCE(final_selection_agent_id::text,''), created_at
+	       COALESCE(final_selection_agent_id::text,''), created_at,
+	       matching_mode,COALESCE(semantic_model,''),COALESCE(semantic_query_ms,0),COALESCE(fallback_reason,'')
 	  FROM job_distribution_records`
 
 type rowScanner interface {
@@ -435,6 +439,7 @@ func scanDistribution(row rowScanner) (matching.Record, error) {
 	err := row.Scan(
 		&record.ID, &record.TaskID, &record.WorkflowNodeID, &record.RuleVersion, &record.InputFingerprint,
 		&record.InputSnapshot, &candidatesJSON, &reasonsJSON, &record.FinalSelectionID, &record.CreatedAt,
+		&record.MatchingMode, &record.SemanticModel, &record.SemanticQueryMS, &record.FallbackReason,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return matching.Record{}, matching.ErrRecordNotFound
@@ -463,4 +468,18 @@ func nullableNodeID(workflowNodeID string) any {
 		return nil
 	}
 	return workflowNodeID
+}
+
+func nullableText(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func nullableQueryDuration(mode string, milliseconds float64) any {
+	if mode != "semantic_v1" {
+		return nil
+	}
+	return milliseconds
 }

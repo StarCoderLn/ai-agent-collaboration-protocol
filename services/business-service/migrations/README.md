@@ -87,3 +87,4 @@ migrate -path services/business-service/migrations \
 - `0048_dispute_evidence_objects`：以 PostgreSQL `BYTEA` 保存内容寻址的证据原文字节；提交后正文、摘要和归属不可修改，授权下载时重新校验 SHA-256，不依赖 AWS 对象存储。
 - `0049_dao_case_compensations`：为旧部署异常案件记录独立平台补偿条款、付款哈希和确认区块；禁止覆盖原托管状态或把补偿伪装为 Escrow 退款。
 - `0050_dao_case_compensation_attempts`：补偿交易先持久化签名原文再广播；重启重放同一哈希，失败重试仍保留旧 nonce 与付款尝试。
+- `0051_agent_matching_embeddings`：启用 pgvector，保存带内容哈希的 Agent 能力向量缓存，并为分发记录增加 V1/回退模式与查询耗时证据。

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/domain"
@@ -36,6 +37,9 @@ type MatchInput struct {
 	// AssignmentMode 与候选输入一起进入指纹和快照。自动分配只能依据这份被冻结的
 	// 匹配事实，不能在生成候选后重新读取可能已经变化的任务设置。
 	AssignmentMode AssignmentMode
+	// Semantic 仅在 V1 启用时进入快照和指纹；描述正文不进入冻结记录，只保存内容哈希，
+	// 既能识别输入变化，又避免把私有任务描述复制到分发审计表。
+	Semantic *SemanticSnapshot `json:"semantic,omitempty"`
 	// DispatchReady 是节点当前阶段的瞬时门禁，不进入输入指纹。selecting 与 matching
 	// 使用同一份候选事实；托管确认只改变是否可派发，不应凭空生成另一版候选。
 	DispatchReady bool `json:"-"`
@@ -52,13 +56,14 @@ type CandidateView struct {
 	// 前端据此诚实展示证据缺口，不能把缺少标签伪装成已验证能力。
 	UnmatchedTags []string `json:"unmatchedTags"`
 	// 金额通过十进制字符串跨服务传输，避免浏览器把 BIGINT 解码为不安全的 float64。
-	QuoteMinor              string  `json:"quoteMinor"`
-	EstimatedDurationSecond int64   `json:"estimatedDurationSeconds"`
-	Score                   float64 `json:"score"`
-	Completed               int     `json:"completed"`
-	ResponseMinutes         int     `json:"responseMinutes"`
-	IsNew                   bool    `json:"isNew"`
-	RankScore               string  `json:"rankScore"`
+	QuoteMinor              string   `json:"quoteMinor"`
+	EstimatedDurationSecond int64    `json:"estimatedDurationSeconds"`
+	Score                   float64  `json:"score"`
+	Completed               int      `json:"completed"`
+	ResponseMinutes         int      `json:"responseMinutes"`
+	IsNew                   bool     `json:"isNew"`
+	RankScore               string   `json:"rankScore"`
+	SemanticSimilarity      *float64 `json:"semanticSimilarity,omitempty"`
 	// 推荐徽标与证据全部来自冻结输入，不由浏览器根据展示顺序临时猜测。
 	RecommendationBadges []string                   `json:"recommendationBadges"`
 	TaskFitScore         int                        `json:"taskFitScore"`
@@ -78,6 +83,10 @@ type Record struct {
 	TaskID           string                              `json:"taskId"`
 	WorkflowNodeID   string                              `json:"workflowNodeId,omitempty"`
 	RuleVersion      string                              `json:"ruleVersion"`
+	MatchingMode     string                              `json:"matchingMode,omitempty"`
+	SemanticModel    string                              `json:"semanticModel,omitempty"`
+	SemanticQueryMS  float64                             `json:"semanticQueryMs,omitempty"`
+	FallbackReason   string                              `json:"fallbackReason,omitempty"`
 	InputFingerprint string                              `json:"inputFingerprint"`
 	InputSnapshot    json.RawMessage                     `json:"inputSnapshot"`
 	Candidates       []CandidateView                     `json:"candidates"`
@@ -110,6 +119,45 @@ type WorkflowNodeRepository interface {
 type Service struct {
 	Repository Repository
 	Now        func() time.Time
+	Semantic   SemanticRetriever
+}
+
+type SemanticDescriptor struct {
+	Version    string
+	Model      string
+	Dimensions int
+	TopK       int
+}
+
+// SemanticNeighbor 是匹配层消费的最小召回结果，不泄漏具体向量数据库类型。
+type SemanticNeighbor struct {
+	AgentID    string
+	Similarity float64
+}
+
+// SemanticResult 将候选证据和纯数据库查询耗时一起返回，模型网络耗时不混入 <50ms 指标。
+type SemanticResult struct {
+	Neighbors     []SemanticNeighbor
+	QueryDuration time.Duration
+}
+
+// SemanticRetriever 是 V1 深模块接口；V0 Service 不依赖 OpenAI 或 pgvector 的具体 SDK。
+type SemanticRetriever interface {
+	Descriptor() SemanticDescriptor
+	Retrieve(ctx context.Context, task domain.MatchTask, agents []domain.AgentCandidate) (SemanticResult, error)
+	FailureKind(err error) string
+}
+
+// SemanticSnapshot 保存足以复现输入身份的哈希与配置，不复制任务或 Agent 描述正文。
+type SemanticSnapshot struct {
+	Mode              string            `json:"mode"`
+	Version           string            `json:"version"`
+	Model             string            `json:"model"`
+	Dimensions        int               `json:"dimensions"`
+	TopK              int               `json:"topK"`
+	TaskSourceHash    string            `json:"taskSourceHash"`
+	AgentSourceHashes map[string]string `json:"agentSourceHashes"`
+	FallbackReason    string            `json:"fallbackReason,omitempty"`
 }
 
 // RunMatching 以完整输入快照生成指纹；相同指纹直接返回历史记录，不重复写记录。
@@ -181,6 +229,9 @@ func (s *Service) runMatching(
 		}
 	}
 	canonicalizeInput(&input)
+	if s.Semantic != nil {
+		input.Semantic = semanticSnapshot(input, s.Semantic.Descriptor())
+	}
 	snapshot, fingerprint, err := snapshotInput(input)
 	if err != nil {
 		return Record{}, err
@@ -200,10 +251,50 @@ func (s *Service) runMatching(
 	if err != nil {
 		return Record{}, err
 	}
+	matchingMode := "rules_v0"
+	semanticModel := ""
+	semanticQueryMS := float64(0)
+	fallbackReason := ""
+	if s.Semantic != nil && len(distribution.Candidates) > 0 {
+		eligible := make([]domain.AgentCandidate, 0, len(distribution.Candidates))
+		for _, candidate := range distribution.Candidates {
+			eligible = append(eligible, candidate.Agent)
+		}
+		semanticResult, semanticErr := s.Semantic.Retrieve(ctx, input.Task, eligible)
+		if semanticErr == nil {
+			distribution.Candidates = semanticCandidates(distribution.Candidates, semanticResult.Neighbors)
+			matchingMode = "semantic_v1"
+			semanticModel = s.Semantic.Descriptor().Model
+			semanticQueryMS = float64(semanticResult.QueryDuration.Microseconds()) / 1000
+		} else {
+			// fallback 指纹与成功 V1 指纹分离，并且只在本次 V1 尝试失败后查询。模型恢复后
+			// 下一次请求仍会先尝试 V1，不会被历史 fallback 快照永久短路。
+			fallbackReason = s.Semantic.FailureKind(semanticErr)
+			input.Semantic.Mode = "rules_v0_fallback"
+			input.Semantic.FallbackReason = fallbackReason
+			snapshot, fingerprint, err = snapshotInput(input)
+			if err != nil {
+				return Record{}, err
+			}
+			if existing, findErr := find(ctx, taskID, fingerprint); findErr == nil {
+				existing.DispatchReady = input.DispatchReady
+				existing.PreviousAssignmentID = input.PreviousAssignmentID
+				return existing, nil
+			} else if !errors.Is(findErr, ErrRecordNotFound) {
+				return Record{}, findErr
+			}
+			matchingMode = "rules_v0_fallback"
+			semanticModel = s.Semantic.Descriptor().Model
+		}
+	}
 	record := Record{
 		TaskID:               taskID,
 		WorkflowNodeID:       workflowNodeID,
 		RuleVersion:          distribution.RuleVersion,
+		MatchingMode:         matchingMode,
+		SemanticModel:        semanticModel,
+		SemanticQueryMS:      semanticQueryMS,
+		FallbackReason:       fallbackReason,
 		InputFingerprint:     fingerprint,
 		InputSnapshot:        snapshotWithEvaluationTime(snapshot, evaluatedAt),
 		Candidates:           candidateViews(distribution.Candidates, input.Task.Tags),
@@ -252,8 +343,8 @@ func candidateViews(candidates []domain.RankedCandidate, taskTags []string) []Ca
 			fitScore = len(candidate.MatchedTags) * 100 / len(taskTags)
 		}
 		views = append(views, CandidateView{
-			AgentID:                 candidate.Agent.ID,
-			Name:                    candidate.Agent.Name,
+			AgentID: candidate.Agent.ID,
+			Name:    candidate.Agent.Name,
 			// 空匹配也是合法证据，必须从权威出口稳定编码成 []。以 nil 为起点复制空切片
 			// 会让 encoding/json 输出 null，严格客户端会因此拒绝整份候选快照。
 			MatchedTags: append(
@@ -270,6 +361,7 @@ func candidateViews(candidates []domain.RankedCandidate, taskTags []string) []Ca
 			// 完成、验收并结算后 Completed 才会增加，单纯接单或执行失败不会移除标识。
 			IsNew:                candidate.Agent.Completed == 0,
 			RankScore:            strconv.FormatInt(candidate.RankScore, 10),
+			SemanticSimilarity:   candidate.SemanticSimilarity,
 			RecommendationBadges: badges,
 			TaskFitScore:         fitScore,
 			Confidence:           confidence(candidate.Agent.RatingSampleSize, candidate.Agent.PriorWeight),
@@ -367,4 +459,39 @@ func snapshotWithEvaluationTime(snapshot json.RawMessage, evaluatedAt time.Time)
 		return snapshot
 	}
 	return encoded
+}
+
+func semanticSnapshot(input MatchInput, descriptor SemanticDescriptor) *SemanticSnapshot {
+	agentHashes := make(map[string]string, len(input.Agents))
+	for _, agent := range input.Agents {
+		agentHashes[agent.ID] = sourceDigest(agent.Tags, agent.CapabilityDescription)
+	}
+	return &SemanticSnapshot{
+		Mode: "semantic_v1", Version: descriptor.Version, Model: descriptor.Model,
+		Dimensions: descriptor.Dimensions, TopK: descriptor.TopK,
+		TaskSourceHash: sourceDigest(input.Task.Tags, input.Task.Description), AgentSourceHashes: agentHashes,
+	}
+}
+
+func sourceDigest(tags []string, description string) string {
+	normalizedTags := append([]string(nil), tags...)
+	sort.Strings(normalizedTags)
+	digest := sha256.Sum256([]byte(strings.Join(normalizedTags, "\x00") + "\x01" + strings.TrimSpace(description)))
+	return hex.EncodeToString(digest[:])
+}
+
+func semanticCandidates(candidates []domain.RankedCandidate, neighbors []SemanticNeighbor) []domain.RankedCandidate {
+	similarities := make(map[string]float64, len(neighbors))
+	for _, neighbor := range neighbors {
+		similarities[neighbor.AgentID] = neighbor.Similarity
+	}
+	selected := make([]domain.RankedCandidate, 0, len(neighbors))
+	for _, candidate := range candidates {
+		if similarity, ok := similarities[candidate.Agent.ID]; ok {
+			value := similarity
+			candidate.SemanticSimilarity = &value
+			selected = append(selected, candidate)
+		}
+	}
+	return selected
 }

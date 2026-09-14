@@ -21,6 +21,7 @@ import (
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/protocol"
 	queueadapter "github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/queue"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/sandboxadmission"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/semanticmatching"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/store"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/tasktransition"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/temporaladmission"
@@ -92,6 +93,27 @@ func run(ctx context.Context) error {
 	}
 	matchingRepository := &store.MatchingRepository{Pool: pool}
 	matcher := &matching.Service{Repository: matchingRepository}
+	semanticEnabled, err := booleanEnvOrDefault("MATCHING_SEMANTIC_ENABLED", false)
+	if err != nil {
+		return err
+	}
+	if semanticEnabled {
+		openAIKey, keyErr := requiredEnv("OPENAI_API_KEY")
+		if keyErr != nil {
+			return keyErr
+		}
+		semanticConfig := semanticmatching.Config{
+			Model: semanticmatching.DefaultModel, Dimensions: semanticmatching.DefaultDimensions,
+			TopK: semanticmatching.DefaultTopK,
+		}
+		matcher.Semantic = &semanticmatching.Service{
+			Embedder: &semanticmatching.OpenAIEmbedder{
+				Client: &http.Client{Timeout: 15 * time.Second}, BaseURL: envOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+				APIKey: openAIKey, Model: semanticConfig.Model, Dimensions: semanticConfig.Dimensions,
+			},
+			Store: &semanticmatching.PostgresStore{Pool: pool}, Config: semanticConfig,
+		}
+	}
 	assignmentRepository := &store.AssignmentRepository{Pool: pool}
 	dispatcher := &dispatch.Service{Repository: assignmentRepository, Queue: transport.queue}
 	initialMatchCoordinator := &matching.InitialMatchCoordinator{Matcher: matcher, Dispatcher: dispatcher}

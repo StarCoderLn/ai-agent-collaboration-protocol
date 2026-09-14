@@ -333,6 +333,8 @@ const candidateSchema = z.object({
 	responseMinutes: z.number().int().nonnegative(),
 	isNew: z.boolean(),
 	rankScore: integerStringSchema,
+	/** V1 语义召回的余弦相似度；V0 与历史快照没有该字段。 */
+	semanticSimilarity: z.number().min(-1).max(1).optional(),
 	recommendationBadges: z
 		.array(z.enum(["best_overall", "quality_first", "best_value"]))
 		.optional(),
@@ -362,6 +364,12 @@ const candidateRecordSchema = z.object({
 	id: uuidSchema,
 	taskId: uuidSchema,
 	ruleVersion: z.string(),
+	matchingMode: z
+		.enum(["rules_v0", "semantic_v1", "rules_v0_fallback"])
+		.optional(),
+	semanticModel: z.string().optional(),
+	semanticQueryMs: z.number().nonnegative().optional(),
+	fallbackReason: z.string().optional(),
 	inputFingerprint: z.string(),
 	inputSnapshot: z.unknown(),
 	candidates: z.array(candidateSchema),
@@ -753,6 +761,12 @@ const workflowNodeSchema = z.object({
 		.object({
 			id: uuidSchema,
 			ruleVersion: z.string(),
+			matchingMode: z
+				.enum(["rules_v0", "semantic_v1", "rules_v0_fallback"])
+				.optional(),
+			semanticModel: z.string().nullable().optional(),
+			semanticQueryMs: z.number().nonnegative().nullable().optional(),
+			fallbackReason: z.string().nullable().optional(),
 			// 候选来自 Go 分发引擎，但仍在浏览器边界逐项校验，不能让 unknown 渗入关系图。
 			candidates: z.array(candidateSchema),
 			// 空对象表示没有 Agent 被硬条件排除；非空对象用于解释“已匹配但无候选”，

@@ -114,7 +114,7 @@ PRD 与设计阶段各有 **DeepSeek 直连、Mastra 编排、自研状态机** 
 | Agent 市场 | 查看 Agent 的能力、价格、健康状态、历史表现与适用场景 |
 | 快速发布需求 | 用标题、分类和截止日期快速开始，说明可选；平台自动识别并拆分能力需求 |
 | 快速上架 Agent | 填写服务地址、能力、报价和收款钱包，并完成接入验证 |
-| 可解释匹配 | 按分类、标签、资格和可用状态生成候选，提供三种偏好、履约证据与置信度 |
+| 语义匹配 | 先校验分类、资格与可用状态，再用 OpenAI Embedding + pgvector Top-k 召回候选，并保留三种偏好、履约证据与置信度 |
 | 正式多 Agent 协作 | 发布后建立持久化节点，先选人定价，再托管并按依赖派发、执行和交付 |
 | 关系图与执行追踪 | 用 React Flow 展示任务、阶段、候选 Agent、最终分配和依赖关系 |
 | 分类交付预览 | 大尺寸查看文档、HTML、网站、图片、视频和 PDF，并支持下载制品 |
@@ -154,8 +154,8 @@ AICP 将用户界面、业务事实、任务派发、Agent 执行与链上资金
 | 层级 | 主要技术 | 职责边界 |
 | --- | --- | --- |
 | Web | Next.js 16、React 19、TypeScript strict、Tailwind CSS | 用户界面、钱包交互、制品隔离预览 |
-| 业务 API | Next.js Route Handlers、Zod、PostgreSQL、SIWE | 任务、Agent、工作流、评分、争议和审计 |
-| 派发引擎 | Go、Temporal Go SDK | 候选匹配、原子分配、协议签名、幂等、重试，以及可恢复的自动准入编排 |
+| 业务 API | Next.js Route Handlers、Zod、PostgreSQL + pgvector、SIWE | 任务、Agent、工作流、评分、争议和审计 |
+| 派发引擎 | Go、OpenAI Embeddings、Temporal Go SDK | 语义候选召回、规则排序、原子分配、协议签名、幂等、重试，以及可恢复的自动准入编排 |
 | Agent | DeepSeek、Mastra、LangGraph、Stagehand、OpenAlex、PptxGenJS、自研状态机 | PRD、设计、Coding、网页研究、图片、PPT 和论文写作等真实执行能力 |
 | 链与钱包 | Solidity、Foundry、wagmi、viem | USDC 托管、原子多 Agent 结算、DAO 质押、退款和钱包连接 |
 
@@ -203,6 +203,7 @@ PAPER_AGENT_PROVIDER=deepseek
 PAPER_AGENT_MODEL=deepseek-chat
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_API_KEY=your-deepseek-api-key
+OPENAI_API_KEY=your-openai-api-key
 WORKFLOW_AGENT_SECRET=replace-with-at-least-16-random-characters
 ```
 
@@ -210,7 +211,8 @@ WORKFLOW_AGENT_SECRET=replace-with-at-least-16-random-characters
 
 ### 4. 准备 PostgreSQL
 
-创建本地数据库后，分别执行派发引擎和业务服务 migration。两个目录共享同一个 PostgreSQL，
+创建带 pgvector 扩展的 PostgreSQL 16 数据库后，分别执行派发引擎和业务服务 migration
+（Docker 可使用 `pgvector/pgvector:pg16`）。两个目录共享同一个 PostgreSQL，
 但使用不同的 migration 追踪表；具体连接串格式和回滚限制见
 [Migration 指南](./services/business-service/migrations/README.md)。
 
@@ -324,6 +326,7 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 | 文档、HTML、网站、图片、视频与 PDF 分类预览 | 已实现前端预览边界 |
 | Feature 1～13 | 当前 MVP 范围；详细完成证据见各 `specs/*/tasks.md` |
 | Feature 14、16 | 运营后台与钱包换绑延后；Feature 15 自动准入已完成 |
+| 匹配算法路线 | V0 规则排序与 V1 OpenAI Embedding + pgvector Top-k 已完成；V2 分发/接单/成功反馈学习尚未实现 |
 | 公共测试网 USDC Escrow 与 DAO 仲裁 | Sepolia 部署、真实 VRF、申诉、结算、恢复和保证金领取已验证 |
 | 生产 `OPERATOR_ROLE` KMS/HSM 签名适配器 | 待实现 |
 | 真实 AWS Lambda/KMS/PostgreSQL 部署 | 待环境验证 |

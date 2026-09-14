@@ -73,12 +73,13 @@ async function main() {
 	validateWalletBindings(environment, manifest);
 	const platformAgentWallet = platformAdminAddress(environment, manifest);
 	const recoveryEnabled = await validateSepoliaDeployment(environment);
-	await validateDatabaseVersion(recoveryEnabled);
+	await validateDatabaseVersion();
 
 	const paperEnvironment = parseEnv(
 		await readFile(path.join(ROOT, "agents/paper-writing/.env"), "utf8"),
 	);
 	const apiKey = required(paperEnvironment, "DEEPSEEK_API_KEY");
+	const openAIKey = required(paperEnvironment, "OPENAI_API_KEY");
 	const agentSecret = required(paperEnvironment, "WORKFLOW_AGENT_SECRET");
 	if (agentSecret.length < 16) throw new Error("WORKFLOW_AGENT_SECRET 长度不足");
 
@@ -215,6 +216,9 @@ async function main() {
 			DEEPSEEK_API_KEY: apiKey,
 			DEEPSEEK_BASE_URL:
 				paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+			// V1 只在分发引擎内调用 Embeddings API，密钥不传给 Web 或 Agent 进程。
+			MATCHING_SEMANTIC_ENABLED: "true",
+			OPENAI_API_KEY: openAIKey,
 			AGENT_ADMISSION_EVALUATOR_MODEL:
 				process.env.AGENT_ADMISSION_EVALUATOR_MODEL ?? "deepseek-chat",
 			AGENT_ADMISSION_ENGINE:
@@ -304,20 +308,17 @@ async function validateSepoliaDeployment(environment) {
 	}
 }
 
-async function validateDatabaseVersion(recoveryEnabled) {
+async function validateDatabaseVersion() {
 	const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
 	try {
 		const result = await pool.query(
 			"SELECT version::text,dirty FROM business_service_schema_migrations",
 		);
 		const row = result.rows[0];
-		const supportedVersions = recoveryEnabled
-			? ["46", "47", "48", "49", "50"]
-			: ["45", "46", "47", "48", "49", "50"];
-		if (!supportedVersions.includes(row?.version) || row.dirty !== false) {
-			throw new Error(
-				`BUSINESS_DATABASE_MIGRATION_${recoveryEnabled ? "46_TO_50" : "45_TO_50"}_REQUIRED`,
-			);
+		// Dispatch Engine 启动后会直接读取 0051 新增的语义证据列，因此旧版本不能再
+		// 作为可运行状态放行；链上合约是否支持恢复仍由独立只读检查决定。
+		if (row?.version !== "51" || row.dirty !== false) {
+			throw new Error("BUSINESS_DATABASE_MIGRATION_51_REQUIRED");
 		}
 	} finally {
 		await pool.end();

@@ -1727,6 +1727,7 @@ export const EN_MESSAGES = {
 	性价比优先: "Best value",
 	当前偏好排序: "Current preference rank",
 	任务匹配度: "Task fit",
+	语义相关度: "Semantic relevance",
 	相似任务完成: "Similar tasks completed",
 	按时交付率: "On-time delivery",
 	返工率: "Rework rate",

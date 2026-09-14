@@ -14,6 +14,23 @@ type memoryRepository struct {
 	records []Record
 }
 
+type semanticRetrieverFake struct {
+	result SemanticResult
+	err    error
+	calls  int
+	seen   []domain.AgentCandidate
+}
+
+func (f *semanticRetrieverFake) Descriptor() SemanticDescriptor {
+	return SemanticDescriptor{Version: "semantic-v1", Model: "text-embedding-3-small", Dimensions: 1536, TopK: 1}
+}
+func (f *semanticRetrieverFake) Retrieve(_ context.Context, _ domain.MatchTask, agents []domain.AgentCandidate) (SemanticResult, error) {
+	f.calls++
+	f.seen = append([]domain.AgentCandidate(nil), agents...)
+	return f.result, f.err
+}
+func (f *semanticRetrieverFake) FailureKind(error) string { return "embedding_unavailable" }
+
 func (r *memoryRepository) LoadInput(context.Context, string) (MatchInput, error) {
 	return r.input, nil
 }
@@ -92,6 +109,72 @@ func TestCandidateViewsKeepsEmptyTagEvidenceAsJSONArrays(t *testing.T) {
 	// null，导致严格的浏览器契约拒绝整份工作流响应。
 	if views[0].MatchedTags == nil || views[0].UnmatchedTags == nil {
 		t.Fatalf("empty tag evidence must remain arrays: %+v", views[0])
+	}
+}
+
+func TestSemanticMatchingRunsAfterHardConstraintsAndReplaysSuccessfulSnapshot(t *testing.T) {
+	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	repository := &memoryRepository{input: MatchInput{
+		Task: domain.MatchTask{ID: "task", CategoryID: "code", Tags: []string{"go"}, Description: "实现并发服务", Currency: "USDC", Deadline: now.Add(time.Hour)},
+		Agents: []domain.AgentCandidate{
+			{ID: "eligible-a", CategoryID: "code", Tags: []string{"go"}, CapabilityDescription: "Go 服务", State: domain.AgentState{Status: domain.AgentActive}, Currency: "USDC", EstimatedDuration: time.Minute},
+			{ID: "eligible-b", CategoryID: "code", Tags: []string{"rust"}, CapabilityDescription: "系统开发", State: domain.AgentState{Status: domain.AgentActive}, Currency: "USDC", EstimatedDuration: time.Minute},
+			{ID: "inactive", CategoryID: "code", State: domain.AgentState{Status: domain.AgentPaused}, Currency: "USDC", EstimatedDuration: time.Minute},
+		},
+		Rules: domain.RankingRules{Version: "ranking-v1", TagMatchWeight: 1},
+	}}
+	retriever := &semanticRetrieverFake{result: SemanticResult{
+		Neighbors: []SemanticNeighbor{{AgentID: "eligible-b", Similarity: 0.82}}, QueryDuration: 12 * time.Millisecond,
+	}}
+	service := Service{Repository: repository, Semantic: retriever, Now: func() time.Time { return now }}
+
+	first, err := service.RunMatching(context.Background(), "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.RunMatching(context.Background(), "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retriever.calls != 1 || len(retriever.seen) != 2 {
+		t.Fatalf("semantic retrieval must receive only eligible agents once: calls=%d seen=%+v", retriever.calls, retriever.seen)
+	}
+	if len(first.Candidates) != 1 || first.Candidates[0].AgentID != "eligible-b" || first.Candidates[0].SemanticSimilarity == nil {
+		t.Fatalf("unexpected semantic candidates: %+v", first.Candidates)
+	}
+	if first.ID != second.ID || first.MatchingMode != "semantic_v1" || first.SemanticQueryMS != 12 {
+		t.Fatalf("successful semantic snapshot was not replayed: first=%+v second=%+v", first, second)
+	}
+	if first.FilterReasons["inactive"] != domain.InactiveAgent {
+		t.Fatalf("hard constraint evidence was lost: %+v", first.FilterReasons)
+	}
+}
+
+func TestSemanticFailureFallsBackWithoutPermanentlyBlockingRecovery(t *testing.T) {
+	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	repository := &memoryRepository{input: MatchInput{
+		Task:   domain.MatchTask{ID: "task", CategoryID: "code", Description: "Go 服务", Currency: "USDC", Deadline: now.Add(time.Hour)},
+		Agents: []domain.AgentCandidate{{ID: "agent", CategoryID: "code", CapabilityDescription: "后端工程", State: domain.AgentState{Status: domain.AgentActive}, Currency: "USDC", EstimatedDuration: time.Minute}},
+		Rules:  domain.RankingRules{Version: "ranking-v1", QualityWeight: 1},
+	}}
+	retriever := &semanticRetrieverFake{err: errors.New("temporary outage")}
+	service := Service{Repository: repository, Semantic: retriever, Now: func() time.Time { return now }}
+
+	fallback, err := service.RunMatching(context.Background(), "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fallback.MatchingMode != "rules_v0_fallback" || fallback.FallbackReason != "embedding_unavailable" || len(fallback.Candidates) != 1 {
+		t.Fatalf("V0 fallback evidence is incomplete: %+v", fallback)
+	}
+	retriever.err = nil
+	retriever.result = SemanticResult{Neighbors: []SemanticNeighbor{{AgentID: "agent", Similarity: 0.9}}}
+	recovered, err := service.RunMatching(context.Background(), "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retriever.calls != 2 || recovered.MatchingMode != "semantic_v1" || recovered.ID == fallback.ID {
+		t.Fatalf("historical fallback permanently blocked V1 recovery: calls=%d fallback=%+v recovered=%+v", retriever.calls, fallback, recovered)
 	}
 }
 

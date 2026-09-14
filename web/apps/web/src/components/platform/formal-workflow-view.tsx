@@ -2080,6 +2080,12 @@ function WorkflowCandidateSelection({
 										label={t("任务匹配度")}
 										value={`${candidate.taskFitScore ?? 0}%`}
 									/>
+									{candidate.semanticSimilarity !== undefined && (
+										<EvidenceValue
+											label={t("语义相关度")}
+											value={`${Math.round(candidate.semanticSimilarity * 100)}%`}
+										/>
+									)}
 									<EvidenceValue
 										label={t("评分样本")}
 										value={String(candidate.sampleSize ?? 0)}

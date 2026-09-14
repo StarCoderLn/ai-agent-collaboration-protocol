@@ -14,7 +14,7 @@ USDC。托管确认后按 DAG 依赖创建正式 assignment 并派发，上游�
 一次性原子结算。选择不占用 Agent、不触发派发，assignment 才代表执行事实。
 工作台已经展示当前网络、ETH、USDC 和 YD 余额；启动期用户可质押 100 YD 成为 DAO 仲裁候选成员，
 旧部署按固化种子分案并排除任务参与方。独立链上案件、Chainlink VRF、申诉与独立奖励池已经部署到 Sepolia，
-体验库已迁移至 0050，8 个创始钱包已质押并同步。真实案件的 VRF、付费申诉、终审结算、异常恢复、保证金领取、在线新增奖励通知、分页记录及真实文件附件跨端验收均已闭环，详见 [链上仲裁进度](../docs/dao-chain-arbitration.md)。当前制品与状态契约见
+体验库已迁移至 0051，8 个创始钱包已质押并同步。真实案件的 VRF、付费申诉、终审结算、异常恢复、保证金领取、在线新增奖励通知、分页记录及真实文件附件跨端验收均已闭环，详见 [链上仲裁进度](../docs/dao-chain-arbitration.md)。当前制品与状态契约见
 [`docs/workflow-artifacts.md`](../docs/workflow-artifacts.md)。
 
 ## 项目级技术栈决策（已冻结）
@@ -23,7 +23,7 @@ USDC。托管确认后按 DAG 依赖创建正式 assignment 并派发，上游�
 - Web 使用 Next.js 16、React 19、TypeScript strict、App Router 和 Route Handlers；共享 UI 使用 `web/packages/ui`，样式使用 Tailwind CSS。
 - 边界校验使用 Zod，前端测试使用 Vitest + Testing Library，lint/格式化使用 Biome。
 - 用户面业务 API 采用 Next.js Route Handlers 并以 AWS Lambda 为部署方向；Go 只承担分发引擎与 Agent 接入协议职责。Lambda 打包与 IaC 方案（2026-08-22 由用户确认）：AWS Lambda Web Adapter + zip 打包（不用容器镜像）+ AWS CDK（不用 SAM——本项目已知会有多个 Lambda，包括未来 feature 9/10 的 SQS 消费者、feature 12 的定时评分任务，CDK 用真正的编程语言表达共享配置更合适）。具体实现与部署命令见 `services/business-api/infra/README.md`；后续新增 Lambda（不限于 business-api）默认沿用同一 IaC 工具，除非有真实理由需要偏离（如 Go 分发引擎若改用 ECS/Fargate 等非 serverless 资源，仍可用 CDK 表达，不需要引入第二套工具）。
-- PostgreSQL、AWS SQS/SNS、Ethereum + Solidity + MetaMask 是 MVP 已选技术边界；不实现 Solana/Phantom 路径。
+- PostgreSQL + pgvector、OpenAI Embeddings、AWS SQS/SNS、Ethereum + Solidity + MetaMask 是已选技术边界；不实现 Solana/Phantom 路径。
 - “技术栈已确定”不代表所有实现已完成。路由装配、数据库适配器、认证协议或部署配置缺失时，必须准确记录为实现缺口，不得另建技术栈替代。
 - 提供者钱包认证方案已冻结为 SIWE（EIP-4361）：`GET /api/auth/nonce` 签发一次性 nonce（PostgreSQL 存储，短 TTL，单次使用）→ 前端 `personal_sign` 签署标准 SIWE 消息 → `POST /api/auth/verify` 校验签名与 nonce 后写入 `auth_sessions`（session_id、wallet_address、expires_at）并下发 httpOnly+Secure+SameSite=Lax 的不透明 session cookie → 后续接口从 session 解析 `actorId`，不信任请求体/Header 自报的钱包地址。会话 TTL 为固定 7 天，过期需重新签名；多端会话管理与 refresh 轮换体验不在本轮范围。详细设计与实现见 [[2.agent-registration]] design.md 模块 5。（2026-08-22 确认 SIWE 方案，2026-09-01 将会话期限由 24 小时调整为 7 天）
 - Mastra、LangChain、LangGraph 仅用于第三方或自建测试 Agent 的内部编排，不是平台 Web/API 技术栈替代项；自建测试 Agent 的生产选型仍需样例工作流验证后单独冻结。
@@ -37,7 +37,7 @@ USDC。托管确认后按 DAG 依赖创建正式 assignment 并派发，上游�
 | 5 | escrow-contract-ethereum | Ethereum 智能合约：USDC 托管、原子多 Agent 结算、争议退款、暂停、事件 | - | 已完成 T-001～T-008；Circle Sepolia USDC 部署、绑定、存款、结算与退款已验证 |
 | 6 | escrow-sync-and-wallet | 链上事件同步/确认/对账/恢复、钱包交互与托管状态前端 | 4, 5 | T-001～T-008 已完成；Anvil 与 Sepolia 的 USDC、MetaMask 和项目 keystore 已验证，生产 KMS/HSM operator client 尚未实现 |
 | 7 | task-visibility-and-mode | 可见性（私密/公开）、分配模式（手动/自动）、市场与工作台分离 | 4；T-004 另有对 3、12 的**表结构级**轻依赖（见下方说明） | 已完成（T-001～T-008） |
-| 8 | matching-and-candidates | V0 匹配（分类→资格→标签→排序）、JobDistributionRecord、候选列表/可视化 | 3, 6, 7 | 已完成（T-001～T-008） |
+| 8 | matching-and-candidates | V0 硬约束/规则排序、V1 语义 Top-k、JobDistributionRecord、候选列表/可视化 | 3, 6, 7 | V0 与 V1 已完成并通过真实 OpenAI + pgvector 验收；V2 反馈学习排序尚未实现 |
 | 9 | dispatch-and-acceptance | 原子占用分配、SQS 派发、Agent 接单/拒单确认、接单超时处理 | 1, 8 | 已完成（T-001～T-007） |
 | 10 | notification-and-sync | Webhook 签名异步通知、退避重试与死信队列、SSE 进度推送、状态补拉接口 | 1, 9 | 已完成（T-001～T-008；真实 PostgreSQL、SSE 续传与正式构建已验证） |
 | 11 | execution-tracking-and-delivery | Agent 进度上报、1~3 个候选结果提交与版本管理、验收/返工 | 1, 10 | 已完成（T-001～T-008；真实 PostgreSQL、权威验收预览、过期条件保护与正式构建已验证） |
@@ -48,6 +48,13 @@ USDC。托管确认后按 DAG 依赖创建正式 assignment 并派发，上游�
 | 16 | agent-wallet-rebind | 钱包换绑：新钱包签名验证所有权 + 站外通知 + 冷静期，冷静期内结算仍走旧地址 | 1, 2 | **延后至 P5**（用户确认，2026-08-22；不阻塞其他 feature，无 feature 反向依赖 16） |
 | 17 | durable-agent-orchestration | LangGraph Coding 持久恢复与 Temporal 自动准入编排 | 1, 9, 15 | **开发与真实本机验收完成**（面试使用本机 Dev Server；线上需要时再选择部署与运维方案） |
 | 18 | stagehand-browser-agent | Stagehand 网页调研助手与自然语言页面验收 | 1, 17 | **开发与真实 Sepolia 闭环验收完成**：真实公网研究、页面 `observe`/`extract`、市场目录、本机服务健康，以及匹配、托管、派发、双格式交付、人工验收和结算均已通过 |
+
+匹配算法 V1 已选择 pgvector 并完成：Agent `tags + capability_desc` 按内容哈希惰性回填
+OpenAI `text-embedding-3-small` 1536 维向量，任务 `tags + description` 仅随请求生成且不
+长期保存正文；V0 硬约束先执行，pgvector Top-k 负责召回，候选内继续使用 V0 版本化规则。
+真实隔离端到端查询为 4.111ms，OpenAI 或向量存储异常会留下稳定错误类别并回退 V0，
+后续请求仍可恢复 V1。V2 仍按“分发为候选 → Agent 接单 → 最终成功”反馈、梯度提升 CTR
+和夜间离线更新路线推进。
 
 ### 本地 MVP 闭环历史验收（2026-08-23～2026-08-28）
 
