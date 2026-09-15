@@ -24,7 +24,9 @@ pnpm install
 pnpm dev:web
 ```
 
-浏览器访问 [http://localhost:3001](http://localhost:3001)。
+浏览器访问 [http://127.0.0.1:3011](http://127.0.0.1:3011)。`pnpm dev`、`pnpm dev:web` 与 Web 包的 `dev` 均进入统一启动器的 `--ui` 模式，同时启动 3011 前端和 3100 Hono API，使用 `.local/sepolia.env` 的同一套 Sepolia 配置。
+
+该模式检查现有数据库迁移和登录挑战后才报告就绪，不加载 operator 密码、不启动派发或链上 worker。完整业务演示仍使用根目录 `node scripts/sepolia-mvp.mjs`。不要单独运行裸 `next dev` 来做钱包验收；前端开发使用独立 `dev-dist/sepolia-mvp`，生产构建使用 `.next`，避免构建覆盖开发资源。
 
 ## UI 开发约定
 

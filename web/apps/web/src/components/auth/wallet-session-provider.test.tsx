@@ -86,6 +86,33 @@ describe("WalletSessionProvider", () => {
 		expect(mocks.restoreAuthorizedWalletConnection).not.toHaveBeenCalled();
 	});
 
+	it("登录服务故障后退出检查状态并允许用户重试", async () => {
+		mocks.restoreWalletSession.mockRejectedValueOnce(
+			new Error("登录服务暂时不可用，请稍后重试"),
+		);
+		render(
+			<WalletSessionProvider>
+				<SessionProbe />
+			</WalletSessionProvider>,
+		);
+		expect(
+			await screen.findByText("登录服务暂时不可用，请稍后重试"),
+		).toBeInTheDocument();
+		expect(screen.getByText("error")).toBeInTheDocument();
+	});
+
+	it("钱包扩展静默恢复无响应不阻塞已认证会话", async () => {
+		mocks.restoreAuthorizedWalletConnection.mockImplementationOnce(
+			() => new Promise(() => {}),
+		);
+		render(
+			<WalletSessionProvider>
+				<SessionProbe />
+			</WalletSessionProvider>,
+		);
+		expect(await screen.findByText("connected")).toBeInTheDocument();
+	});
+
 	it("changes to disconnected only after server logout succeeds", async () => {
 		render(
 			<WalletSessionProvider>

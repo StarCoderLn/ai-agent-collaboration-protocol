@@ -60,6 +60,25 @@ describe("wagmi wallet session", () => {
 		vi.clearAllMocks();
 	});
 
+	it("登录 API 不可达时明确提示服务故障，不触发钱包弹窗", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
+		);
+		await expect(connectWalletSession()).rejects.toThrow("无法连接登录服务");
+		expect(connect).not.toHaveBeenCalled();
+		expect(signMessage).not.toHaveBeenCalled();
+	});
+
+	it("会话恢复不能把服务故障当成未登录", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(new Response(null, { status: 503 })),
+		);
+		const { restoreWalletSession } = await import("./wallet-session");
+		await expect(restoreWalletSession()).rejects.toThrow("登录服务暂时不可用");
+	});
+
 	it("connects MetaMask on the SIWE-requested chain and compares checksum addresses case-insensitively", async () => {
 		const fetcher = vi
 			.fn()
@@ -151,6 +170,7 @@ describe("wagmi wallet session", () => {
 			{
 				method: "DELETE",
 				credentials: "include",
+				signal: expect.any(AbortSignal),
 			},
 		);
 		expect(connect).not.toHaveBeenCalled();

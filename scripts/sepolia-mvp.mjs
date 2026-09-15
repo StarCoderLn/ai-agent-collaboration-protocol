@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import process from "node:process";
@@ -44,13 +44,17 @@ const URLS = Object.freeze({
 	web: `http://127.0.0.1:${PORTS.web}`,
 });
 
+// 界面开发仍必须启动同一套 API 和 Sepolia 配置；仅省略任务派发与链上 worker。
+const uiOnly = process.argv.includes("--ui");
 const children = [];
 let shuttingDown = false;
 let startupComplete = false;
 let shutdownPromise;
 
 await main().catch(async (error) => {
-	console.error(error instanceof Error ? error.message : "Sepolia MVP 启动失败");
+	console.error(
+		error instanceof Error ? error.message : "Sepolia MVP 启动失败",
+	);
 	await shutdown(1);
 });
 
@@ -62,13 +66,17 @@ async function main() {
 	const environment = parseEnv(
 		await readFile(path.join(ROOT, ".local/sepolia.env"), "utf8"),
 	);
+	if (uiOnly) {
+		await startUiDevelopment(environment);
+		return;
+	}
 	const manifest = JSON.parse(
 		await readFile(path.join(ROOT, ".local/sepolia-wallets.json"), "utf8"),
 	);
 	const password = readKeychainPassword(manifest);
 	validateWalletBindings(environment, manifest);
 	const platformAgentWallet = platformAdminAddress(environment, manifest);
-	const recoveryEnabled = await validateSepoliaDeployment(environment);
+	await validateSepoliaDeployment(environment);
 	await validateDatabaseVersion();
 
 	const paperEnvironment = parseEnv(
@@ -77,7 +85,8 @@ async function main() {
 	const apiKey = required(paperEnvironment, "DEEPSEEK_API_KEY");
 	const openAIKey = required(paperEnvironment, "OPENAI_API_KEY");
 	const agentSecret = required(paperEnvironment, "WORKFLOW_AGENT_SECRET");
-	if (agentSecret.length < 16) throw new Error("WORKFLOW_AGENT_SECRET 长度不足");
+	if (agentSecret.length < 16)
+		throw new Error("WORKFLOW_AGENT_SECRET 长度不足");
 
 	// Sepolia 演示仍通过本机 Agent 服务执行任务，因此目录端点必须在每次启动时与当前
 	// 端口配置幂等同步。同步只写 PostgreSQL，不部署合约，也不会广播链上交易。
@@ -124,7 +133,11 @@ async function main() {
 			},
 		},
 	);
-	await waitForService(workflow, "Product Workflow Agent", `${URLS.workflow}/livez`);
+	await waitForService(
+		workflow,
+		"Product Workflow Agent",
+		`${URLS.workflow}/livez`,
+	);
 
 	const browserAgent = start(
 		"网页调研助手",
@@ -138,8 +151,7 @@ async function main() {
 				DEEPSEEK_API_KEY: apiKey,
 				DEEPSEEK_BASE_URL:
 					paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
-				DEEPSEEK_MODEL:
-					paperEnvironment.DEEPSEEK_MODEL ?? "deepseek-chat",
+				DEEPSEEK_MODEL: paperEnvironment.DEEPSEEK_MODEL ?? "deepseek-chat",
 				AGENT_HOST: "127.0.0.1",
 				AGENT_PORT: String(PORTS.browser),
 				AGENT_PUBLIC_BASE_URL: URLS.browser,
@@ -190,10 +202,18 @@ async function main() {
 		[TSX, "src/server.ts"],
 		{
 			cwd: path.join(ROOT, "web/apps/server"),
-			env: { ...chainEnvironment, HOST: "127.0.0.1", PORT: String(PORTS.marketplaceApi) },
+			env: {
+				...chainEnvironment,
+				HOST: "127.0.0.1",
+				PORT: String(PORTS.marketplaceApi),
+			},
 		},
 	);
-	await waitForService(marketplaceApi, "Marketplace API", `${URLS.marketplaceApi}/api/health`);
+	await waitForService(
+		marketplaceApi,
+		"Marketplace API",
+		`${URLS.marketplaceApi}/api/health`,
+	);
 
 	const dispatch = start("Dispatch Engine", "go", ["run", "./cmd/server"], {
 		cwd: path.join(ROOT, "services/dispatch-engine"),
@@ -213,8 +233,7 @@ async function main() {
 			OPENAI_API_KEY: openAIKey,
 			AGENT_ADMISSION_EVALUATOR_MODEL:
 				process.env.AGENT_ADMISSION_EVALUATOR_MODEL ?? "deepseek-chat",
-			AGENT_ADMISSION_ENGINE:
-				process.env.AGENT_ADMISSION_ENGINE ?? "postgres",
+			AGENT_ADMISSION_ENGINE: process.env.AGENT_ADMISSION_ENGINE ?? "postgres",
 			TEMPORAL_ADDRESS: process.env.TEMPORAL_ADDRESS ?? "127.0.0.1:7233",
 			TEMPORAL_NAMESPACE: process.env.TEMPORAL_NAMESPACE ?? "default",
 			TEMPORAL_ADMISSION_TASK_QUEUE:
@@ -223,17 +242,26 @@ async function main() {
 	});
 	await waitForService(dispatch, "Dispatch Engine", `${URLS.dispatch}/health`);
 
+	await startWeb(environment, agentSecret);
+
+	startupComplete = true;
+	void runChainWorkers();
+	console.log(`AICP Sepolia 完整闭环已启动：${URLS.web}`);
+	console.log("链 ID：11155111；交易确认由 Sepolia 自然出块推进");
+	process.on("SIGINT", () => void shutdown(0));
+	process.on("SIGTERM", () => void shutdown(0));
+	await new Promise(() => undefined);
+}
+
+/**
+ * 日常 UI 开发与完整演示复用前端启动函数，避免手动 next dev 遗漏 API、RPC 和合约。
+ * 独立 distDir 防止生产 build 清理正在使用的开发资源，导致刷新后无法水合或点击。
+ */
+async function startWeb(environment, agentSecret) {
 	const web = start(
 		"Web",
 		NODE,
-		[
-			NEXT_WEB,
-			"dev",
-			"--hostname",
-			"127.0.0.1",
-			"--port",
-			String(PORTS.web),
-		],
+		[NEXT_WEB, "dev", "--hostname", "127.0.0.1", "--port", String(PORTS.web)],
 		{
 			cwd: path.join(ROOT, "web/apps/web"),
 			env: {
@@ -259,11 +287,49 @@ async function main() {
 		},
 	);
 	await waitForService(web, "Web", URLS.web, false);
+}
 
+/**
+ * 登录只依赖 API 和数据库，不依赖 operator 解密或链上 worker。启动时验证真实 nonce，
+ * API 没就绪就不宣布网站可用；数据库缺失时明确失败，不创建或重置用户的数据。
+ */
+async function startUiDevelopment(environment) {
+	await validateDatabaseVersion();
+	const api = start("Marketplace API", NODE, [TSX, "src/server.ts"], {
+		cwd: path.join(ROOT, "web/apps/server"),
+		env: {
+			...environment,
+			DATABASE_URL,
+			HOST: "127.0.0.1",
+			PORT: String(PORTS.marketplaceApi),
+			ETHEREUM_RPC_URL: environment.SEPOLIA_RPC_URL,
+			SIWE_EXPECTED_DOMAIN: `127.0.0.1:${PORTS.web}`,
+			SIWE_EXPECTED_URI: URLS.web,
+			SIWE_EXPECTED_CHAIN_ID: "11155111",
+		},
+	});
+	await waitForService(
+		api,
+		"Marketplace API",
+		`${URLS.marketplaceApi}/api/health`,
+	);
+	const response = await fetch(`${URLS.marketplaceApi}/api/auth/nonce`, {
+		signal: AbortSignal.timeout(5000),
+	});
+	const challenge = await response.json();
+	if (
+		!response.ok ||
+		challenge.chainId !== 11155111 ||
+		challenge.uri !== URLS.web ||
+		challenge.domain !== `127.0.0.1:${PORTS.web}`
+	) {
+		throw new Error("登录 API 的 Sepolia 网络或站点配置不一致");
+	}
+	await startWeb(environment);
 	startupComplete = true;
-	void runChainWorkers();
-	console.log(`AICP Sepolia 完整闭环已启动：${URLS.web}`);
-	console.log("链 ID：11155111；交易确认由 Sepolia 自然出块推进");
+	console.log(
+		`界面与钱包登录已就绪：${URLS.web}；任务派发与链上 worker 未启动`,
+	);
 	process.on("SIGINT", () => void shutdown(0));
 	process.on("SIGTERM", () => void shutdown(0));
 	await new Promise(() => undefined);
@@ -284,13 +350,20 @@ async function validateSepoliaDeployment(environment) {
 			required(environment, key),
 			"latest",
 		]);
-		if (typeof code !== "string" || !/^0x[0-9a-f]+$/i.test(code) || /^0x0*$/i.test(code)) {
+		if (
+			typeof code !== "string" ||
+			!/^0x[0-9a-f]+$/i.test(code) ||
+			/^0x0*$/i.test(code)
+		) {
 			throw new Error(`${key}_CODE_MISSING`);
 		}
 	}
 	try {
 		const value = await rpc(environment.SEPOLIA_RPC_URL, "eth_call", [
-			{ to: required(environment, "ARBITRATION_CASES_CONTRACT_ADDRESS"), data: "0x06a4df7a" },
+			{
+				to: required(environment, "ARBITRATION_CASES_CONTRACT_ADDRESS"),
+				data: "0x06a4df7a",
+			},
 			"latest",
 		]);
 		return typeof value === "string" && /^0x[0-9a-f]{64}$/i.test(value);
@@ -307,10 +380,24 @@ async function validateDatabaseVersion() {
 			"SELECT version::text,dirty FROM business_service_schema_migrations",
 		);
 		const row = result.rows[0];
-		// 0053 保留 0052 的曝光事实，并增加正式 V2 模型版本审计字段。
-		// 旧版本不能以“V2 尚未切正式流量”为由放行，否则页面遥测会持续失败。
-		if (row?.version !== "53" || row.dirty !== false) {
-			throw new Error("BUSINESS_DATABASE_MIGRATION_52_REQUIRED");
+
+		// 以已提交迁移文件为唯一版本源，避免新增迁移后启动器仍硬编码旧版本而拒绝启动。
+		const migrations = await readdir(
+			path.join(ROOT, "services/business-service/migrations"),
+		);
+		const versions = migrations
+			.map((name) => /^(\d+)_.*\.up\.sql$/.exec(name)?.[1])
+			.filter(Boolean)
+			.map(Number);
+		const expected = Math.max(...versions);
+		if (
+			!Number.isFinite(expected) ||
+			Number(row?.version) !== expected ||
+			row.dirty !== false
+		) {
+			throw new Error(
+				`数据库迁移未就绪：需要版本 ${expected}，当前 ${row?.version ?? "未知"}，dirty=${row?.dirty}。请先核对迁移；启动器不会自动修改数据库。`,
+			);
 		}
 	} finally {
 		await pool.end();
@@ -319,16 +406,33 @@ async function validateDatabaseVersion() {
 
 function validateWalletBindings(environment, manifest) {
 	const bindings = [
-		["escrow_operator", "ESCROW_OPERATOR_ADDRESS", "ESCROW_OPERATOR_KEYSTORE_PATH"],
-		["case_operator", "ARBITRATION_CASE_OPERATOR_ADDRESS", "ARBITRATION_CASE_OPERATOR_KEYSTORE_PATH"],
-		["reward_operator", "DAO_REWARD_OPERATOR_ADDRESS", "DAO_REWARD_OPERATOR_KEYSTORE_PATH"],
-		["reward_award_operator", "DAO_REWARD_AWARD_OPERATOR_ADDRESS", "DAO_REWARD_AWARD_OPERATOR_KEYSTORE_PATH"],
+		[
+			"escrow_operator",
+			"ESCROW_OPERATOR_ADDRESS",
+			"ESCROW_OPERATOR_KEYSTORE_PATH",
+		],
+		[
+			"case_operator",
+			"ARBITRATION_CASE_OPERATOR_ADDRESS",
+			"ARBITRATION_CASE_OPERATOR_KEYSTORE_PATH",
+		],
+		[
+			"reward_operator",
+			"DAO_REWARD_OPERATOR_ADDRESS",
+			"DAO_REWARD_OPERATOR_KEYSTORE_PATH",
+		],
+		[
+			"reward_award_operator",
+			"DAO_REWARD_AWARD_OPERATOR_ADDRESS",
+			"DAO_REWARD_AWARD_OPERATOR_KEYSTORE_PATH",
+		],
 	];
 	for (const [role, addressKey, pathKey] of bindings) {
 		const wallet = manifest.wallets.find((entry) => entry.role === role);
 		if (
 			wallet === undefined ||
-			wallet.address.toLowerCase() !== required(environment, addressKey).toLowerCase() ||
+			wallet.address.toLowerCase() !==
+				required(environment, addressKey).toLowerCase() ||
 			path.resolve(required(environment, pathKey)) !==
 				path.join(ROOT, ".local/sepolia-keystores", wallet.file)
 		) {
@@ -399,7 +503,8 @@ async function runChainWorkers() {
 				if (!response.ok) throw new Error("WORKER_RESPONSE_NOT_OK");
 				await response.arrayBuffer();
 			} catch {
-				if (!shuttingDown) console.error(`Sepolia worker 暂时失败：${pathname}`);
+				if (!shuttingDown)
+					console.error(`Sepolia worker 暂时失败：${pathname}`);
 			}
 		}
 		await new Promise((resolve) => setTimeout(resolve, 3_000));
@@ -446,7 +551,10 @@ async function runOnce(label, command, arguments_, options) {
 		throw new Error(`${label} 启动失败：${outcome.error.message}`);
 	}
 	if (outcome.code !== 0) {
-		const reason = outcome.signal === null ? `code ${outcome.code}` : `signal ${outcome.signal}`;
+		const reason =
+			outcome.signal === null
+				? `code ${outcome.code}`
+				: `signal ${outcome.signal}`;
 		throw new Error(`${label} 执行失败：${reason}`);
 	}
 }
@@ -486,7 +594,8 @@ async function rpc(url, method, parameters) {
 		signal: AbortSignal.timeout(10_000),
 	});
 	const body = await response.json();
-	if (!response.ok || body.error !== undefined) throw new Error(`SEPOLIA_RPC_${method}_FAILED`);
+	if (!response.ok || body.error !== undefined)
+		throw new Error(`SEPOLIA_RPC_${method}_FAILED`);
 	return body.result;
 }
 
@@ -511,7 +620,9 @@ function required(record, key) {
 function assertSupportedNodeVersion() {
 	const major = Number.parseInt(process.versions.node.split(".")[0] ?? "", 10);
 	if (!Number.isInteger(major) || major < 22) {
-		throw new Error(`Sepolia MVP 需要 Node.js 22；当前为 ${process.versions.node}`);
+		throw new Error(
+			`Sepolia MVP 需要 Node.js 22；当前为 ${process.versions.node}`,
+		);
 	}
 }
 
@@ -525,7 +636,12 @@ function assertLoopbackUrl(value, name) {
 function readPort(name, fallback) {
 	const raw = process.env[name] ?? String(fallback);
 	const value = Number(raw);
-	if (!/^[0-9]+$/.test(raw) || !Number.isInteger(value) || value < 1 || value > 65_535) {
+	if (
+		!/^[0-9]+$/.test(raw) ||
+		!Number.isInteger(value) ||
+		value < 1 ||
+		value > 65_535
+	) {
 		throw new Error(`${name} 必须是有效端口`);
 	}
 	return value;
@@ -549,6 +665,7 @@ function portOpen(port) {
 
 async function assertPortsAvailable() {
 	for (const [label, port] of Object.entries(PORTS)) {
+		if (uiOnly && !["web", "marketplaceApi"].includes(label)) continue;
 		if (await portOpen(port)) throw new Error(`${label} 端口 ${port} 已被占用`);
 	}
 }
@@ -558,7 +675,8 @@ function shutdown(code) {
 	shuttingDown = true;
 	shutdownPromise = (async () => {
 		for (const { child } of children) {
-			if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+			if (child.exitCode === null && child.signalCode === null)
+				child.kill("SIGTERM");
 		}
 		await Promise.all(children.map(({ exit }) => exit));
 		process.exitCode = code;

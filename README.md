@@ -129,10 +129,11 @@ PRD 与设计阶段各有 **DeepSeek 直连、Mastra 编排、自研状态机** 
 ## 产品入口
 
 当前项目演示、钱包连接和真实测试网验收统一访问
-[http://localhost:3011](http://localhost:3011)。端口由启动器明确区分，不会在运行时自动切换：
+[http://127.0.0.1:3011](http://127.0.0.1:3011)。端口由启动器明确区分，不会在运行时自动切换：
 
 | 启动方式 | Web 端口 | 链环境 | 使用场景 |
 | --- | --- | --- | --- |
+| `cd web && pnpm dev`（统一启动器 `--ui`） | `3011` | Sepolia | 首页开发与钱包登录，自动启动 Hono API，不运行链上 worker |
 | `node scripts/sepolia-mvp.mjs` | `3011` | Sepolia（Chain ID `11155111`） | 当前默认演示与钱包验收 |
 | `node scripts/local-mvp.mjs` | `3001` | 本机 Anvil（Chain ID `31337`） | 需要隔离本地链时显式使用 |
 

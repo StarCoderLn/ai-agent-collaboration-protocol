@@ -62,26 +62,40 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
 	});
 	useEffect(() => {
 		let active = true;
-		restoreWalletSession().then(async (session) => {
-			if (!active) return;
-			if (session !== null) await restoreAuthorizedWalletConnection();
-			if (!active) return;
-			setState(
-				session === null
-					? {
-							status: "disconnected",
-							walletAddress: null,
-							chainId: null,
-							error: null,
-						}
-					: {
-							status: "connected",
-							walletAddress: session.walletAddress,
-							chainId: session.chainId,
-							error: null,
-						},
-			);
-		});
+		restoreWalletSession()
+			.then((session) => {
+				if (!active) return;
+				// 服务端会话是身份依据；扩展后台无响应不能让登录按钮永久停在 checking。
+				if (session !== null) void restoreAuthorizedWalletConnection();
+				if (!active) return;
+				setState(
+					session === null
+						? {
+								status: "disconnected",
+								walletAddress: null,
+								chainId: null,
+								error: null,
+							}
+						: {
+								status: "connected",
+								walletAddress: session.walletAddress,
+								chainId: session.chainId,
+								error: null,
+							},
+				);
+			})
+			.catch((error: unknown) => {
+				if (!active) return;
+				setState({
+					status: "error",
+					walletAddress: null,
+					chainId: null,
+					error:
+						error instanceof Error
+							? error.message
+							: "登录服务暂时不可用，请稍后重试",
+				});
+			});
 		return () => {
 			active = false;
 		};

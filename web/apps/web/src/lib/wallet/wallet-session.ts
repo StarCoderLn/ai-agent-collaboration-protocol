@@ -69,15 +69,9 @@ export class WalletRequestTimeoutError extends Error {
 }
 
 export async function restoreWalletSession(): Promise<WalletSession | null> {
-	let response: Response;
-	try {
-		response = await fetch(`${MARKETPLACE_API_BASE_URL}/auth/session`, {
-			credentials: "include",
-		});
-	} catch {
-		return null;
-	}
-	if (!response.ok) return null;
+	const response = await authFetch(`${MARKETPLACE_API_BASE_URL}/auth/session`);
+	if (response.status === 401) return null;
+	if (!response.ok) throw new Error("登录服务暂时不可用，请稍后重试");
 	const parsed = authenticatedSchema.safeParse(await safeJson(response));
 	return parsed.success
 		? {
@@ -101,9 +95,9 @@ export async function restoreAuthorizedWalletConnection(): Promise<void> {
 }
 
 export async function connectWalletSession(): Promise<WalletSession> {
-	const nonceResponse = await fetch(`${MARKETPLACE_API_BASE_URL}/auth/nonce`, {
-		credentials: "include",
-	});
+	const nonceResponse = await authFetch(
+		`${MARKETPLACE_API_BASE_URL}/auth/nonce`,
+	);
 	const nonce = nonceSchema.safeParse(await safeJson(nonceResponse));
 	if (!nonceResponse.ok || !nonce.success)
 		throw new Error("无法获取安全登录挑战，请稍后重试");
@@ -119,7 +113,7 @@ export async function connectWalletSession(): Promise<WalletSession> {
 		() => signMessage(wagmiConfig, { account: walletAddress, message }),
 		"钱包没有返回有效签名",
 	);
-	const verifyResponse = await fetch(
+	const verifyResponse = await authFetch(
 		`${MARKETPLACE_API_BASE_URL}/auth/verify`,
 		{
 			method: "POST",
@@ -148,7 +142,7 @@ export async function connectWalletSession(): Promise<WalletSession> {
 export async function logoutWalletSession(): Promise<void> {
 	let response: Response;
 	try {
-		response = await fetch(`${MARKETPLACE_API_BASE_URL}/auth/session`, {
+		response = await authFetch(`${MARKETPLACE_API_BASE_URL}/auth/session`, {
 			method: "DELETE",
 			credentials: "include",
 		});
@@ -314,6 +308,25 @@ export function buildSiweMessage(
 	}>,
 ): string {
 	return `${input.domain} wants you to sign in with your Ethereum account:\n${input.walletAddress}\n\n${input.statement}\n\nURI: ${input.uri}\nVersion: 1\nChain ID: ${input.chainId}\nNonce: ${input.nonce}\nIssued At: ${input.issuedAt}`;
+}
+
+/**
+ * 所有登录 HTTP 请求共享超时和网络错误语义。API 未启动、连接被拒绝或请求悬挂必须
+ * 回到可重试状态，不能把基础设施故障归因于钱包，也不能自动重发签名校验请求。
+ */
+async function authFetch(
+	url: string,
+	init: RequestInit = {},
+): Promise<Response> {
+	try {
+		return await fetch(url, {
+			...init,
+			credentials: "include",
+			signal: AbortSignal.timeout(10_000),
+		});
+	} catch {
+		throw new Error("无法连接登录服务，请确认服务已启动后重试");
+	}
 }
 
 async function safeJson(response: Response): Promise<unknown> {

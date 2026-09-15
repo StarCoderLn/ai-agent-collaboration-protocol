@@ -10,7 +10,7 @@
 		"node": ">=22"
 	},
 	"scripts": {
-		"dev": "pnpm -r dev",
+		"dev": "node ../scripts/sepolia-mvp.mjs --ui",
 		"build": "pnpm -r --if-present build",
 		"test": "pnpm -r --if-present test",
 		"check-types": "pnpm -r check-types",
