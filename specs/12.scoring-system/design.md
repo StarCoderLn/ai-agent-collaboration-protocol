@@ -10,6 +10,7 @@
 | 2026-08-31 | v4   | 将五维快照、样本置信度和同分类履约统计接入正式工作流候选证据 |
 | 2026-09-02 | v5   | 增加逐工作流节点反馈事实、终态反馈界面与脱敏派生数据边界 |
 | 2026-09-04 | v6   | 明确 `priorWeight` 只用于评分平滑和置信度，不再承担 Agent 冷启动资金门禁 |
+| 2026-09-15 | v7   | 增加评分相关事件驱动的定向快照刷新；保留周期重算用于时间衰减校准和故障恢复 |
 
 ## 项目架构
 
@@ -61,6 +62,13 @@
 - 生产调度由 CDK 中的 EventBridge API Destination 每小时调用内部 worker，每批优先选择
   从未计算或最久未更新的 100 个 Agent，避免固定 `ORDER BY id LIMIT N` 造成尾部饥饿。
   Bearer token 通过 Secrets Manager 动态引用注入 Lambda 与 Connection，不进入 synth 模板。
+- `agent_accepted`、评分提交、最终结算和仲裁执行确认等事件会在原业务事务中向
+  `agent_score_refresh_requests` 写入受影响 Agent。同一 Agent 的连续事件按主键合并，
+  分发服务每 5 秒调用内部定向刷新 Worker；`FOR UPDATE SKIP LOCKED` 支持多实例领取，
+  快照追加和请求删除在同一事务中完成，失败后请求仍可重试。
+- 事件刷新负责用户可感知的及时性；五分钟本机扫描和每小时 EventBridge 扫描仍按最旧
+  快照轮转，负责没有新事件时的时间衰减、近期窗口变化以及漏发/停机后的最终收敛。
+  两条路径共用同一个事实读取和纯函数计算实现，不能形成两套评分公式。
 
 ### 模块 6: 候选选择证据 `[v4 新增]`
 
@@ -91,6 +99,8 @@
 - `GET /api/agents/:id/score`：返回五维评分（含近期/全周期、样本量、规则版本）、系统
   响应时间和公开证据数量。
 - 内部：`ComputeAgentScoreSnapshot(agentId, ruleVersion) snapshot`（纯函数，给定相同输入和规则版本可复现）。
+- `POST /api/internal/workers/score-refresh-requests`：领取评分事件合并队列，只重算受影响的 Agent。
+- `POST /api/internal/workers/score-snapshots`：周期性轮转重算，用于时间衰减校准和故障恢复。
 
 ## 数据模型
 
@@ -98,6 +108,7 @@
 - `workflow_node_feedback(id PK, task_id FK, workflow_node_id FK, assignment_id FK, agent_id FK, publisher_id, quality, communication, feedback_text, strengths, improvement_text, allow_model_training, schema_version, created_at)`
 - `agent_score_snapshots(id PK, agent_id FK, score, sample_size, dispute_rate, completed_scale, dimensions JSONB, input_evidence JSONB, rule_version, computed_at)`
 - `scoring_rule_versions(id PK, version, weights JSONB, bayesian_prior JSONB, decay_function JSONB, created_at, deprecated_at)`
+- `agent_score_refresh_requests(agent_id PK/FK, requested_at, reason_event_id FK, created_at)`
 
 ## 安全考虑
 
@@ -116,3 +127,4 @@
 | ---- | ---- | ---- |
 | 系统计算项的防篡改方式 | 数据模型隔离，不提供写接口（选中）vs 提供写接口 + 权限校验 | 不存在写接口意味着这一类误用在接口层面就不可表达，比权限校验更彻底（AGENTS.md §5.1.4「错误用法应困难」） |
 | 评分计算时机 | 定时快照（选中）vs 请求时实时计算 | 实时计算会随着历史评价数量增长拖慢展示接口；快照方式将计算成本从读路径移到后台，符合「把复杂度向下吸收」 |
+| 评分刷新策略 | 事件驱动定向刷新 + 周期校准（选中）vs 写请求内同步重算 vs 仅周期扫描 | 定向刷新把可见延迟缩短到秒级且不扩大用户事务失败面；周期校准仍能正确处理时间衰减、近期窗口和漏发恢复 |

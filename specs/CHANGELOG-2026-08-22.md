@@ -11,9 +11,9 @@
 
 ### 关键文件
 
-- `services/business-api/src/audit/audit-log-writer.ts` — `audit_logs` 表 Postgres 写入实现（`AuditLogWriter` 接口的唯一落地版本）
-- `services/business-api/src/http/create-agent-production-deps.ts` — `POST /api/agents` 生产依赖装配（`resolveActorId` 未装配，见下方未完成事项）
-- `services/business-api/src/agents/patch-agent.ts` / `src/http/patch-agent-handler.ts` — 编辑接口领域逻辑与 HTTP 适配层
+- `web/apps/server/src/audit/audit-log-writer.ts` — `audit_logs` 表 Postgres 写入实现（`AuditLogWriter` 接口的唯一落地版本）
+- `web/apps/server/src/http/create-agent-production-deps.ts` — `POST /api/agents` 生产依赖装配（`resolveActorId` 未装配，见下方未完成事项）
+- `web/apps/server/src/agents/patch-agent.ts` / `src/http/patch-agent-handler.ts` — 编辑接口领域逻辑与 HTTP 适配层
 - `web/apps/web/src/components/agents/agent-edit-form.test.tsx`、`credential-replace-panel.test.tsx`、`agent-config-edit-view.test.tsx` — 编辑页组件测试
 
 ### 架构决策
@@ -34,16 +34,16 @@ feature 2 的 12 项任务全部完成，`resolveActorId` 认证装配、真实�
 
 - `app/api/agents/route.ts`、`app/api/agents/[id]/route.ts`、`app/api/agents/[id]/credentials/route.ts`：把创建/编辑/凭证替换 handler 挂载为真实 Route Handlers，接入 `resolveActorId`（T-011）
 - `src/http/replace-credentials-handler.ts` / `replace-credentials-production-deps.ts`、`create-agent-production-deps.ts`、`patch-agent-production-deps.ts`：各接口的业务写入+审计+幂等提交收敛进同一 PostgreSQL 事务（复用 `src/db/pool.ts` 的 `withTransaction`）（T-011）
-- `services/business-api/infra/`：AWS CDK 部署栈（Lambda Web Adapter + zip 打包，不用容器镜像/SAM），本地验证过打包产物可运行、`cdk synth` 产出的模板正确（T-009）
+- `web/apps/server/infra/`：AWS CDK 部署栈（Lambda Web Adapter + zip 打包，不用容器镜像/SAM），本地验证过打包产物可运行、`cdk synth` 产出的模板正确（T-009）
 - Agent 配置编辑页迁移到端到端可用状态，接入真实 `GET`/`PATCH`/`PUT`/`PUT credentials` 路由（T-007）
 
 #### 关键文件
 
-- `services/business-api/infra/README.md` — 部署方案、命令、已验证/未验证清单
-- `services/business-api/src/agents/ethereum-address.ts` — `walletAddressesMatch` 单一权威实现，修正 SIWE 登录后地址大小写归一化与已注册地址不一致导致的误拒
-- `services/business-api/src/agents/price-amount.ts` — `priceAmount` 的 PostgreSQL BIGINT 范围校验单一权威实现
-- `services/business-api/src/http/cors.ts` — `handleCorsPreflight`，含跨源自定义请求头（如 `idempotency-key`）放行
-- `services/business-api/src/agents/agent.ts` 的 `isWellFormedAgentId` — 非法 UUID 直接判 404 而非让 PostgreSQL 报 500 的单一权威守卫
+- `web/apps/server/infra/README.md` — 部署方案、命令、已验证/未验证清单
+- `web/apps/server/src/agents/ethereum-address.ts` — `walletAddressesMatch` 单一权威实现，修正 SIWE 登录后地址大小写归一化与已注册地址不一致导致的误拒
+- `web/apps/server/src/agents/price-amount.ts` — `priceAmount` 的 PostgreSQL BIGINT 范围校验单一权威实现
+- `web/apps/server/src/http/cors.ts` — `handleCorsPreflight`，含跨源自定义请求头（如 `idempotency-key`）放行
+- `web/apps/server/src/agents/agent.ts` 的 `isWellFormedAgentId` — 非法 UUID 直接判 404 而非让 PostgreSQL 报 500 的单一权威守卫
 - `web/apps/web/src/lib/api/agents.ts` — 三个 fetch 补 `credentials:"include"`，响应体改用 zod schema 运行时校验
 - `web/apps/web/src/components/agents/agent-config-edit-view.tsx` — 请求序号丢弃过期响应，修复 agentId 切换竞态
 

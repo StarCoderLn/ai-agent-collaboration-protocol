@@ -41,7 +41,7 @@
 
 - 分配成功后，Go 分发引擎向 SQS 投递派发消息，消息体含幂等键（`dispatch:{taskId}:{assignmentId}`），消费者处理前先走 [[1.agent-protocol-contract]] 的 `CheckAndReserve()` 去重。
 - 消费者读取 Agent 的 `integration_mode`：`aicp_hmac` 向 `service_endpoint` 发起签名请求并等待同步确认或异步回调；`http_json` 使用可选 Bearer Token，要求同一次响应返回完整产物。两者共享同一已持久化派发正文和尝试记录。
-- 快速响应由 `internal/quickagent` 解析器验证，并先写入 `dispatch_attempts.quick_result_payload`。处理器随后确认 assignment 并转交 Business API；若转交返回暂时性 409，只重试内部转交，成功后写入 `quick_result_delivered_at`。恢复路径绝不重新调用 Agent，避免重复模型费用和非确定性结果。
+- 快速响应由 `internal/quickagent` 解析器验证，并先写入 `dispatch_attempts.quick_result_payload`。处理器随后确认 assignment 并转交 Marketplace API；若转交返回暂时性 409，只重试内部转交，成功后写入 `quick_result_delivered_at`。恢复路径绝不重新调用 Agent，避免重复模型费用和非确定性结果。
 
 ### 模块 3: 接单确认与超时
 
@@ -49,7 +49,7 @@
 
 - Agent 的接单/拒单回调复用 [[1.agent-protocol-contract]] 的验签中间件，更新 `task_assignments.status`。
 - 快速 Agent 无需单独回调接单：有效同步产物同时证明本次请求已被接受；平台在保存产物后执行接单确认。任务生命周期事件只为 HMAC Agent 创建 Webhook outbox。
-- 定时任务扫描 `accept_by` 已过期且仍为 `pending_ack` 状态的分配，标记为 `accept_failed`；同一事务写入 `task_transition_outbox`，由 Business API 幂等消费后通过权威任务状态机回到「待匹配」。原候选集合可重新选择，不强制重新执行匹配管道。
+- 定时任务扫描 `accept_by` 已过期且仍为 `pending_ack` 状态的分配，标记为 `accept_failed`；同一事务写入 `task_transition_outbox`，由 Marketplace API 幂等消费后通过权威任务状态机回到「待匹配」。原候选集合可重新选择，不强制重新执行匹配管道。
 
 ## 接口契约
 
@@ -62,7 +62,7 @@
 - `task_workflow_nodes(..., selected_agent_id, selection_record_id, agreed_amount_minor, status, version)` 保存托管前选择；`task_workflow_runs(..., quoted_total_minor, quote_confirmed_at)` 保存准确总价。
 - `task_assignments(id PK, task_id FK, workflow_node_id FK, agent_id FK, distribution_record_id FK, agreed_amount_minor, status, version, assigned_by, assigned_at, accept_by, responded_at)`；工作流节点维度的活跃唯一约束防止重复占用。
 - `dispatch_attempts(id PK, assignment_id FK, idempotency_key UNIQUE, protocol_request_id UNIQUE, status, attempt_no, error_code, next_attempt_at, quick_result_payload, quick_result_delivered_at)`。
-- `task_transition_outbox` / `task_transition_inbox`：跨 Go 与 Business API 的可重试、可恢复、幂等任务状态迁移。
+- `task_transition_outbox` / `task_transition_inbox`：跨 Go 与 Marketplace API 的可重试、可恢复、幂等任务状态迁移。
 
 ## 安全考虑
 

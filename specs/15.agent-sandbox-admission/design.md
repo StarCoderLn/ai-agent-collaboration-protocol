@@ -43,7 +43,7 @@
 
 - 内部执行：`Worker.RunOnce(ctx, enqueueLimit)`。
 - 内部重试：`POST /internal/agents/:id/admission/retry`，必须带内部服务令牌、可信 `X-Actor-ID`、`X-Actor-Type: provider` 和 `Idempotency-Key`。
-- 公网重试：`POST /api/agents/:id/admission/retry`，由 Business API 从 SIWE 会话解析提供者身份，不接受客户端自报钱包。
+- 公网重试：`POST /api/agents/:id/admission/retry`，由 Marketplace API 从 SIWE 会话解析提供者身份，不接受客户端自报钱包。
 - Agent 目录读取返回 `admission` 投影，包括轮次状态、进度、分数、总结和失败原因；不返回测试产物或敏感凭据。
 
 ## 数据模型

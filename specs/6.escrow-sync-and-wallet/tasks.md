@@ -73,14 +73,14 @@
 ### USDC 自动化真实闭环（2026-08-28）
 
 - 在真实 Anvil 31337 上部署 6 位测试 USDC 与新版 Escrow，默认发布者获得 100,000
-  测试 USDC；Business API 返回精确授权与存款两笔零原生 value 交易。
+  测试 USDC；Marketplace API 返回精确授权与存款两笔零原生 value 交易。
 - 正常闭环任务 `88a9d64c-4365-4b01-b65d-b8587fa8c157` 已经过 SIWE、32 USDC
   授权/托管、匹配、真实 DeepSeek 执行、返工、验收、链上结算和评分，终态为
   `settled`，审计链包含 `task.escrow_confirmed` 与 `task.settlement_confirmed`。
 - 争议闭环任务 `9a6f8cbd-319c-4cda-ab99-9cc138f63e02` 已经过独立发布者/仲裁员
   SIWE 身份、举证、全额退款裁决和链上退款，终态为 `refunded`，审计链包含
   `task.arbitration_refund_confirmed`。
-- Web 全量 37 个文件 / 134 项测试、Business API 268 项测试、真实 Anvil 适配器
+- Web 全量 37 个文件 / 134 项测试、Marketplace API 268 项测试、真实 Anvil 适配器
   1 项测试与 Escrow Foundry 11 项测试均通过；三个 Node 应用生产构建与 Go 全量测试通过。
   以上证明系统闭环和资金不变量，但不等于用户在浏览器中确认过 MetaMask 两次签名
   的文案与交互，因此当时没有勾选 T-007；后续人工浏览器验收证据见下一节。
@@ -115,7 +115,7 @@
 - `web/apps/web/src/lib/wallet/wagmi-config.ts` 集中声明 Anvil、Sepolia、主网和 MetaMask connector；`wallet-session.ts` 使用 wagmi actions 连接、切链和发送交易，并由 viem 校验地址、hex 与 chain id。
 - `escrow-deposit-flow.ts` 将准备、钱包广播和平台登记建模为三个交易阶段；取得 txHash 后若登记失败，只允许恢复同一 txHash，不再调用 MetaMask。登记完成后立即返回，页面先展示确认中；本地链只在用户刷新状态时推进确认，正式网络仍只读取真实区块。
 - Web 针对性测试 3 个文件 / 27 项通过，覆盖错账户/错链、真实交易参数、待确认/失败展示、钱包拒签、登记恢复不重复发送、RFC 3339 时区偏移和“先展示确认中”时序；Web 全量 29 个文件 / 94 项通过，类型检查与生产构建通过。
-- 在 Chain ID 31337 的真实 Anvil 上部署 `Escrow`，发送 2 个测试 ETH 的 `deposit(bytes32)` 成功；Business API 的 `escrow-anvil.integration.test.ts` 读取真实 `Deposited` receipt、事件字段和 `escrowOf` 记录通过（1/1）。
+- 在 Chain ID 31337 的真实 Anvil 上部署 `Escrow`，发送 2 个测试 ETH 的 `deposit(bytes32)` 成功；Marketplace API 的 `escrow-anvil.integration.test.ts` 读取真实 `Deposited` receipt、事件字段和 `escrowOf` 记录通过（1/1）。
 - `escrow-postgres.integration.test.ts` 在本地 PostgreSQL 测试库 5/5 通过；其中真实验证金额不一致时写入未解决告警并冻结操作，以及退款失败保持 `retry_pending` 、超过上限后转人工处理，对应 AC-004/AC-005。
 - MetaMask 真实浏览器验收使用钱包 `0x5b103f5178F35ef3196bbc12810d7E0B264C02B4`、Anvil Chain 31337 与任务 `cdc22741-00ad-470a-9969-82e9606b3baa`：首次人工取消后页面展示“可重试”与 `0/12`；重试批准后交易 `0x869e3648d3f5ae3c10d6ab7fc56e23f9ac1ecb39b7c0794f65622d5daad65089` 回执 `status=0x1`，合约事件金额为 `0.0128 ETH`，页面展示“已确认”、`13/12` 并进入 `matching`。
 

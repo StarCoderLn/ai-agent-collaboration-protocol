@@ -17,16 +17,34 @@ USDC。托管确认后按 DAG 依赖创建正式 assignment 并派发，上游�
 体验库已迁移至 0051，8 个创始钱包已质押并同步。真实案件的 VRF、付费申诉、终审结算、异常恢复、保证金领取、在线新增奖励通知、分页记录及真实文件附件跨端验收均已闭环，详见 [链上仲裁进度](../docs/dao-chain-arbitration.md)。当前制品与状态契约见
 [`docs/workflow-artifacts.md`](../docs/workflow-artifacts.md)。
 
-## 项目级技术栈决策（已冻结）
+## 已完成的架构纠偏（2026-09-15）
+
+以下两项架构纠偏已经完成代码落地。历史规格中的版本记录继续保留用于审计，当前架构以
+本节、实际代码和对应模块文档为准。
+
+1. **恢复 better-t-stack 的 Hono 后端。** `web/apps/server` 已迁入 better-t-stack
+   workspace 并改用 Hono；87 个路由复用既有领域 handler。AWS Lambda 使用 Hono Adapter
+   和 esbuild 单文件制品，Next.js API-only、React、Lambda Web Adapter 与 standalone
+   运行链路已经删除。
+2. **把 V0、V1、V2 恢复为算法迭代版本，而不是三套长期并存的生产算法。** 最终 V2
+   内部仍包含资格与资金硬约束、Embedding/pgvector 候选召回以及 Wide & Deep + ESMM
+   排序，但这些是同一个 V2 的过滤、召回、排序阶段，不再对外称为 V0/V1/V2 三层算法。
+   当前正式代码路径已经落地，在线开关启用时模型失败会关闭本次匹配，不会回退旧算法；
+   数据库还会强制模型同时满足 `active + real`。现有 30,000 条样本模型属于 synthetic，
+   因此只用于 shadow/工程验收；积累真实曝光并发布 active 模型后，生产才可切入最终 V2。
+   回滚目标为上一个稳定模型版本，历史版本及评估数据继续保留用于审计和复现。
+
+## 项目级技术栈决策
 
 - 前端只保留 better-t-stack 生成的 `web/` pnpm workspace，唯一正式应用是 `web/apps/web`；不得新增 Vite 或其他平行前端。
-- Web 使用 Next.js 16、React 19、TypeScript strict、App Router 和 Route Handlers；共享 UI 使用 `web/packages/ui`，样式使用 Tailwind CSS。
+- Web 前端使用 Next.js 16、React 19、TypeScript strict 和 App Router；共享 UI 使用 `web/packages/ui`，样式使用 Tailwind CSS。
 - 边界校验使用 Zod，前端测试使用 Vitest + Testing Library，lint/格式化使用 Biome。
-- 用户面业务 API 采用 Next.js Route Handlers 并以 AWS Lambda 为部署方向；Go 只承担分发引擎与 Agent 接入协议职责。Lambda 打包与 IaC 方案（2026-08-22 由用户确认）：AWS Lambda Web Adapter + zip 打包（不用容器镜像）+ AWS CDK（不用 SAM——本项目已知会有多个 Lambda，包括未来 feature 9/10 的 SQS 消费者、feature 12 的定时评分任务，CDK 用真正的编程语言表达共享配置更合适）。具体实现与部署命令见 `services/business-api/infra/README.md`；后续新增 Lambda（不限于 business-api）默认沿用同一 IaC 工具，除非有真实理由需要偏离（如 Go 分发引擎若改用 ECS/Fargate 等非 serverless 资源，仍可用 CDK 表达，不需要引入第二套工具）。
+- 用户面业务 API 使用 better-t-stack workspace 中的 Hono 服务并以 AWS Lambda 为部署方向；Hono AWS Lambda Adapter 直接转换 Function URL 事件，esbuild 生成单文件制品，IaC 继续使用 AWS CDK。Go 只承担分发引擎与 Agent 接入协议职责。具体实现与部署命令见 `web/apps/server/infra/README.md`。
+- 无真实 AWS 账号时使用 LocalStack 复用同一份 CDK 栈；KMS、Secrets Manager、SQS、SNS、SSM、S3、CloudFormation、EventBridge 与 Lambda 已完成真实本机运行验收。该结果证明本地云接缝可用，不代替真实账号的 IAM、配额、计费、网络和 Function URL 验收。
 - PostgreSQL + pgvector、OpenAI Embeddings、AWS SQS/SNS、Ethereum + Solidity + MetaMask 是已选技术边界；不实现 Solana/Phantom 路径。
 - “技术栈已确定”不代表所有实现已完成。路由装配、数据库适配器、认证协议或部署配置缺失时，必须准确记录为实现缺口，不得另建技术栈替代。
 - 提供者钱包认证方案已冻结为 SIWE（EIP-4361）：`GET /api/auth/nonce` 签发一次性 nonce（PostgreSQL 存储，短 TTL，单次使用）→ 前端 `personal_sign` 签署标准 SIWE 消息 → `POST /api/auth/verify` 校验签名与 nonce 后写入 `auth_sessions`（session_id、wallet_address、expires_at）并下发 httpOnly+Secure+SameSite=Lax 的不透明 session cookie → 后续接口从 session 解析 `actorId`，不信任请求体/Header 自报的钱包地址。会话 TTL 为固定 7 天，过期需重新签名；多端会话管理与 refresh 轮换体验不在本轮范围。详细设计与实现见 [[2.agent-registration]] design.md 模块 5。（2026-08-22 确认 SIWE 方案，2026-09-01 将会话期限由 24 小时调整为 7 天）
-- Mastra、LangChain、LangGraph 仅用于第三方或自建测试 Agent 的内部编排，不是平台 Web/API 技术栈替代项；自建测试 Agent 的生产选型仍需样例工作流验证后单独冻结。
+- Mastra、LangChain、LangGraph 仅用于第三方或平台自建 Agent 的内部编排，不是平台 Web/API 技术栈替代项；当前 `code-langgraph` 已作为独立正式候选完成真实模型与恢复验收。
 
 | 序号 | feature | 说明 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
@@ -37,7 +55,7 @@ USDC。托管确认后按 DAG 依赖创建正式 assignment 并派发，上游�
 | 5 | escrow-contract-ethereum | Ethereum 智能合约：USDC 托管、原子多 Agent 结算、争议退款、暂停、事件 | - | 已完成 T-001～T-008；Circle Sepolia USDC 部署、绑定、存款、结算与退款已验证 |
 | 6 | escrow-sync-and-wallet | 链上事件同步/确认/对账/恢复、钱包交互与托管状态前端 | 4, 5 | T-001～T-008 已完成；Anvil 与 Sepolia 的 USDC、MetaMask 和项目 keystore 已验证，生产 KMS/HSM operator client 尚未实现 |
 | 7 | task-visibility-and-mode | 可见性（私密/公开）、分配模式（手动/自动）、市场与工作台分离 | 4；T-004 另有对 3、12 的**表结构级**轻依赖（见下方说明） | 已完成（T-001～T-008） |
-| 8 | matching-and-candidates | V0 硬约束/规则排序、V1 语义 Top-k、JobDistributionRecord、候选列表/可视化 | 3, 6, 7 | V0 与 V1 已完成并通过真实 OpenAI + pgvector 验收；V2 反馈学习排序尚未实现 |
+| 8 | matching-and-candidates | 最终 V2：硬约束、pgvector 召回、Wide & Deep + ESMM 排序、JobDistributionRecord、候选列表/可视化 | 3, 6, 7 | V2 代码、离线训练、ONNX 推理与正式 fail-closed 路径已完成；真实数据 active 模型仍待样本积累与发布验收 |
 | 9 | dispatch-and-acceptance | 原子占用分配、SQS 派发、Agent 接单/拒单确认、接单超时处理 | 1, 8 | 已完成（T-001～T-007） |
 | 10 | notification-and-sync | Webhook 签名异步通知、退避重试与死信队列、SSE 进度推送、状态补拉接口 | 1, 9 | 已完成（T-001～T-008；真实 PostgreSQL、SSE 续传与正式构建已验证） |
 | 11 | execution-tracking-and-delivery | Agent 进度上报、1~3 个候选结果提交与版本管理、验收/返工 | 1, 10 | 已完成（T-001～T-008；真实 PostgreSQL、权威验收预览、过期条件保护与正式构建已验证） |
@@ -49,17 +67,17 @@ USDC。托管确认后按 DAG 依赖创建正式 assignment 并派发，上游�
 | 17 | durable-agent-orchestration | LangGraph Coding 持久恢复与 Temporal 自动准入编排 | 1, 9, 15 | **开发与真实本机验收完成**（面试使用本机 Dev Server；线上需要时再选择部署与运维方案） |
 | 18 | stagehand-browser-agent | Stagehand 网页调研助手与自然语言页面验收 | 1, 17 | **开发与真实 Sepolia 闭环验收完成**：真实公网研究、页面 `observe`/`extract`、市场目录、本机服务健康，以及匹配、托管、派发、双格式交付、人工验收和结算均已通过 |
 
-匹配算法 V1 已选择 pgvector 并完成：Agent `tags + capability_desc` 按内容哈希惰性回填
-OpenAI `text-embedding-3-small` 1536 维向量，任务 `tags + description` 仅随请求生成且不
-长期保存正文；V0 硬约束先执行，pgvector Top-k 负责召回，候选内继续使用 V0 版本化规则。
-真实隔离端到端查询为 4.111ms，OpenAI 或向量存储异常会留下稳定错误类别并回退 V0，
-后续请求仍可恢复 V1。V2 仍按“分发为候选 → Agent 接单 → 最终成功”反馈、梯度提升 CTR
-和夜间离线更新路线推进。
+最终匹配 V2 由一个管道组成：先执行资格、币种、时限和冷启动资金硬约束，再用 OpenAI
+`text-embedding-3-small` 与 pgvector 召回 30 名，最后由 Wide & Deep + ESMM 预测
+`pCTR/pCVR/pCTCVR` 并按联合成功概率返回 Top-3。PyTorch 负责 Temporal 夜间离线训练，
+制品导出 ONNX 后由独立 ONNX Runtime 服务在线推理；UNK 增强覆盖新 Agent。正式模式
+fail closed，并要求数据库中的版本为 `active + real`。现有 synthetic 模型只证明训练、
+导出、哈希校验和 Go HTTP 调用闭环，不能作为真实收益或生产发布依据。
 
 ### 本地 MVP 闭环历史验收（2026-08-23～2026-08-28）
 
 - 2026-08-23 的同步 PRD → UI 设计 → Coding 体验曾用于验证 9 个 Agent 的协议和制品；该旧入口不写正式任务或资金状态，已经被 2026-08-30 的持久化工作流替代并删除。
-- 正常结算闭环已在本地 Anvil 31337 、PostgreSQL、Business API、Dispatch Engine 与测试 Agent 间真实通过：任务 `dcff92ef-1273-4b5f-b722-1a3360a1301e` 最终状态 `settled`，包含返工、验收预览、结算确认和评分。
+- 正常结算闭环已在本地 Anvil 31337 、PostgreSQL、Marketplace API、Dispatch Engine 与测试 Agent 间真实通过：任务 `dcff92ef-1273-4b5f-b722-1a3360a1301e` 最终状态 `settled`，包含返工、验收预览、结算确认和评分。
 - 争议退款闭环真实通过：任务 `3c099bf3-4247-4283-8900-04f3d2ad8d5b` / 争议 `85cf1e0f-51b8-441a-b068-65cb636c096a` 最终状态 `refunded`，包含证据、仲裁决定、链上退款提交与确认。
 - 当时的自动化测试数量和构建结果保留在各 feature 的 `tasks.md` 验收记录中；测试总数会随功能增长，不在本索引复制一个容易失效的全局数字。
 - 2026-08-28 已在 MetaMask + Anvil 中人工完成 USDC 精确授权、取消、重试、托管和链事件恢复；完整证据见 `6.escrow-sync-and-wallet/tasks.md`。

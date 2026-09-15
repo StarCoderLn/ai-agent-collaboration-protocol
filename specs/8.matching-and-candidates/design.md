@@ -1,4 +1,4 @@
-# V0 匹配与候选列表 — 技术设计
+# Agent 匹配 V2 — 技术设计
 
 ## 设计版本
 
@@ -13,6 +13,7 @@
 | 2026-09-05 | v7   | 任务与 Agent 共用数据库标签词表，并在 Agent 持久化边界统一归一 |
 | 2026-09-14 | v8   | 明确 V1 向量检索和 V2 夜间离线反馈学习的后续架构边界 |
 | 2026-09-14 | v9   | V1 选择 pgvector，完成内容哈希缓存、Top-k、V0 回退与真实验收 |
+| 2026-09-15 | v10  | V2 完成 Wide & Deep + ESMM、UNK、Temporal 离线训练、ONNX 在线推理和正式发布门禁；V0/V1 仅保留为历史迭代记录 |
 
 ## 项目架构
 
@@ -21,13 +22,13 @@
 
 ## 功能模块设计
 
-### 模块 1: 匹配管道
+### 模块 1: 可解释硬约束基线
 
 **涉及层及关键设计:**
 
-- 四阶段纯函数管道：`FilterByCategory → FilterByEligibility(ValidateHardConstraints) → MatchByTags → RankByRules`，每阶段输入输出明确，互不感知对方内部实现，符合「不同层应有不同抽象」（AGENTS.md §3.7 / 工程方法论 §3.7）。
+- V0 建立的四阶段纯函数管道 `FilterByCategory → FilterByEligibility(ValidateHardConstraints) → MatchByTags → RankByRules` 继续作为 V2 的资格与可解释特征基线；正式排序由后文的语义召回和 ESMM 阶段接管，不对外暴露旧算法开关。
 - `planning/selecting` 与托管后的 `running/matching` 共用同一候选快照和输入指纹；前者只生成候选供选择，后者只有在没有已冻结选择的兼容路径才重新计算。`budget_preference_minor` 按节点权重拆为 `price_preference_minor` 并只进入排序，不由硬约束过滤报价，也不复用任何资金字段。
-- 任务提交时 Business API 从自然语言按词表识别规范能力；节点选择前，发布者可通过独立命令修正 `node.tags`。修改更新时间会进入匹配输入指纹，随后显式 rematch 生成新快照；能力保存和匹配失败可分别重试。
+- 任务提交时 Marketplace API 从自然语言按词表识别规范能力；节点选择前，发布者可通过独立命令修正 `node.tags`。修改更新时间会进入匹配输入指纹，随后显式 rematch 生成新快照；能力保存和匹配失败可分别重试。
 - Agent 提供者可以填写熟悉的中英文能力名称；创建、编辑和提供者案例在持久化前统一读取数据库词表并收敛为 canonical 标签。任务识别与 Agent 落库不得各自维护词表，避免语义相同但字符串不同导致假性零匹配。词表更新只前向回填 Agent 档案与案例，不重写历史候选快照。
 - 管道放在 Go 分发引擎：匹配需要读取 Agent 实时状态（[[3.agent-health-lifecycle]] 权威数据所在服务），放在同一进程避免跨服务查询的实时性问题，与派发（[[9.dispatch-and-acceptance]]）共享同一批 Agent 状态读取路径。
 
@@ -82,29 +83,35 @@
 | 决策 | 选项 | 理由 |
 | ---- | ---- | ---- |
 | 匹配管道位置 | Go 分发引擎（选中）vs 业务服务 | 匹配需要读取 Agent 实时状态，与状态机权威数据同进程可避免额外的服务间往返和一致性问题 |
-| V0 标签检索存储 | PostgreSQL（选中）vs 提前引入向量存储 | V0 是精确匹配和规则排序，不需要向量检索能力；该选择不取消后续 V1 |
+| V2 召回存储 | PostgreSQL + pgvector（选中）vs 独立向量数据库 | 当前 Agent 规模下复用事务与运维边界更简单；容量或隔离测量证明瓶颈后再替换模块内 Store |
 
-## V1 语义召回（已实现）
+## 历史 V1 语义召回（能力已并入 V2）
 
-`internal/semanticmatching` 是 V1 深模块：对上层只暴露语义配置、Top-k 结果和稳定失败
+`internal/semanticmatching` 最初在 V1 引入，现作为 V2 的召回深模块：对上层只暴露语义配置、Top-k 结果和稳定失败
 类别，内部隐藏 OpenAI HTTP 契约、Agent 内容哈希、批量补向量、pgvector 存取及查询耗时。
 任务描述只进入当次 OpenAI 请求，分发快照只保存内容哈希；Agent 的公开能力向量保存于
 `agent_matching_embeddings`，档案不变时不会重复调用模型。
 
-匹配服务先运行 V0 领域管道得到合格候选，再把这些候选交给 pgvector Top-k；召回结果
-保持 V0 规则排序，`semanticSimilarity` 仅作为冻结证据，不擅自引入未经确认的混合权重。
-`matching_mode`、模型、查询耗时和 fallback 类别随 `JobDistributionRecord` 持久化。V1
-成功记录先按包含模型、维度、Top-k 与内容哈希的指纹重放；V1 失败后才查询独立 fallback
-指纹，因此模型恢复后的下一次请求仍会尝试 V1。真实查询耗时为 4.111ms。
+历史 V1 先运行 V0 领域管道，再把合格候选交给 pgvector Top-k，并保留规则排序；其
+`matching_mode`、模型、查询耗时和 fallback 证据继续用于审计旧记录。当前 V2 复用相同
+向量缓存和召回模块，但对完整召回池执行 ESMM 排序；正式模型失败时 fail closed，不再
+回退 V0/V1。V1 阶段的真实查询耗时为 4.111ms。
 
 pgvector 与现有 PostgreSQL 共享事务和运维边界，当前 Agent 规模无需引入独立 Qdrant；
 若未来容量、隔离或召回质量测量证明 PostgreSQL 成为瓶颈，再通过模块内 Store 接口替换。
 
-## 后续架构路线（未实现）
+## V2 最终架构（代码已完成，真实模型待发布）
 
-### V2：反馈学习排序
+V0、V1、V2 是迭代版本。最终 V2 内部保留已经验证的硬约束和 pgvector 召回，再用 Wide &
+Deep + ESMM 对完整召回池排序，不向用户或生产配置暴露三套算法选项。
 
-线上持续记录“分发为候选、Agent 接单、最终成功”三段权威事实，夜间任务基于该漏斗
-构建样本并训练梯度提升 CTR 排序模型。训练产物包含数据窗口、特征版本、模型版本和评估
-结果；只有达到发布阈值的模型才能被线上排序加载，异常时回退到上一稳定版本或 V1/V0。
-这里不采用逐请求在线训练，也不把尚未确认的点击、查看详情或 CVR 指标写成必需输入。
+浏览器记录真实候选曝光，数据库连接用户选中、Agent 接单和最终成功事实。Temporal 夜间
+导出删失处理后的真实样本，PyTorch 同时优化 CTR BCE 与 CTCVR BCE，并通过
+`pCTCVR=pCTR×pCVR` 约束完整漏斗；20% Agent ID 训练时替换为 UNK，覆盖新 Agent。
+训练结果导出 `.onnx`，制品内嵌词表、归一化参数、特征版本和指标。导出后强制比较
+PyTorch/ONNX 数值；在线进程在创建 ONNX Runtime Session 前校验 SHA-256。
+
+正式排序同步消费完整召回池并按 pCTCVR 保存 Top-3，同时写入 pCTR、pCVR、pCTCVR 和
+模型版本。模型失败时 fail closed；发布门同时要求 HTTP 版本一致和 PostgreSQL 注册表中
+同版本为 `active + real`。回滚切换到上一个稳定模型版本，不退回旧 V0/V1 算法。现有
+30,000 条 synthetic 样本模型只用于工程验收，不能切 active 或声明真实排序收益。

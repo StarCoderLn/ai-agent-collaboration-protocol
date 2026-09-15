@@ -4,7 +4,8 @@
 
 ## 固定技术栈
 
-- `apps/web`：Next.js 16、React 19、TypeScript strict、App Router 和 Route Handlers
+- `apps/web`：Next.js 16、React 19、TypeScript strict 和 App Router 前端
+- `apps/server`：better-t-stack Hono Marketplace API，独立承载业务、认证和数据库边界
 - `packages/ui`：Tailwind CSS 与共享 UI 组件
 - `packages/env`：Zod 环境变量校验
 - pnpm 11 workspace、Biome、Vitest + Testing Library
@@ -43,7 +44,8 @@ import { Button } from "@web/ui/components/button";
 ```
 web/
 ├── apps/
-│   └── web/         # 唯一正式 Next.js 应用
+│   ├── web/         # 唯一正式 Next.js 用户界面
+│   └── server/      # 独立 Hono Marketplace API
 ├── packages/
 │   ├── env/         # 环境变量 schema
 │   └── ui/          # 共享 UI 与样式

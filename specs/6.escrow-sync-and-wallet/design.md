@@ -19,7 +19,7 @@
 ## 项目架构
 
 - 架构类型: 多服务架构
-- 涉及层: 交易/业务服务（Next.js + AWS Lambda，链上事件监听与对账）、PostgreSQL、前端（wagmi + viem + MetaMask）
+- 涉及层: 业务服务（Hono + AWS Lambda，链上事件监听与对账）、PostgreSQL、Next.js 前端（wagmi + viem + MetaMask）
 
 ## 功能模块设计
 
@@ -73,7 +73,7 @@
 - 浏览器登记 Deposit 时同时提交准备响应中的 `amountMinor`，服务端只接受与当前 intent
   完全一致的金额。sessionStorage 恢复记录也保存该金额，因此页面刷新后的“继续登记”
   仍能证明它属于哪一版报价；Agent 已改选时，旧页面的迟到登记会被明确拒绝。
-- Business API 返回同一金额的 `approve(escrow, amount)` 与 `deposit(taskKey, amount)` 两笔
+- Marketplace API 返回同一金额的 `approve(escrow, amount)` 与 `deposit(taskKey, amount)` 两笔
   已编码交易。Web 按顺序发送，授权只覆盖当前任务，不使用无限额度；平台仅登记
   deposit 的 txHash，因为 approve 成功只代表额度可用，不代表资金已经进入 Escrow。
 - 两笔交易的原生 `value` 都必须为零，Web 在钱包边界再次拒绝非零 value，避免异常

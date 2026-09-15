@@ -88,3 +88,6 @@ migrate -path services/business-service/migrations \
 - `0049_dao_case_compensations`：为旧部署异常案件记录独立平台补偿条款、付款哈希和确认区块；禁止覆盖原托管状态或把补偿伪装为 Escrow 退款。
 - `0050_dao_case_compensation_attempts`：补偿交易先持久化签名原文再广播；重启重放同一哈希，失败重试仍保留旧 nonce 与付款尝试。
 - `0051_agent_matching_embeddings`：启用 pgvector，保存带内容哈希的 Agent 能力向量缓存，并为分发记录增加 V1/回退模式与查询耗时证据。
+- `0052_matching_v2_funnel_and_models`：记录真实候选曝光、私有召回池影子任务、Temporal 训练运行、Wide & Deep + ESMM 模型版本与影子分数；仿真模型由数据库约束禁止切为正式排序。
+- `0053_matching_v2_online_ranking`：允许分发记录声明 `learned_v2`，并强制保存获得正式排序授权的模型版本；历史 V0/V1/回退记录继续保持可审计。
+- `0054_agent_score_refresh_requests`：评分、结算和仲裁事件在业务事务内合并写入 Agent 刷新请求；异步 Worker 定向生成快照，周期扫描继续负责时间衰减校准和故障恢复。

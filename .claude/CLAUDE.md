@@ -10,7 +10,7 @@ AI 原生任务协作平台，连接任务发布者与独立部署的 AI Agent�
 
 `services/dispatch-engine`（Go）实现 Agent 接入协议、候选匹配、正式派发、回调与失败恢复。
 
-`services/business-api`（TypeScript + Next.js API-only）是任务、Agent、工作流、托管、评分与仲裁的权威业务边界；`services/business-service/migrations` 维护与派发引擎共享的 PostgreSQL 结构。
+`web/apps/server`（TypeScript + Hono）是任务、Agent、工作流、托管、评分与仲裁的权威业务边界；`services/business-service/migrations` 维护与派发引擎共享的 PostgreSQL 结构。
 
 `agents/product-workflow` 提供 PRD、设计和 Coding 三个阶段、每阶段三种实现的真实 Agent；`agents/evidence-research` 保留为独立的论文检索与协议联调 Agent。
 
@@ -18,14 +18,14 @@ AI 原生任务协作平台，连接任务发布者与独立部署的 AI Agent�
 
 `web/`（better-t-stack pnpm workspace，`packageManager: pnpm@11.18.0`）是唯一正式 Web 工程；`apps/web` 使用 Next.js 16、React 19、App Router、Tailwind CSS 和 Zod，`packages/ui` 提供共享 UI，测试使用 Vitest + Testing Library，lint/格式化使用 Biome。
 
-项目级固定边界：用户面业务 API 使用 Next.js App Router Route Handlers，部署方向为 AWS Lambda；Go 只负责分发引擎；数据使用 PostgreSQL 与 AWS SQS/SNS；业务结算资产只使用 USDC，ETH 仅支付 EVM Gas；钱包认证使用 SIWE（EIP-4361）。权威决策见 `docs/prd.md` 与 `specs/PLAN.md`。
+项目级固定边界：用户面业务 API 使用 better-t-stack Hono 后端并通过 Hono Lambda Adapter 部署到 AWS Lambda；Go 只负责分发引擎；数据使用 PostgreSQL 与 AWS SQS/SNS；业务结算资产只使用 USDC，ETH 仅支付 EVM Gas；钱包认证使用 SIWE（EIP-4361）。权威决策见 `docs/prd.md` 与 `specs/PLAN.md`。
 
 ## 常用命令
 
 - `cd services/dispatch-engine && go build ./...` — 编译派发引擎
 - `cd services/dispatch-engine && go test ./...` — 运行 Go 测试（含 `internal/protocol` 契约测试）
 - migration 见 `services/dispatch-engine/migrations/README.md`（业务库 migration 见 `services/business-service/migrations/README.md`，含独立追踪表参数）
-- `cd services/business-api && pnpm test` / `pnpm typecheck` / `pnpm build` — 业务 API 单元测试、类型检查、构建
+- `cd web/apps/server && pnpm test` / `pnpm typecheck` / `pnpm build` — 业务 API 单元测试、类型检查、构建
 - `cd web && pnpm dev:web` / `pnpm test` / `pnpm check-types` / `pnpm check` / `pnpm build` — 正式 Web 前端开发与验证
 - `cd agents && pnpm check && pnpm test && pnpm build` — 验证平台自建 Agent
 - `cd contracts/escrow && forge test` — 验证托管、分账和 DAO 合约

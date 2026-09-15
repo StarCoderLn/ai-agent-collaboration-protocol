@@ -8,7 +8,8 @@
 | 2026-08-20 | v2   | 说明 `PATCH /api/agents/:id` 拒绝钱包地址修改是永久约束，换绑走 [[16.agent-wallet-rebind]] 单独接口 |
 | 2026-08-20 | v3   | `agents` 表新增 `email` 必填字段 |
 | 2026-08-21 | v4   | 冻结唯一前端与 Web 技术栈，禁止平行 Vite 应用 |
-| 2026-08-22 | v5   | 新增模块 5（提供者钱包认证，SIWE），冻结 `services/business-api` 独立 Next.js API-only 应用骨架的部署形态；补充接口契约与技术决策 |
+| 2026-08-22 | v5   | 新增模块 5（提供者钱包认证，SIWE），冻结 `web/apps/server` 独立 Next.js API-only 应用骨架的部署形态；补充接口契约与技术决策 |
+| 2026-09-15 | v6   | 纠正早期脚手架偏差：保留独立权限/部署边界，把 Marketplace API HTTP 入口迁移为 better-t-stack workspace 的 Hono 服务；Lambda 使用 Hono Adapter + esbuild，删除 Next.js API-only/LWA 运行时 |
 | 2026-08-24 | v6   | 补齐显式退出登录：服务端吊销不透明会话并清除 httpOnly Cookie，已登录钱包入口改为账户菜单 |
 | 2026-08-25 | v7   | 新增独立 `payout_wallet_address`，所有权校验与结算收款不再共用同一字段 |
 | 2026-08-28 | v8   | 单次服务报价统一使用 USDC 且最低 1 USDC；注册主操作按 SIWE 会话状态切换 |
@@ -22,7 +23,7 @@
 ## 项目架构
 
 - 架构类型: 多服务架构
-- 涉及层: 交易/业务服务（`services/business-api`，独立部署的 Next.js API-only 应用（无页面，仅 Route Handlers）+ AWS Lambda，承载 Agent 档案 CRUD 与 SIWE 认证）、PostgreSQL、前端（better-t-stack 的 `web/apps/web`，通过 `NEXT_PUBLIC_BUSINESS_API_URL` 跨服务调用业务 API）
+- 涉及层: 交易/业务服务（`web/apps/server`，better-t-stack workspace 内独立部署的 Hono + AWS Lambda，承载 Agent 档案 CRUD 与 SIWE 认证）、PostgreSQL、前端（`web/apps/web`，通过 `NEXT_PUBLIC_MARKETPLACE_API_URL` 跨服务调用业务 API）
 
 ## 功能模块设计
 
@@ -50,7 +51,7 @@
 - `POST /api/agents/connection-test`：要求 SIWE 会话，只探测执行地址同域 `/healthz`；生产环境限制公网 HTTPS，DNS 校验后固定已验证 IP。本地体验模式允许 loopback HTTP。该接口不发送任务，不产生模型调用。
 - `PATCH /api/agents/:id`：编辑除钱包地址外的字段；`[v2]` 拒绝钱包地址字段是永久性约束，不是"暂未实现"——换绑必须走 [[16.agent-wallet-rebind]] 的独立签名验证+冷静期流程，本接口不提供任何绕过路径。
 - `PUT /api/agents/:id/credentials`：覆盖写凭证，返回值只含 `key_version` 与配置状态。
-- 选择 Next.js + AWS Lambda 而非 Go 分发引擎承载本模块：注册/配置是用户面 CRUD，非高吞吐派发路径，与 PRD §10 中“交易相关服务”职责边界一致，避免 Go 分发引擎承担与任务派发无关的业务知识。
+- 选择 Hono + AWS Lambda 而非 Go 分发引擎承载本模块：注册/配置是用户面 CRUD，非高吞吐派发路径，与 PRD §10 的业务边界一致，避免 Go 分发引擎承担与任务派发无关的业务知识。
 
 ### 模块 4: 前端注册与配置页面
 
@@ -113,9 +114,9 @@
 
 | 决策 | 选项 | 理由 |
 | ---- | ---- | ---- |
-| 承载服务 | Next.js + AWS Lambda（选中）vs Go 分发引擎 | 注册配置属于低频用户面 CRUD，Go 分发引擎应保持专注于派发路径的深模块职责，混入 CRUD 会扩大其接口面 |
+| 承载服务 | Hono + AWS Lambda（选中）vs Go 分发引擎 | 注册配置属于低频用户面 CRUD，Go 分发引擎应保持专注于派发路径的深模块职责，混入 CRUD 会扩大其接口面 |
 | 前端工程 | better-t-stack `web/apps/web`（选中）vs 独立 Vite 应用 | 单一 App Router 应用统一路由、设计系统、环境变量、测试和部署边界，避免重复脚手架与迁移成本 |
 | 凭证存储 | 应用层信封加密 + 物理分表（选中）vs 数据库透明加密（TDE） | TDE 无法阻止“查询到但被解密返回”的误用路径；应用层加密从接口设计上直接消除“读明文”的可能性 |
-| `services/business-api` 部署形态 | 独立 Next.js API-only 应用（选中）vs 合并进 `web/apps/web` | 用户 2026-08-22 确认维持既有冻结决定：业务 API 需要独立的数据库/KMS 权限边界，与前端部署单元分开；代价是多一套 Next.js 脚手架与构建/部署流水线，已知悉并接受 |
+| `web/apps/server` 部署形态 | better-t-stack Hono 服务（选中）vs 合并进 `web/apps/web` | 保留业务 API 独立数据库/KMS 权限和部署边界，同时复用 better-t-stack workspace；Hono 只承担 HTTP 边界，既有领域与仓储代码不重写。Lambda 由 Hono Adapter 直接接收 Function URL 事件，避免引入 React、Next.js server 和 LWA |
 | 提供者钱包认证协议 | SIWE / EIP-4361（选中）vs 请求级签名校验（无会话） | 用户 2026-08-22 确认选 SIWE：生态成熟、钱包客户端原生支持消息展示；代价是需要新增 `auth_nonces`/`auth_sessions` 两张表和会话生命周期管理，比无会话的请求级签名复杂，但用户体验更好（不必每次请求都弹签名） |
 | 默认 Agent 接入 | 执行地址 + 可选访问密钥（选中）vs 强制安装 SDK | 已完成 Agent 通常已有 HTTP API；默认快速接入只要求稳定 JSON 契约，把状态与重试复杂度留在平台内部。SDK/HMAC 保留为高级兼容方式，不增加普通上架心智负担 |

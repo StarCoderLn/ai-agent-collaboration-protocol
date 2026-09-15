@@ -4,7 +4,7 @@ description: 安全基线规则——认证授权、钱包与资金操作、外�
 
 # 安全规则
 
-项目技术栈已经冻结。以下领域约束适用于所有模块；Next.js Route Handlers 的外部输入使用 Zod 在边界校验，PostgreSQL 查询必须参数化。提供者钱包认证方案已冻结为 SIWE（EIP-4361，见 `specs/PLAN.md`），任何客户端可控 Header、请求体钱包地址或查询参数都不得冒充已认证主体，一律以 `resolveActorId` 解析出的 session 为准。
+项目技术栈已经冻结。以下领域约束适用于所有模块；Hono Business API 的外部输入使用 Zod 在边界校验，PostgreSQL 查询必须参数化。提供者钱包认证方案已冻结为 SIWE（EIP-4361，见 `specs/PLAN.md`），任何客户端可控 Header、请求体钱包地址或查询参数都不得冒充已认证主体，一律以 `resolveActorId` 解析出的 session 为准。
 
 ## 认证与授权
 

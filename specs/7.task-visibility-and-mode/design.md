@@ -12,7 +12,7 @@
 ## 项目架构
 
 - 架构类型: 多服务架构
-- 涉及层: 交易/业务服务（Next.js + AWS Lambda）、PostgreSQL、前端
+- 涉及层: 业务服务（Hono + AWS Lambda）、PostgreSQL、Next.js 前端
 
 ## 功能模块设计
 

@@ -19,14 +19,17 @@
     <img src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&amp;logoColor=white" alt="Next.js 16" />
     <img src="https://img.shields.io/badge/React-19-149ECA?logo=react&amp;logoColor=white" alt="React 19" />
     <img src="https://img.shields.io/badge/TypeScript-Strict-3178C6?logo=typescript&amp;logoColor=white" alt="TypeScript Strict" />
+    <img src="https://img.shields.io/badge/Hono-Marketplace_API-E36002?logo=hono&amp;logoColor=white" alt="Hono Marketplace API" />
     <img src="https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?logo=tailwindcss&amp;logoColor=white" alt="Tailwind CSS 4" />
     <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&amp;logoColor=white" alt="Go 1.26" />
     <img src="https://img.shields.io/badge/PostgreSQL-Database-4169E1?logo=postgresql&amp;logoColor=white" alt="PostgreSQL" />
+    <img src="https://img.shields.io/badge/LocalStack-Local_AWS-7C3AED" alt="LocalStack local AWS environment" />
   </p>
   <p>
     <img src="https://img.shields.io/badge/Mastra-1.61.0-7C3AED" alt="Mastra 1.61.0" />
     <img src="https://img.shields.io/badge/LangGraph-1.4.15-1C3C3C" alt="LangGraph 1.4.15" />
     <img src="https://img.shields.io/badge/Temporal-1.48.0-141414" alt="Temporal Go SDK 1.48.0" />
+    <img src="https://img.shields.io/badge/ONNX_Runtime-Online_Inference-005CED" alt="ONNX Runtime" />
     <img src="https://img.shields.io/badge/DeepSeek-Model_API-4D6BFE" alt="DeepSeek Model API" />
     <img src="https://img.shields.io/badge/Solidity-0.8.30-363636?logo=solidity&amp;logoColor=white" alt="Solidity 0.8.30" />
     <img src="https://img.shields.io/badge/Foundry-Contracts-F97316" alt="Foundry" />
@@ -114,7 +117,7 @@ PRD 与设计阶段各有 **DeepSeek 直连、Mastra 编排、自研状态机** 
 | Agent 市场 | 查看 Agent 的能力、价格、健康状态、历史表现与适用场景 |
 | 快速发布需求 | 用标题、分类和截止日期快速开始，说明可选；平台自动识别并拆分能力需求 |
 | 快速上架 Agent | 填写服务地址、能力、报价和收款钱包，并完成接入验证 |
-| 语义匹配 | 先校验分类、资格与可用状态，再用 OpenAI Embedding + pgvector Top-k 召回候选，并保留三种偏好、履约证据与置信度 |
+| 学习型匹配 | 最终 V2 统一执行硬约束、OpenAI Embedding + pgvector 召回，以及 Wide & Deep + ESMM 排序；保存 Top-3、漏斗概率、模型版本与履约证据 |
 | 正式多 Agent 协作 | 发布后建立持久化节点，先选人定价，再托管并按依赖派发、执行和交付 |
 | 关系图与执行追踪 | 用 React Flow 展示任务、阶段、候选 Agent、最终分配和依赖关系 |
 | 分类交付预览 | 大尺寸查看文档、HTML、网站、图片、视频和 PDF，并支持下载制品 |
@@ -154,8 +157,8 @@ AICP 将用户界面、业务事实、任务派发、Agent 执行与链上资金
 | 层级 | 主要技术 | 职责边界 |
 | --- | --- | --- |
 | Web | Next.js 16、React 19、TypeScript strict、Tailwind CSS | 用户界面、钱包交互、制品隔离预览 |
-| 业务 API | Next.js Route Handlers、Zod、PostgreSQL + pgvector、SIWE | 任务、Agent、工作流、评分、争议和审计 |
-| 派发引擎 | Go、OpenAI Embeddings、Temporal Go SDK | 语义候选召回、规则排序、原子分配、协议签名、幂等、重试，以及可恢复的自动准入编排 |
+| 业务 API | Hono、Zod、PostgreSQL + pgvector、SIWE | 任务、Agent、工作流、评分、争议和审计 |
+| 派发引擎 | Go、OpenAI Embeddings、ONNX Runtime、Temporal Go SDK | 语义召回、Wide & Deep + ESMM 排序、原子分配、协议签名、幂等、重试，以及可恢复的准入与夜间训练编排 |
 | Agent | DeepSeek、Mastra、LangGraph、Stagehand、OpenAlex、PptxGenJS、自研状态机 | PRD、设计、Coding、网页研究、图片、PPT 和论文写作等真实执行能力 |
 | 链与钱包 | Solidity、Foundry、wagmi、viem | USDC 托管、原子多 Agent 结算、DAO 质押、退款和钱包连接 |
 
@@ -172,6 +175,7 @@ LangGraph Coding Agent 使用 PostgreSQL 检查点完成条件分支、局部修
 - pnpm 11+
 - Go 1.26+
 - PostgreSQL 与 `golang-migrate`
+- Docker（仅在使用 LocalStack 验证本地 AWS 接缝时需要）
 - Foundry（`anvil`、`forge`、`cast`）
 - MetaMask 或兼容的 EVM 浏览器钱包
 - DeepSeek API Key（正式多 Agent 工作流会真实调用模型）
@@ -186,7 +190,7 @@ corepack enable
 
 (cd web && pnpm install --frozen-lockfile)
 (cd agents && pnpm install --frozen-lockfile)
-(cd services/business-api && pnpm install --frozen-lockfile)
+(cd web/apps/server && pnpm install --frozen-lockfile)
 (cd services/dispatch-engine && go mod download)
 ```
 
@@ -235,7 +239,7 @@ DATABASE_URL="$DATABASE_URL" node scripts/local-mvp.mjs
 1. 启动项目私有的 loopback Anvil 链，并从 `.local/anvil/state.json` 恢复上次状态；
 2. 首次启动时部署测试 USDC 与 Escrow、准备测试资产，后续启动复用原合约和余额；
 3. 注册 10 个 PRD、设计与 Coding Agent，以及 1 个网页调研助手；
-4. 启动 Product Workflow Agent、Business API、Go Dispatch Engine 和 Web；
+4. 启动 Product Workflow Agent、Marketplace API、Go Dispatch Engine 和 Web；
 5. 在所有健康检查通过后输出 [http://localhost:3001](http://localhost:3001)。
 
 按 `Ctrl+C` 会等待 Anvil 完成最终状态落盘，再关闭由启动器创建的全部进程。部署清单保存在
@@ -308,11 +312,12 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 ├── contracts/escrow/          # USDC Escrow 合约与 Foundry 测试
 ├── docs/                      # PRD、设计系统、协议与制品契约
 ├── scripts/                   # 本地完整闭环启动与验证脚本
-├── services/business-api/     # 任务、Agent、工作流、结算与争议 API
 ├── services/business-service/ # PostgreSQL 业务 migration
 ├── services/dispatch-engine/  # Go 匹配与派发引擎
 ├── specs/                     # Feature 级需求、设计和任务状态
-└── web/                       # 正式 Next.js 产品界面
+└── web/                       # better-t-stack workspace
+    ├── apps/web/              # 正式 Next.js 产品界面
+    └── apps/server/           # Hono 任务、Agent、工作流、结算与争议 API
 ```
 
 ## 项目状态
@@ -326,9 +331,10 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 | 文档、HTML、网站、图片、视频与 PDF 分类预览 | 已实现前端预览边界 |
 | Feature 1～13 | 当前 MVP 范围；详细完成证据见各 `specs/*/tasks.md` |
 | Feature 14、16 | 运营后台与钱包换绑延后；Feature 15 自动准入已完成 |
-| 匹配算法路线 | V0 规则排序与 V1 OpenAI Embedding + pgvector Top-k 已完成；V2 分发/接单/成功反馈学习尚未实现 |
+| 匹配算法路线 | 最终 V2 的硬约束、pgvector 召回、Wide & Deep + ESMM、UNK 冷启动、Temporal 离线训练和 ONNX Runtime 在线推理均已完成；正式路径只接受 `active + real` 模型，当前等待真实样本达到发布门槛 |
 | 公共测试网 USDC Escrow 与 DAO 仲裁 | Sepolia 部署、真实 VRF、申诉、结算、恢复和保证金领取已验证 |
 | 生产 `OPERATOR_ROLE` KMS/HSM 签名适配器 | 待实现 |
+| LocalStack 本地 AWS 全链路 | KMS、Secrets Manager、SQS、SNS、SSM、S3、CloudFormation、EventBridge 与 Lambda 已完成真实本机运行验收 |
 | 真实 AWS Lambda/KMS/PostgreSQL 部署 | 待环境验证 |
 | 智能合约审计、监控告警与生产安全评审 | 上线前必须完成 |
 
@@ -342,6 +348,8 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 - [Agent 接入协议](./docs/agent-protocol.md) — 默认快速 HTTP JSON 与高级 AICP HMAC 接入契约
 - [正式工作流制品契约](./docs/workflow-artifacts.md) — 上下游输入继承、阶段验收和最终统一结算
 - [LangGraph 与 Temporal 编排说明](./docs/langgraph-temporal-orchestration.md) — StateGraph、PostgreSQL checkpoint、Temporal 自动准入和部署边界
+- [匹配 V2 设计与运行](./docs/matching-v2.md) — 硬约束、语义召回、ESMM、UNK、ONNX 在线推理与模型发布门禁
+- [Marketplace API 与 LocalStack](./web/apps/server/infra/README.md) — Hono Lambda 打包、CDK、模拟 AWS 全链路与真实 AWS 验收边界
 - [DAO 奖励与链上仲裁](./docs/dao-chain-arbitration.md) — Sepolia 部署、真实案件证据、资金边界和剩余上线条件
 - [DAO 仲裁任务清单](./specs/13.dispute-and-arbitration/tasks.md) — 已完成项、外部验收项和当前权威状态
 - [Agent SDK 与平台自建 Agent](./agents/README.md) — 接入 SDK、产品工作流、Stagehand Browser 与内容 Agent

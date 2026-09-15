@@ -32,6 +32,14 @@ TEMPORAL_ADMISSION_TASK_QUEUE=aicp-agent-admission-v1
 
 技术失败仍完成三道低成本沙箱题，以便提供者一次获得完整诊断。评测 Activity 复用 `sandboxadmission.Worker` 的唯一技术门禁：技术不通过时只保存确定性结果，不调用 DeepSeek。只有质量通过才迁移 Agent 生命周期；无论通过与否都会结束数据库轮次。
 
+## Temporal 匹配 V2 夜间训练
+
+`temporaltraining` 使用独立 Task Queue 编排“导出已完成真实漏斗 → 执行 PyTorch 训练 →
+注册 candidate 模型”。UTC 02:00 Schedule 默认跳过重叠运行，六小时外不追赶，并在最终
+失败时暂停，避免服务恢复后堆叠训练。训练数据、运行状态和模型版本仍由 PostgreSQL
+保存；Temporal History 只负责步骤、重试和恢复。开启时需设置
+`MATCHING_V2_TRAINING_ENABLED=true` 及模型代码、训练工作目录和制品目录。
+
 ## 当前可用性与部署口径
 
 LangGraph 和 Temporal 的代码接入、本机真实服务运行及中断恢复验收均已完成。面试演示使用
@@ -54,6 +62,8 @@ LangGraph 和 Temporal 的代码接入、本机真实服务运行及中断恢复
 - PostgreSQL checkpointer 在关闭第一组连接后由新连接恢复 CSS，TSX 调用次数保持为 0。
 - Product Workflow 正式服务初始化 checkpoint schema 后，`/livez` 返回 200，目录返回 `code-langgraph`，共 10 个候选。
 - Temporal CLI 1.8.3 / Server 1.31.2 真实启动；第二个 Activity 执行时停止 Worker 和 Server，使用同一 SQLite 历史库重启后完成剩余步骤，第一个 Activity 未重跑。
+- 匹配 V2 使用同一真实 Temporal Server 完成数据准备、PyTorch 离线训练、ONNX 导出和 candidate 注册
+  Activity；样本不足走 `skipped` 正常终态，不会暂停下一次夜间 Schedule。
 - Dispatch Engine 全量 Go 测试通过；真实恢复测试默认跳过，需显式设置 `AICP_TEMPORAL_DEV_SERVER_TEST=1`，下载目录使用测试临时目录并在结束后清理。
 
 除明确标注的单次 Coding 冒烟外，其余恢复验证不调用 DeepSeek。所有验证均不连接 AWS、

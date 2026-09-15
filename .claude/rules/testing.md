@@ -24,11 +24,11 @@ description: Go 与 TypeScript/Next.js 测试和验证规范
 - Mock/Stub 边界:签名密钥、Agent 沙箱凭据等如使用占位值,仅可用于本地/CI 测试,不得作为"生产可用"或"任务已完成"的证据;涉及资金托管、结算的服务一旦落地,须在此补充其专属最低覆盖要求。
 - PostgreSQL、AWS KMS/Lambda、消息队列和合约的真实环境验证命令尚未全部落地；不得因此改变已冻结技术栈。
 
-## services/business-api（TypeScript）
+## web/apps/server（TypeScript）
 
-- `cd services/business-api && pnpm test`：Vitest 测试。
-- `cd services/business-api && pnpm typecheck`：TypeScript 类型检查。
-- `cd services/business-api && pnpm build`：构建验证。
+- `cd web/apps/server && pnpm test`：Vitest 测试。
+- `cd web/apps/server && pnpm typecheck`：TypeScript 类型检查。
+- `cd web/apps/server && pnpm build`：构建验证。
 - fake KMS 和内存持久化只证明领域行为，不证明真实 AWS KMS、PostgreSQL 事务或 Lambda 路由可用。
 
 ## web（正式 Next.js 工程）

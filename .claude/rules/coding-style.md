@@ -19,8 +19,8 @@ globs: "**/*.md"
 
 ## TypeScript / Next.js 代码风格
 
-1. 正式 Web 代码只写入 better-t-stack 的 `web/apps/web` 与 `web/packages/*`，不得新增 Vite 或其他平行前端。
-2. 使用 Next.js 16 App Router；HTTP 入口使用 Route Handlers，页面默认使用 Server Component，只有交互或浏览器 API 确有需要时才标记 Client Component。
+1. 正式 Web 与 Business API 代码只写入 better-t-stack 的 `web/apps/web`、`web/apps/server` 与 `web/packages/*`，不得新增平行 Web 工程。
+2. `apps/web` 使用 Next.js 16 App Router；前端自身 HTTP 入口可使用 Route Handlers。`apps/server` 使用 Hono，禁止重新引入 Next.js API-only 后端。页面默认使用 Server Component，只有交互或浏览器 API 确有需要时才标记 Client Component。
 3. 保持 TypeScript strict，不使用 `any`、无依据类型断言或非空断言掩盖未知；外部输入在边界用 Zod 校验。
 4. 共享基础 UI 放在 `web/packages/ui`，业务页面与业务组件放在 `web/apps/web`；避免只有转发作用的浅封装。
 5. 格式与 lint 以 Biome 配置为准；修改后运行 `pnpm exec biome check .`，需要自动修复时才运行 `pnpm check`。

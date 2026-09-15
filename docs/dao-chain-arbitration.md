@@ -64,12 +64,12 @@ USDC 仲裁服务费不会自动变成 YD 奖励，奖励池需要平台独立�
 | 托管 | `contracts/escrow/src/Escrow.sol` | 一次性绑定案件合约，阻止申诉期结算，核对最终比例与证据根 |
 | 数据 | `0041_dao_chain_cases` | 新案镜像、原始签名命令、私有投票理由、证据追加写保护 |
 | 恢复数据 | `0043_dao_case_command_recovery` | 每次案件签名的不可覆盖尝试、回滚后安全重签所需历史 |
-| RPC | `services/business-api/src/dao/dao-case-chain-client.ts` | 固定确认区块读取、回执/网络/重组/证据事件验证 |
-| 推进 | `services/business-api/src/dao/dao-case-worker.ts` | 确认后投影、自动阶段命令、持久化签名、相同交易重播 |
+| RPC | `web/apps/server/src/dao/dao-case-chain-client.ts` | 固定确认区块读取、回执/网络/重组/证据事件验证 |
+| 推进 | `web/apps/server/src/dao/dao-case-worker.ts` | 确认后投影、自动阶段命令、持久化签名、相同交易重播 |
 | 运营恢复 | `POST /api/internal/workers/dao-cases/retry` | 仅重新排队阶段仍适用、错误码未变化且从未签名的失败命令，并写审计记录 |
 | 链上核对 | `POST /api/internal/workers/dao-cases/reconcile` | 核实回滚交易后保留旧签名并重新排队，或在完整最终语义恢复后解除重组冻结 |
 | 页面 | `web/apps/web/src/components/platform/dao-chain-case-panel.tsx` | 阶段、费用、钱包投票/申诉/证据锚定、可退保证金 |
-| 自动奖励 | `services/business-api/src/dao/dao-reward-worker.ts` | 确认事件索引、持久化支付尝试、到账通知去重 |
+| 自动奖励 | `web/apps/server/src/dao/dao-reward-worker.ts` | 确认事件索引、持久化支付尝试、到账通知去重 |
 | 奖励恢复 | `POST /api/internal/workers/dao-rewards/reconcile` | 重放旧游标范围并在完整奖励语义一致后解冻，分叉时保持冻结 |
 | 奖励通知 | `web/apps/web/src/components/dao-reward-notice.tsx` | 未读数、在线到账提示、指向分页奖励记录 |
 | 证据文件 | `0048_dispute_evidence_objects` | PostgreSQL `BYTEA` 内容寻址存储、提交锁定、授权下载与 SHA-256 复核 |
@@ -134,7 +134,7 @@ USDC 仲裁服务费不会自动变成 YD 奖励，奖励池需要平台独立�
 
 ### 启用顺序
 
-1. `0041`～`0051` 已应用到体验库，当前为 v51、`dirty=false`；启动器要求 v51，应用本身不会自动执行 DDL。链上仍兼容新版恢复部署与旧部署；0051 只增加匹配向量缓存和分发证据，不改变 DAO 数据。0047 仅降低平台自有测试 Agent 现价，0048 增加证据字节存储；0049/0050 已发布且不能删除，现仅用于只读保留旧案审计记录，不改历史报价、成交快照或原 Escrow 状态。
+1. `0041`～`0051` 已应用到体验库，最后核验为 v51、`dirty=false`；当前启动器要求 v53，需在下次重启前依次应用 0052、0053。两项 migration 只增加匹配曝光、训练运行、模型版本、影子分数和正式 V2 排序审计字段，不修改 DAO 或链上资金数据。链上仍兼容新版恢复部署与旧部署；0047 仅降低平台自有测试 Agent 现价，0048 增加证据字节存储；0049/0050 已发布且不能删除，现仅用于只读保留旧案审计记录，不改历史报价、成交快照或原 Escrow 状态。
 2. 支持 `bindArbitrationCases` 的新 Escrow 和有期限恢复的案件合约已部署；奖励池复用原合约及 260 YD 可用余额。旧合约不可升级，原任务仍保留在原合约，不搬迁资金。
 3. VRF 网络参数、subscription、充值和 consumer 注册已经完成；8 个创始钱包的 Gas、YD 与 100 YD 质押也已完成。
 4. 首个案件因首审零票自动升级，五人终审同样错过投票窗口并进入旧合约 `stalled`。链上只读复核确认对应 Escrow 仍为 `Deposited`，12 USDC、已释放 0；旧 Escrow 不可重绑且旧案件合约没有恢复入口，这笔测试资金只能记录为旧部署损失并另行补偿，不能伪装成原托管退款。
@@ -165,7 +165,7 @@ DAO_CASE_TIMEOUT_FALLBACK_BPS
 DAO_CASE_RECOVERY_RESOLVER
 ```
 
-API 启用变量见 `services/business-api/.env.example`。Anvil 仍使用本地解锁账户；Sepolia 使用独立加密 keystore signer，案件、托管与奖励 operator 分开管理 nonce。`scripts/sepolia-mvp.mjs` 校验链 ID、合约字节码、钱包角色绑定和数据库版本后才启动，并持续轮询案件、托管与奖励 worker。
+API 启用变量见 `web/apps/server/.env.example`。Anvil 仍使用本地解锁账户；Sepolia 使用独立加密 keystore signer，案件、托管与奖励 operator 分开管理 nonce。`scripts/sepolia-mvp.mjs` 校验链 ID、合约字节码、钱包角色绑定和数据库版本后才启动，并持续轮询案件、托管与奖励 worker。
 本地运行脚本只有显式提供 `ARBITRATION_CASES_CONTRACT_ADDRESS` 才轮询案件 worker；奖励 worker 可通过独立目录先启用，不会重建本地链或替换旧托管部署清单。两个启动入口保持网络和签名模式隔离。
 奖励推进器另外要求 `DAO_REWARD_OPERATOR_ADDRESS` 和 `DAO_REWARD_START_BLOCK`；operator 必须与案件/托管账户分开，起始块不得晚于奖励池部署块。后台仅在奖励已记账后支付，不因配置了 operator 自动创设奖励。Sepolia 本机验收签名器与实际调度已启用；正式托管部署仍须单独完成密钥托管、监控、备份和恢复审查。
 
@@ -191,9 +191,9 @@ API 启用变量见 `services/business-api/.env.example`。Anvil 仍使用本地
 - 门槛调整后全合约回归 32/32 通过；服务从持久化链恢复后再次读到 100 YD，管理交易回执仍成功、合约质押总余额未变；`/dao` 返回 200，API 健康检查通过。未进行新的钱包质押交易或浏览器视觉验收。
 - 2026-09-07 阶段性快照：恢复 Browser 连接并核验当前钱包的中英文空状态；补齐证据失败重试、附件禁令、签名前身份复核、链重组停止推进、跨分页到账通知，以及未签名失败命令的受控运营重试。当时尚未处理的已签名交易和案件重组恢复，已由下方同日增量完成；其余状态见 [当前任务状态](../specs/13.dispute-and-arbitration/tasks.md)。
 - 2026-09-07 运营恢复阶段性快照：HTTP 5 项、真实 PostgreSQL DAO 案件 16 项通过；API 非数据库测试合计 401 项通过、62 项因未配置集成环境跳过，类型检查与生产构建通过。当时已完成未签名失败命令重试；随后完成已签名交易、案件对账冻结和奖励游标等价历史恢复，当前状态见下方增量。
-- 2026-09-07 已签名/重组恢复增量：0043 全量 up migration、旧签名回填和拒绝丢历史的 down 保护在专用 PostgreSQL 16 容器通过；DAO 数据库集成 18/18，其中新增两项覆盖回执未知/成功/回滚、冻结、重复请求、两次签名历史、最终语义不一致及 outbox 恢复。Business API 非数据库测试 406 项通过、64 项跳过，类型检查与生产构建通过。0043 未应用体验库，专用容器未连接现有数据库或链。
+- 2026-09-07 已签名/重组恢复增量：0043 全量 up migration、旧签名回填和拒绝丢历史的 down 保护在专用 PostgreSQL 16 容器通过；DAO 数据库集成 18/18，其中新增两项覆盖回执未知/成功/回滚、冻结、重复请求、两次签名历史、最终语义不一致及 outbox 恢复。Marketplace API 非数据库测试 406 项通过、64 项跳过，类型检查与生产构建通过。0043 未应用体验库，专用容器未连接现有数据库或链。
 - 2026-09-07 奖励游标恢复增量：真实 PostgreSQL 奖励集成 6/6，覆盖完整语义重现后解冻、共享审计、重复请求拒绝，以及金额分叉时事务回滚并继续禁止展示；奖励链、运行时和 HTTP 10 项通过，类型检查与 diff 检查通过。没有连接体验库、加载付款签名器或广播交易。
-- 2026-09-07 证据回滚重签增量：RPC 核验 4/4、真实 PostgreSQL DAO 集成 19/19、前端证据/API/钱包相关 64/64 通过；多哈希只有全部规范回滚才显示重签，pending、孤块、错误 calldata 和截止案件均不开放。最终 Business API 411 项通过、67 项因未配置集成环境跳过；Web 325 项通过、1 项真实模型预览跳过；两端类型检查与生产构建通过。没有连接体验库或广播交易。
+- 2026-09-07 证据回滚重签增量：RPC 核验 4/4、真实 PostgreSQL DAO 集成 19/19、前端证据/API/钱包相关 64/64 通过；多哈希只有全部规范回滚才显示重签，pending、孤块、错误 calldata 和截止案件均不开放。最终 Marketplace API 411 项通过、67 项因未配置集成环境跳过；Web 325 项通过、1 项真实模型预览跳过；两端类型检查与生产构建通过。没有连接体验库或广播交易。
 - 2026-09-08 Sepolia 启用：新 DAO、Escrow、案件与奖励合约已经部署；VRF subscription 已创建、充值并注册 consumer；8 个创始钱包各质押 100 YD 并同步入库。当前用户 8 笔创世奖励共 90 YD 已付款，首次 5 YD 有独立链上回执。服务通过 Sepolia 专用加密 keystore signer 和启动器运行，不依赖 AWS。
 - 2026-09-09 有期限恢复增量：终审至少三票改为有效比例中位数，偶数票取中间两票向下平均；参与不足进入恢复窗口，全案硬期限覆盖候选不足和 VRF 长期故障，恢复截止后任何人可执行部署时公开的兜底比例。体验库已应用 0046；新版 Escrow、案件合约、角色、条款和 VRF consumer 已逐笔确认，260 YD 旧奖励池被复用且未重复充值。本机服务已切换新部署，Browser 可读取 DAO 页面。
 - 2026-09-09 新版中位数真实闭环：任务 `1e934cba-8f25-4ce3-9ceb-083384ad2216` 托管 5 USDC；争议 `fd60aaff-91e0-47c4-a56f-287356cc451f` 两次真实 VRF 分案成功，终审五票中位数为 50%。`WorkflowSettled` 交易 `0x72d7b49e6b66529e621145876792dd554a35566cbcca8656dca437ca4f706f0b` 确认后，Escrow 为 Released、累计释放 2.5 USDC，发布者退款 2.5 USDC。

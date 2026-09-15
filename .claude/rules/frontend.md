@@ -25,7 +25,7 @@ globs: web/**
 
 ## 路由与组件模型
 
-4. 使用 Next.js 16 App Router；HTTP 入口使用 Route Handlers。
+4. `apps/web` 使用 Next.js 16 App Router；仅属于前端应用自身的 HTTP 入口使用 Route Handlers。用户面 Business API 位于 `apps/server`，统一使用 Hono 路由，不能再建立 Next.js API-only 后端。
 5. 页面默认使用 Server Component，只有确有交互状态或浏览器 API 需求时才标记 `"use client"`。
 6. 外部输入（表单、query、Route Handler 请求体）在边界用 Zod 校验，不得信任未校验的客户端数据进入业务逻辑或直接渲染。
 

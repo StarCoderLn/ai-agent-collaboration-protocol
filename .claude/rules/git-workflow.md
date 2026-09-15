@@ -41,6 +41,6 @@ description: 项目 Git 提交、分支与提交前验证规范
 
 ## TypeScript / Next.js 提交前检查
 
-- `services/business-api`：执行 `pnpm test`、`pnpm typecheck`、`pnpm build`。
+- `web/apps/server`：执行 `pnpm test`、`pnpm typecheck`、`pnpm build`。
 - `web`：使用 Node.js 22+ 执行 `pnpm test`、`pnpm check-types`、`pnpm exec biome check .`、`pnpm build`。
 - PostgreSQL、AWS Lambda/KMS 和 Ethereum 的真实环境验证尚未落地时，提交说明必须列出未验证项，不得用本地 mock 结果代替。

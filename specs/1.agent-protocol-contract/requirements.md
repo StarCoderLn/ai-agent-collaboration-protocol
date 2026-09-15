@@ -7,7 +7,7 @@
 ## 项目信息
 
 - 项目名: ai-agent-collaboration-protocol
-- 架构类型: 多服务架构（Go 分发引擎 + Next.js/AWS Lambda 交易服务 + PostgreSQL + AWS SQS/SNS + Ethereum 合约）
+- 架构类型: 多服务架构（Go 分发引擎 + Hono/AWS Lambda 业务服务 + Next.js 前端 + PostgreSQL + AWS SQS/SNS + Ethereum 合约）
 
 ## 需求版本
 

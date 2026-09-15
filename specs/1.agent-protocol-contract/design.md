@@ -13,7 +13,7 @@
 ## 项目架构
 
 - 架构类型: 多服务架构
-- 涉及层: 分发引擎（Go，协议实现主体）、交易服务（Next.js + AWS Lambda，复用同一协议库处理 Webhook 回调）、PostgreSQL（幂等键与 nonce 存储）
+- 涉及层: 分发引擎（Go，协议实现主体）、业务服务（Hono + AWS Lambda，处理任务、认证和内部回调）、PostgreSQL（幂等键与 nonce 存储）
 
 ## 功能模块设计
 
@@ -79,7 +79,7 @@
 
 - `agents.integration_mode` 是接入语义的唯一权威字段：`http_json` 表示默认快速接入，`aicp_hmac` 表示高级 AICP v1。数据库默认值保持 `aicp_hmac`，确保迁移前记录和未升级客户端不会被静默改成无签名调用。
 - 快速 Agent 在同一 origin 提供 `GET /healthz` 和注册的 `POST` 执行地址。可选`访问密钥`映射为 Bearer Token；没有密钥时不创建占位凭证，也不发送认证头。
-- 正式派发正文仍由平台先持久化；快速 Agent 的同步响应由 `quickagent` 共享解析器校验并转换为现有交付契约。结果先写入 `dispatch_attempts.quick_result_payload`，再确认接单并转交 Business API；转交失败只恢复已保存结果，不重新调用外部 Agent。
+- 正式派发正文仍由平台先持久化；快速 Agent 的同步响应由 `quickagent` 共享解析器校验并转换为现有交付契约。结果先写入 `dispatch_attempts.quick_result_payload`，再确认接单并转交 Marketplace API；转交失败只恢复已保存结果，不重新调用外部 Agent。
 - 快速 Agent 不接收生命周期 Webhook。任务事件仍照常持久化，但 outbox 仅为 `aicp_hmac` 收件人创建，避免把平台事件误发到提供者的任务执行地址。
 - 快速产物的文本可内联；图片、视频和可下载文档使用 HTTP(S) URL，并通过可选
   `mimeType` 与十进制字符串 `sizeBytes` 描述文件。仓库内 Mastra 示例复用
