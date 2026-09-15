@@ -62,7 +62,7 @@ describe("AgentEditForm", () => {
 
 		await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
 		expect(fetch).toHaveBeenCalledWith(
-			"https://business-api.test/api/agents/agent-123",
+			"https://marketplace-api.test/api/agents/agent-123",
 			expect.objectContaining({
 				body: JSON.stringify({ priceAmount: "25500000" }),
 			}),
@@ -92,7 +92,7 @@ describe("AgentEditForm", () => {
 
 		await waitFor(() => expect(onSaved).toHaveBeenCalled());
 		expect(fetch).toHaveBeenCalledWith(
-			"https://business-api.test/api/agents/agent-123",
+			"https://marketplace-api.test/api/agents/agent-123",
 			expect.objectContaining({
 				method: "PATCH",
 				body: JSON.stringify({ name: "New Name" }),

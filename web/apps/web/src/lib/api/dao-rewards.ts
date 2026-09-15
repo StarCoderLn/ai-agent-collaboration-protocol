@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
-import { BUSINESS_API_BASE_URL } from "./base-url";
+import { MARKETPLACE_API_BASE_URL } from "./base-url";
 
 const address = z
 	.string()
@@ -66,7 +66,7 @@ export async function getDaoRewards(
 	page = 1,
 ): Promise<DaoRewards> {
 	const response = await fetch(
-		`${BUSINESS_API_BASE_URL}/dao/rewards?page=${page}`,
+		`${MARKETPLACE_API_BASE_URL}/dao/rewards?page=${page}`,
 		{ credentials: "include", cache: "no-store", signal },
 	);
 	if (response.status === 401) notifyAuthSessionExpired();
@@ -76,7 +76,7 @@ export async function getDaoRewards(
 
 /** 确认已读只更新站内记录，不签名、不发起钱包交易；通知计数在成功后再刷新。 */
 export async function markDaoRewardsRead(ids: readonly string[]) {
-	const response = await fetch(`${BUSINESS_API_BASE_URL}/dao/rewards`, {
+	const response = await fetch(`${MARKETPLACE_API_BASE_URL}/dao/rewards`, {
 		method: "PATCH",
 		credentials: "include",
 		headers: { "content-type": "application/json" },

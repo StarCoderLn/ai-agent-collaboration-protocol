@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -18,6 +19,8 @@ import (
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/executionproxy"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/httpapi"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matching"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matchingfeedback"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matchingv2"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/protocol"
 	queueadapter "github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/queue"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/sandboxadmission"
@@ -25,6 +28,7 @@ import (
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/store"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/tasktransition"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/temporaladmission"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/temporaltraining"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/webhook"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -55,7 +59,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	businessAPIURL, err := requiredEnv("BUSINESS_API_URL")
+	marketplaceAPIURL, err := requiredEnv("MARKETPLACE_API_URL")
 	if err != nil {
 		return err
 	}
@@ -114,6 +118,55 @@ func run(ctx context.Context) error {
 			Store: &semanticmatching.PostgresStore{Pool: pool}, Config: semanticConfig,
 		}
 	}
+	matchingV2Mode, err := matchingV2ModeFromEnvironment(matcher.Semantic != nil)
+	if err != nil {
+		return err
+	}
+	var matchingV2Worker *matchingv2.Worker
+	if matchingV2Mode == "shadow" {
+		modelURL, modelURLErr := requiredEnv("MATCHING_V2_MODEL_URL")
+		if modelURLErr != nil {
+			return modelURLErr
+		}
+		modelVersion, modelVersionErr := requiredEnv("MATCHING_V2_MODEL_VERSION")
+		if modelVersionErr != nil {
+			return modelVersionErr
+		}
+		scorer := &matchingv2.HTTPScorer{BaseURL: modelURL, Client: &http.Client{Timeout: 10 * time.Second}}
+		if healthErr := scorer.CheckHealth(ctx, modelVersion); healthErr != nil {
+			return errors.New("matching V2 model is unavailable or has a different version")
+		}
+		if promoteErr := (&store.MatchingTrainingRepository{Pool: pool}).PromoteShadowModel(ctx, modelVersion, time.Now().UTC()); promoteErr != nil {
+			return promoteErr
+		}
+		matchingV2Worker = &matchingv2.Worker{
+			Repository: &store.MatchingV2Repository{Pool: pool}, Scorer: scorer,
+			Lease: 30 * time.Second,
+		}
+	}
+	if matchingV2Mode == "online" {
+		modelURL, modelURLErr := requiredEnv("MATCHING_V2_MODEL_URL")
+		if modelURLErr != nil {
+			return modelURLErr
+		}
+		modelVersion, modelVersionErr := requiredEnv("MATCHING_V2_MODEL_VERSION")
+		if modelVersionErr != nil {
+			return modelVersionErr
+		}
+		// HTTP /health 只能证明某个制品正在运行，不能证明它获准接管真实流量。先从
+		// PostgreSQL 注册表校验 active + real + 特征版本，再核对进程实际加载版本；
+		// synthetic/shadow 制品即使服务完全健康，也不能进入正式 Top-3。
+		modelRegistry := &store.MatchingTrainingRepository{Pool: pool}
+		if releaseErr := modelRegistry.RequireActiveRealModel(ctx, modelVersion, matchingv2.FeatureSchemaVersion); releaseErr != nil {
+			return errors.New("matching V2 online model is not an approved active real-data release")
+		}
+		scorer := &matchingv2.HTTPScorer{BaseURL: modelURL, Client: &http.Client{Timeout: 10 * time.Second}}
+		if healthErr := scorer.CheckHealth(ctx, modelVersion); healthErr != nil {
+			return errors.New("matching V2 online model is unavailable or has a different version")
+		}
+		matcher.Ranker = &matchingv2.OnlineRanker{Scorer: scorer, Version: modelVersion}
+		matcher.RequireV2 = true
+	}
 	assignmentRepository := &store.AssignmentRepository{Pool: pool}
 	dispatcher := &dispatch.Service{Repository: assignmentRepository, Queue: transport.queue}
 	initialMatchCoordinator := &matching.InitialMatchCoordinator{Matcher: matcher, Dispatcher: dispatcher}
@@ -122,7 +175,7 @@ func run(ctx context.Context) error {
 	transitionWorker := &tasktransition.Worker{
 		Repository: &store.TaskTransitionRepository{Pool: pool},
 		Sender: &tasktransition.HTTPSender{
-			BaseURL: businessAPIURL,
+			BaseURL: marketplaceAPIURL,
 			Token:   internalToken,
 			Client:  &http.Client{Timeout: 10 * time.Second},
 		},
@@ -131,14 +184,14 @@ func run(ctx context.Context) error {
 	workflowTransitionWorker := &tasktransition.Worker{
 		Repository: &store.WorkflowNodeTransitionRepository{Pool: pool},
 		Sender: &tasktransition.HTTPSender{
-			BaseURL: businessAPIURL,
+			BaseURL: marketplaceAPIURL,
 			Token:   internalToken,
 			Client:  &http.Client{Timeout: 10 * time.Second},
 		},
 		Lease: 30 * time.Second,
 	}
 	executionClient := &executionproxy.Client{
-		BaseURL: businessAPIURL, Token: internalToken, HTTP: &http.Client{Timeout: 30 * time.Second},
+		BaseURL: marketplaceAPIURL, Token: internalToken, HTTP: &http.Client{Timeout: 30 * time.Second},
 	}
 	deliveryConsumer := &delivery.Consumer{
 		Source: transport.source,
@@ -183,10 +236,15 @@ func run(ctx context.Context) error {
 		Lifecycle: &store.AgentLifecycleRepository{Pool: pool},
 		Lease:     15 * time.Minute,
 	}
+	matchingTrainingEnabled, err := booleanEnvOrDefault("MATCHING_V2_TRAINING_ENABLED", false)
+	if err != nil {
+		return err
+	}
 	var temporalClient temporalclient.Client
-	var temporalWorker temporalworker.Worker
+	var admissionTemporalWorker temporalworker.Worker
+	var trainingTemporalWorker temporalworker.Worker
 	var temporalStarter *temporaladmission.Starter
-	if admissionEngine == "temporal" {
+	if admissionEngine == "temporal" || matchingTrainingEnabled {
 		temporalClient, err = temporalclient.Dial(temporalclient.Options{
 			HostPort:  envOrDefault("TEMPORAL_ADDRESS", temporalclient.DefaultHostPort),
 			Namespace: envOrDefault("TEMPORAL_NAMESPACE", temporalclient.DefaultNamespace),
@@ -195,23 +253,58 @@ func run(ctx context.Context) error {
 			return errors.New("temporal is unavailable")
 		}
 		defer temporalClient.Close()
+	}
+	if admissionEngine == "temporal" {
 		taskQueue := envOrDefault("TEMPORAL_ADMISSION_TASK_QUEUE", temporaladmission.DefaultTaskQueue)
-		temporalWorker = temporalworker.New(temporalClient, taskQueue, temporalworker.Options{})
-		temporalWorker.RegisterWorkflowWithOptions(temporaladmission.AdmissionWorkflow, temporalworkflow.RegisterOptions{Name: temporaladmission.WorkflowName})
+		admissionTemporalWorker = temporalworker.New(temporalClient, taskQueue, temporalworker.Options{})
+		admissionTemporalWorker.RegisterWorkflowWithOptions(temporaladmission.AdmissionWorkflow, temporalworkflow.RegisterOptions{Name: temporaladmission.WorkflowName})
 		activities := &temporaladmission.Activities{
 			Repository: automaticAdmissionRepository, Sandbox: automaticAdmissionWorker.Sandbox,
 			Evaluator: automaticAdmissionWorker, Lifecycle: automaticAdmissionWorker.Lifecycle,
 		}
-		temporalWorker.RegisterActivityWithOptions(activities.RunSandbox, activity.RegisterOptions{Name: temporaladmission.RunSandboxActivityName})
-		temporalWorker.RegisterActivityWithOptions(activities.Evaluate, activity.RegisterOptions{Name: temporaladmission.EvaluateActivityName})
-		temporalWorker.RegisterActivityWithOptions(activities.ApplyDecision, activity.RegisterOptions{Name: temporaladmission.ApplyDecisionActivityName})
-		temporalWorker.RegisterActivityWithOptions(activities.ReleaseRound, activity.RegisterOptions{Name: temporaladmission.ReleaseRoundActivityName})
-		if err = temporalWorker.Start(); err != nil {
+		admissionTemporalWorker.RegisterActivityWithOptions(activities.RunSandbox, activity.RegisterOptions{Name: temporaladmission.RunSandboxActivityName})
+		admissionTemporalWorker.RegisterActivityWithOptions(activities.Evaluate, activity.RegisterOptions{Name: temporaladmission.EvaluateActivityName})
+		admissionTemporalWorker.RegisterActivityWithOptions(activities.ApplyDecision, activity.RegisterOptions{Name: temporaladmission.ApplyDecisionActivityName})
+		admissionTemporalWorker.RegisterActivityWithOptions(activities.ReleaseRound, activity.RegisterOptions{Name: temporaladmission.ReleaseRoundActivityName})
+		if err = admissionTemporalWorker.Start(); err != nil {
 			return err
 		}
-		defer temporalWorker.Stop()
+		defer admissionTemporalWorker.Stop()
 		temporalStarter = &temporaladmission.Starter{
 			Repository: automaticAdmissionRepository, Client: temporalClient, TaskQueue: taskQueue,
+		}
+	}
+	if matchingTrainingEnabled {
+		serviceDir, pathErr := requiredEnv("MATCHING_V2_SERVICE_DIR")
+		if pathErr != nil {
+			return pathErr
+		}
+		workDir, pathErr := requiredEnv("MATCHING_V2_TRAINING_WORK_DIR")
+		if pathErr != nil {
+			return pathErr
+		}
+		artifactDir, pathErr := requiredEnv("MATCHING_V2_ARTIFACT_DIR")
+		if pathErr != nil {
+			return pathErr
+		}
+		taskQueue := envOrDefault("MATCHING_V2_TRAINING_TASK_QUEUE", temporaltraining.DefaultTaskQueue)
+		trainingRepository := &store.MatchingTrainingRepository{Pool: pool}
+		trainingActivities := &temporaltraining.Activities{
+			Repository: trainingRepository, WorkDir: workDir,
+			Trainer: temporaltraining.CommandTrainer{ServiceDir: serviceDir, ArtifactDir: artifactDir},
+		}
+		trainingTemporalWorker = temporalworker.New(temporalClient, taskQueue, temporalworker.Options{})
+		trainingTemporalWorker.RegisterWorkflowWithOptions(temporaltraining.TrainingWorkflow, temporalworkflow.RegisterOptions{Name: temporaltraining.WorkflowName})
+		trainingTemporalWorker.RegisterActivityWithOptions(trainingActivities.PrepareDataset, activity.RegisterOptions{Name: temporaltraining.PrepareActivityName})
+		trainingTemporalWorker.RegisterActivityWithOptions(trainingActivities.TrainModel, activity.RegisterOptions{Name: temporaltraining.TrainActivityName})
+		trainingTemporalWorker.RegisterActivityWithOptions(trainingActivities.RegisterModel, activity.RegisterOptions{Name: temporaltraining.RegisterActivityName})
+		trainingTemporalWorker.RegisterActivityWithOptions(trainingActivities.FailTraining, activity.RegisterOptions{Name: temporaltraining.FailActivityName})
+		if err = trainingTemporalWorker.Start(); err != nil {
+			return err
+		}
+		defer trainingTemporalWorker.Stop()
+		if err = temporaltraining.EnsureNightlySchedule(ctx, temporalClient.ScheduleClient(), taskQueue, 90); err != nil {
+			return err
 		}
 	}
 	verifier := &protocol.Verifier{
@@ -220,7 +313,9 @@ func run(ctx context.Context) error {
 	}
 	api := &httpapi.Server{
 		InternalToken: internalToken, Matcher: matcher, Dispatcher: dispatcher,
-		AssignmentReader: assignmentRepository, AgentLifecycle: &store.AgentLifecycleRepository{Pool: pool}, Verifier: verifier,
+		AssignmentReader: assignmentRepository,
+		MatchingFeedback: &matchingfeedback.Service{Repository: &store.MatchingFeedbackRepository{Pool: pool}},
+		AgentLifecycle:   &store.AgentLifecycleRepository{Pool: pool}, Verifier: verifier,
 		ExecutionProxy: executionClient, AdmissionRetry: automaticAdmissionRepository,
 	}
 	address := envOrDefault("DISPATCH_HTTP_ADDRESS", "127.0.0.1:3200")
@@ -255,6 +350,25 @@ func run(ctx context.Context) error {
 						log.Printf("agent score snapshot scan failed")
 					}
 				}
+			}
+		}
+	}()
+
+	// 评分、结算和仲裁事件会在原业务事务内合并为 Agent 刷新请求。短周期 worker 仅处理
+	// 这些受影响的 Agent；上面的周期扫描继续校准时间衰减并恢复任何遗漏请求。
+	scoreRefreshDone := make(chan struct{})
+	go func() {
+		defer close(scoreRefreshDone)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			if refreshErr := executionClient.RunScoreRefresh(ctx, 100); refreshErr != nil && !errors.Is(refreshErr, context.Canceled) {
+				log.Printf("agent score event refresh failed")
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
 			}
 		}
 	}()
@@ -381,7 +495,7 @@ func run(ctx context.Context) error {
 		close(admissionDone)
 	}
 
-	// Escrow 确认后 Business API 只推进权威任务状态；首轮候选由本 worker 持久化生成。
+	// Escrow 确认后 Marketplace API 只推进权威任务状态；首轮候选由本 worker 持久化生成。
 	// 失败不会丢任务：没有候选记录的 matching 任务会在下一秒再次被扫描。
 	initialMatchingDone := make(chan struct{})
 	go func() {
@@ -405,6 +519,29 @@ func run(ctx context.Context) error {
 		}
 	}()
 
+	// V2 独立消费私有召回池。没有影子模型时仓储不会领取任务；模型不可用时只记录
+	// 有上限的重试证据，不阻塞上面的 V0/V1 正式匹配和派发 worker。
+	matchingV2Done := make(chan struct{})
+	if matchingV2Worker != nil {
+		go func() {
+			defer close(matchingV2Done)
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				if _, shadowErr := matchingV2Worker.RunOnce(ctx); shadowErr != nil && !errors.Is(shadowErr, context.Canceled) {
+					log.Printf("matching V2 shadow worker had a recoverable failure")
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	} else {
+		close(matchingV2Done)
+	}
+
 	serverError := make(chan error, 1)
 	go func() {
 		log.Printf("dispatch engine listening on %s", address)
@@ -418,12 +555,14 @@ func run(ctx context.Context) error {
 			return err
 		}
 		<-scannerDone
+		<-scoreRefreshDone
 		<-transitionDone
 		<-deliveryDone
 		<-webhookDone
 		<-healthDone
 		<-admissionDone
 		<-initialMatchingDone
+		<-matchingV2Done
 		return nil
 	case err = <-serverError:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -464,7 +603,11 @@ func createTransport() (dispatchTransport, error) {
 		if err != nil {
 			return dispatchTransport{}, err
 		}
-		awsSession, err := session.NewSession(&aws.Config{Region: aws.String(region)})
+		awsConfig, err := awsConfigFromEnvironment(region)
+		if err != nil {
+			return dispatchTransport{}, err
+		}
+		awsSession, err := session.NewSession(awsConfig)
 		if err != nil {
 			return dispatchTransport{}, err
 		}
@@ -477,6 +620,23 @@ func createTransport() (dispatchTransport, error) {
 	default:
 		return dispatchTransport{}, errors.New("DISPATCH_QUEUE_MODE must be local or sqs")
 	}
+}
+
+// awsConfigFromEnvironment 是 Dispatch Engine 连接 AWS 兼容服务的唯一入口。
+// 生产不设 AWS_ENDPOINT_URL，SDK 按 region 访问真实 AWS；LocalStack 模式显式
+// 注入本机 endpoint，SQS 与 KMS 仍复用同一组领域适配器和失败语义。
+func awsConfigFromEnvironment(region string) (*aws.Config, error) {
+	config := &aws.Config{Region: aws.String(region)}
+	endpoint := strings.TrimSpace(os.Getenv("AWS_ENDPOINT_URL"))
+	if endpoint == "" {
+		return config, nil
+	}
+	parsed, err := url.ParseRequestURI(endpoint)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, errors.New("AWS_ENDPOINT_URL must be an absolute http or https URL")
+	}
+	config.Endpoint = aws.String(strings.TrimRight(endpoint, "/"))
+	return config, nil
 }
 
 func requiredEnv(name string) (string, error) {
@@ -517,4 +677,32 @@ func admissionEngineFromEnvironment(enabled bool) (string, error) {
 		return "", errors.New("AGENT_ADMISSION_ENGINE must be postgres or temporal")
 	}
 	return engine, nil
+}
+
+// matchingV2ModeFromEnvironment 把两个布尔开关收敛为一个互斥运行模式。
+// shadow 只记录对照结果，允许 synthetic 制品做工程验收；online 会改变真实
+// Top-3，因此必须同时启用 pgvector 语义召回，并在启动分支内通过 active + real
+// 数据库发布门禁。这里先拒绝双开，避免同一进程既写影子结果又接管正式流量。
+func matchingV2ModeFromEnvironment(semanticEnabled bool) (string, error) {
+	shadowEnabled, err := booleanEnvOrDefault("MATCHING_V2_SHADOW_ENABLED", false)
+	if err != nil {
+		return "", err
+	}
+	onlineEnabled, err := booleanEnvOrDefault("MATCHING_V2_ONLINE_ENABLED", false)
+	if err != nil {
+		return "", err
+	}
+	if shadowEnabled && onlineEnabled {
+		return "", errors.New("matching V2 shadow and online modes cannot be enabled together")
+	}
+	if onlineEnabled && !semanticEnabled {
+		return "", errors.New("matching V2 online mode requires semantic retrieval")
+	}
+	if onlineEnabled {
+		return "online", nil
+	}
+	if shadowEnabled {
+		return "shadow", nil
+	}
+	return "disabled", nil
 }

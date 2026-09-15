@@ -12,6 +12,7 @@ import {
 	confirmWorkflowNodeCandidate,
 	type FormalWorkflow,
 	getWorkflowNodeAcceptancePreview,
+	recordWorkflowNodeCandidateExposure,
 	rematchWorkflowNodeCandidates,
 	retryFailedWorkflowNodeExecution,
 	suggestTaskTags,
@@ -79,6 +80,7 @@ vi.mock("@/lib/api/tasks", async (importOriginal) => {
 				},
 			}),
 		),
+		recordWorkflowNodeCandidateExposure: vi.fn(async () => undefined),
 	};
 });
 
@@ -93,7 +95,85 @@ async function successfulSelectionAction() {
 }
 
 describe("FormalWorkflowView", () => {
-	afterEach(cleanup);
+	afterEach(() => {
+		cleanup();
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it("候选持续可见一秒后只上报实际展示位置", async () => {
+		vi.useFakeTimers();
+		let observerCallback: IntersectionObserverCallback | undefined;
+		class IntersectionObserverFake {
+			constructor(callback: IntersectionObserverCallback) {
+				observerCallback = callback;
+			}
+			observe() {}
+			disconnect() {}
+			unobserve() {}
+			takeRecords() {
+				return [];
+			}
+			root = null;
+			rootMargin = "0px";
+			thresholds = [0.5];
+		}
+		vi.stubGlobal("IntersectionObserver", IntersectionObserverFake);
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflowFixture()}
+				viewMode="allocation"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+		const candidate = document.querySelector<HTMLElement>(
+			"[data-matching-agent-id][data-matching-position]",
+		);
+		if (candidate === null || observerCallback === undefined) {
+			throw new Error("测试工作流必须渲染可观察的候选卡片");
+		}
+		act(() => {
+			observerCallback?.(
+				[
+					{
+						target: candidate,
+						isIntersecting: true,
+						intersectionRatio: 0.49,
+					} as unknown as IntersectionObserverEntry,
+				],
+				{} as IntersectionObserver,
+			);
+			vi.advanceTimersByTime(1_000);
+		});
+		expect(recordWorkflowNodeCandidateExposure).not.toHaveBeenCalled();
+		act(() => {
+			observerCallback?.(
+				[
+					{
+						target: candidate,
+						isIntersecting: true,
+						intersectionRatio: 0.6,
+					} as unknown as IntersectionObserverEntry,
+				],
+				{} as IntersectionObserver,
+			);
+			vi.advanceTimersByTime(1_000);
+		});
+		await act(async () => Promise.resolve());
+		expect(recordWorkflowNodeCandidateExposure).toHaveBeenCalledTimes(1);
+		expect(recordWorkflowNodeCandidateExposure).toHaveBeenCalledWith(
+			taskId,
+			expect.any(String),
+			expect.objectContaining({
+				agentId: candidate.dataset.matchingAgentId,
+				position: Number(candidate.dataset.matchingPosition),
+				visibleMillis: 1_000,
+			}),
+		);
+	});
 
 	it("按持久化 DAG 展示所有阶段，并展示托管前候选证据与冻结报价", () => {
 		render(

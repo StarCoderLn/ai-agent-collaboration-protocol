@@ -11,6 +11,8 @@
 			"**",
 			"!**/.next",
 			"!**/dist",
+			"!**/.dist",
+			"!**/cdk.out",
 			"!**/.turbo",
 			"!**/.nx",
 			"!**/dev-dist",
@@ -69,6 +71,18 @@
 			"quoteStyle": "double"
 		}
 	},
+	"overrides": [
+		{
+			"includes": ["apps/server/src/routes/**"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noAssignInExpressions": "off"
+					}
+				}
+			}
+		}
+	],
 	"css": {
 		"parser": {
 			"tailwindDirectives": true

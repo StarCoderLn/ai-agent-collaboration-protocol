@@ -6,7 +6,7 @@ import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import pg from "../services/business-api/node_modules/pg/lib/index.js";
+import pg from "../web/apps/server/node_modules/pg/lib/index.js";
 import {
 	LOCAL_DATABASE_URL,
 	LOCAL_INTERNAL_TOKEN,
@@ -26,24 +26,20 @@ const NEXT_WEB = path.join(
 	ROOT,
 	"web/apps/web/node_modules/next/dist/bin/next",
 );
-const NEXT_BUSINESS = path.join(
-	ROOT,
-	"services/business-api/node_modules/next/dist/bin/next",
-);
 const DATABASE_URL = process.env.DATABASE_URL ?? LOCAL_DATABASE_URL;
 const INTERNAL_TOKEN =
 	process.env.DISPATCH_INTERNAL_TOKEN ?? LOCAL_INTERNAL_TOKEN;
 const PORTS = Object.freeze({
 	workflow: readPort("AICP_WORKFLOW_AGENT_PORT", 9202),
 	browser: readPort("AICP_BROWSER_AGENT_PORT", 9304),
-	business: readPort("AICP_BUSINESS_API_PORT", 3100),
+	marketplaceApi: readPort("AICP_MARKETPLACE_API_PORT", 3100),
 	dispatch: readPort("AICP_DISPATCH_PORT", 3200),
 	web: readPort("AICP_WEB_PORT", 3011),
 });
 const URLS = Object.freeze({
 	workflow: `http://127.0.0.1:${PORTS.workflow}`,
 	browser: `http://127.0.0.1:${PORTS.browser}`,
-	business: `http://127.0.0.1:${PORTS.business}`,
+	marketplaceApi: `http://127.0.0.1:${PORTS.marketplaceApi}`,
 	dispatch: `http://127.0.0.1:${PORTS.dispatch}`,
 	web: `http://127.0.0.1:${PORTS.web}`,
 });
@@ -188,27 +184,23 @@ async function main() {
 		// Web 单独关闭本地链模式，因此不会出现 Anvil 挖块或测试币交互。
 		AICP_LOCAL_DEMO_MODE: "true",
 	};
-	const business = start(
-		"Business API",
+	const marketplaceApi = start(
+		"Marketplace API",
 		NODE,
-		[
-			NEXT_BUSINESS,
-			"dev",
-			"--hostname",
-			"127.0.0.1",
-			"--port",
-			String(PORTS.business),
-		],
-		{ cwd: path.join(ROOT, "services/business-api"), env: chainEnvironment },
+		[TSX, "src/server.ts"],
+		{
+			cwd: path.join(ROOT, "web/apps/server"),
+			env: { ...chainEnvironment, HOST: "127.0.0.1", PORT: String(PORTS.marketplaceApi) },
+		},
 	);
-	await waitForService(business, "Business API", `${URLS.business}/api/health`);
+	await waitForService(marketplaceApi, "Marketplace API", `${URLS.marketplaceApi}/api/health`);
 
 	const dispatch = start("Dispatch Engine", "go", ["run", "./cmd/server"], {
 		cwd: path.join(ROOT, "services/dispatch-engine"),
 		env: {
 			DATABASE_URL,
 			DISPATCH_INTERNAL_TOKEN: INTERNAL_TOKEN,
-			BUSINESS_API_URL: URLS.business,
+			MARKETPLACE_API_URL: URLS.marketplaceApi,
 			DISPATCH_HTTP_ADDRESS: `127.0.0.1:${PORTS.dispatch}`,
 			DISPATCH_PUBLIC_URL: URLS.dispatch,
 			DISPATCH_QUEUE_MODE: "local",
@@ -247,7 +239,7 @@ async function main() {
 			env: {
 				AICP_NEXT_DIST_DIR: "dev-dist/sepolia-mvp",
 				NEXT_PUBLIC_SERVER_URL: URLS.web,
-				NEXT_PUBLIC_BUSINESS_API_URL: `${URLS.business}/api`,
+				NEXT_PUBLIC_MARKETPLACE_API_URL: `${URLS.marketplaceApi}/api`,
 				NEXT_PUBLIC_ETHEREUM_RPC_URL: environment.SEPOLIA_RPC_URL,
 				NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS:
 					environment.ESCROW_CONTRACT_ADDRESS,
@@ -315,10 +307,10 @@ async function validateDatabaseVersion() {
 			"SELECT version::text,dirty FROM business_service_schema_migrations",
 		);
 		const row = result.rows[0];
-		// Dispatch Engine 启动后会直接读取 0051 新增的语义证据列，因此旧版本不能再
-		// 作为可运行状态放行；链上合约是否支持恢复仍由独立只读检查决定。
-		if (row?.version !== "51" || row.dirty !== false) {
-			throw new Error("BUSINESS_DATABASE_MIGRATION_51_REQUIRED");
+		// 0053 保留 0052 的曝光事实，并增加正式 V2 模型版本审计字段。
+		// 旧版本不能以“V2 尚未切正式流量”为由放行，否则页面遥测会持续失败。
+		if (row?.version !== "53" || row.dirty !== false) {
+			throw new Error("BUSINESS_DATABASE_MIGRATION_52_REQUIRED");
 		}
 	} finally {
 		await pool.end();
@@ -395,7 +387,7 @@ async function runChainWorkers() {
 	while (!shuttingDown) {
 		for (const pathname of paths) {
 			try {
-				const response = await fetch(`${URLS.business}${pathname}`, {
+				const response = await fetch(`${URLS.marketplaceApi}${pathname}`, {
 					method: "POST",
 					headers: {
 						authorization: `Bearer ${INTERNAL_TOKEN}`,

@@ -54,7 +54,7 @@ describe("Agent directory API client", () => {
 		expect(page.agents[0]?.successRate).toBe(0.94);
 		expect(page.total).toBe(1);
 		expect(fetch).toHaveBeenCalledWith(
-			"https://business-api.test/api/market/agents?limit=9&offset=0",
+			"https://marketplace-api.test/api/market/agents?limit=9&offset=0",
 			expect.objectContaining({
 				headers: expect.objectContaining({ accept: "application/json" }),
 			}),
@@ -149,7 +149,7 @@ describe("Agent directory API client", () => {
 			sampleSize: 12,
 		});
 		expect(fetch).toHaveBeenCalledWith(
-			`https://business-api.test/api/agents/${agentId}/score`,
+			`https://marketplace-api.test/api/agents/${agentId}/score`,
 			expect.objectContaining({ signal: undefined }),
 		);
 	});
@@ -167,7 +167,7 @@ describe("Agent directory API client", () => {
 		await transitionOwnedAgent(agentId, "pause", "idem-agent-pause-1");
 
 		expect(fetch).toHaveBeenCalledWith(
-			`https://business-api.test/api/agents/${agentId}/pause`,
+			`https://marketplace-api.test/api/agents/${agentId}/pause`,
 			expect.objectContaining({
 				method: "POST",
 				credentials: "include",
@@ -239,7 +239,7 @@ describe("Agent directory API client", () => {
 		await retryAgentAdmission(agentId, "retry-admission-1");
 
 		expect(fetch).toHaveBeenCalledWith(
-			`https://business-api.test/api/agents/${agentId}/admission/retry`,
+			`https://marketplace-api.test/api/agents/${agentId}/admission/retry`,
 			expect.objectContaining({
 				method: "POST",
 				credentials: "include",

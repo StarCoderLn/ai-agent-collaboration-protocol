@@ -1,5 +1,5 @@
 /**
- * 浏览器端即时反馈规则，数值必须与 Business API 的可信边界保持一致。服务端仍会
+ * 浏览器端即时反馈规则，数值必须与 Marketplace API 的可信边界保持一致。服务端仍会
  * 重新校验，前端版本只用于让用户在输入时立刻知道原因，而不是承担安全职责。
  */
 export const MAX_MATCHING_TAG_COUNT = 10;

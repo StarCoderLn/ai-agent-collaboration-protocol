@@ -26,6 +26,7 @@ import {
 	listOwnedTasks,
 	listTaskResults,
 	listWorkflowFeedback,
+	recordTaskCandidateExposure,
 	rematchTaskCandidates,
 	requestWorkflowNodeRework,
 	retryFailedWorkflowNodeExecution,
@@ -85,6 +86,7 @@ vi.mock("@/lib/api/tasks", async (importOriginal) => {
 		getTaskDispute: vi.fn(),
 		listTaskResults: vi.fn(),
 		listWorkflowFeedback: vi.fn(),
+		recordTaskCandidateExposure: vi.fn(async () => undefined),
 		getTaskAcceptancePreview: vi.fn(),
 		acceptTaskResult: vi.fn(),
 		archiveTask: vi.fn(),
@@ -326,6 +328,8 @@ describe("formal task detail", () => {
 	afterEach(() => {
 		cleanup();
 		vi.clearAllMocks();
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
 	});
 
 	it("钱包会话恢复完成前保持加载态且不请求受保护任务", async () => {
@@ -1133,6 +1137,57 @@ describe("formal task detail", () => {
 		expect(getTaskExecutionStatus).toHaveBeenCalledWith(
 			taskId,
 			expect.any(AbortSignal),
+		);
+	});
+
+	it("普通任务候选持续可见一秒后会上报真实曝光", async () => {
+		await setTaskStatus("matching");
+		let observerCallback: IntersectionObserverCallback | undefined;
+		class IntersectionObserverFake {
+			constructor(callback: IntersectionObserverCallback) {
+				observerCallback = callback;
+			}
+			observe() {}
+			disconnect() {}
+			unobserve() {}
+			takeRecords() {
+				return [];
+			}
+			root = null;
+			rootMargin = "0px";
+			thresholds = [0.5];
+		}
+		vi.stubGlobal("IntersectionObserver", IntersectionObserverFake);
+		render(<TaskExperienceDetail taskId={taskId} />);
+		await screen.findByText("选择最合适的 Agent");
+		const candidate = document.querySelector<HTMLElement>(
+			"[data-matching-agent-id][data-matching-position]",
+		);
+		if (candidate === null || observerCallback === undefined) {
+			throw new Error("普通任务测试必须渲染可观察的候选卡片");
+		}
+		vi.useFakeTimers();
+		act(() => {
+			observerCallback?.(
+				[
+					{
+						target: candidate,
+						isIntersecting: true,
+						intersectionRatio: 0.6,
+					} as unknown as IntersectionObserverEntry,
+				],
+				{} as IntersectionObserver,
+			);
+			vi.advanceTimersByTime(1_000);
+		});
+		await act(async () => Promise.resolve());
+		expect(recordTaskCandidateExposure).toHaveBeenCalledWith(
+			taskId,
+			expect.objectContaining({
+				agentId,
+				position: 1,
+				visibleMillis: 1_000,
+			}),
 		);
 	});
 

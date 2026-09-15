@@ -19,8 +19,10 @@ import (
 const (
 	DefaultModel      = "text-embedding-3-small"
 	DefaultDimensions = 1536
-	DefaultTopK       = 3
-	StrategyVersion   = "semantic-v1"
+	// DefaultTopK 是供 V2 重排的私有召回池。用户可见数量由 matching.DisplayTopK
+	// 独立限制，不能因为扩大模型候选空间而改变 V1 正式页面和自动派发行为。
+	DefaultTopK     = 30
+	StrategyVersion = "semantic-v1"
 )
 
 type ErrorKind string

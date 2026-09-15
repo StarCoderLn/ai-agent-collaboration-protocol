@@ -19,7 +19,6 @@ const NODE = process.execPath;
 const TSX = path.join(ROOT, "agents/product-workflow/node_modules/tsx/dist/cli.mjs");
 const SDK_TSC = path.join(ROOT, "agents/agent-sdk/node_modules/typescript/bin/tsc");
 const NEXT_WEB = path.join(ROOT, "web/apps/web/node_modules/next/dist/bin/next");
-const NEXT_BUSINESS = path.join(ROOT, "services/business-api/node_modules/next/dist/bin/next");
 const DATABASE_URL = process.env.DATABASE_URL ?? LOCAL_DATABASE_URL;
 const INTERNAL_TOKEN = process.env.DISPATCH_INTERNAL_TOKEN ?? LOCAL_INTERNAL_TOKEN;
 const LOCAL_CHAIN_DIRECTORY = path.join(ROOT, ".local/anvil");
@@ -31,7 +30,7 @@ const PORTS = Object.freeze({
   anvil: readPort("AICP_ANVIL_PORT", 8545),
   workflow: readPort("AICP_WORKFLOW_AGENT_PORT", 9202),
   browser: readPort("AICP_BROWSER_AGENT_PORT", 9304),
-  business: readPort("AICP_BUSINESS_API_PORT", 3100),
+  marketplaceApi: readPort("AICP_MARKETPLACE_API_PORT", 3100),
   dispatch: readPort("AICP_DISPATCH_PORT", 3200),
   web: readPort("AICP_WEB_PORT", 3001),
 });
@@ -39,7 +38,7 @@ const URLS = Object.freeze({
   anvil: `http://127.0.0.1:${PORTS.anvil}`,
   workflow: `http://127.0.0.1:${PORTS.workflow}`,
   browser: `http://127.0.0.1:${PORTS.browser}`,
-  business: `http://127.0.0.1:${PORTS.business}`,
+  marketplaceApi: `http://127.0.0.1:${PORTS.marketplaceApi}`,
   dispatch: `http://127.0.0.1:${PORTS.dispatch}`,
   web: `http://127.0.0.1:${PORTS.web}`,
 });
@@ -116,9 +115,9 @@ async function main() {
   const { deployment, mode } = await startPersistentLocalChain();
   const { escrowAddress, paymentTokenAddress, ydTokenAddress, arbitrationDaoAddress, daoMinimumStakeMinor } = deployment;
 
-  // Next.js 从 API 工程的 .env.local 读取本地奖励目录，启动器也读取相同开关以恢复调度。
+  // Hono API 工程的 .env.local 保存本地奖励目录，启动器也读取相同开关以恢复调度。
   // 不向其他服务散播文件中的凭据；显式进程变量优先，缺失文件代表未启用而非自动部署。
-  const apiLocalEnv = await readFile(path.join(ROOT, "services/business-api/.env.local"), "utf8")
+  const apiLocalEnv = await readFile(path.join(ROOT, "web/apps/server/.env.local"), "utf8")
     .catch((error) => { if (error.code === "ENOENT") return ""; throw error; });
   localRewardEnabled = isLocalRewardWorkerEnabled({ ...parseEnv(apiLocalEnv), ...process.env });
 
@@ -161,7 +160,7 @@ async function main() {
     },
   });
 
-	// 本地 MVP 是开发验收入口，Agent 源码变化后应与 Next.js 一样自动重载；否则页面
+	// 本地 MVP 是开发验收入口，Agent 源码变化后应与 Hono 一样自动重载；否则页面
 	// 会继续调用旧协议实现，造成“测试已通过但浏览器仍失败”的假象。
   const workflow = start("Product Workflow Agent", NODE, [TSX, "watch", "src/index.ts"], {
     cwd: path.join(ROOT, "agents/product-workflow"),
@@ -201,9 +200,11 @@ async function main() {
     { authorization: `Bearer ${agentSecret}` },
   ));
 
-  const business = start("Business API", NODE, [NEXT_BUSINESS, "dev", "--hostname", "127.0.0.1", "--port", String(PORTS.business)], {
-    cwd: path.join(ROOT, "services/business-api"),
+  const marketplaceApi = start("Marketplace API", NODE, [TSX, "watch", "src/server.ts"], {
+    cwd: path.join(ROOT, "web/apps/server"),
     env: {
+	  HOST: "127.0.0.1",
+	  PORT: String(PORTS.marketplaceApi),
       AICP_LOCAL_DEMO_MODE: "true",
       DATABASE_URL,
       SIWE_EXPECTED_DOMAIN: `127.0.0.1:${PORTS.web}`,
@@ -229,14 +230,14 @@ async function main() {
       ESCROW_OPERATOR_ADDRESS: ANVIL_ACCOUNT,
     },
   });
-  await waitForService(business, "Business API", () => probeJson(`${URLS.business}/api/health`, ServiceStatusSchema));
+  await waitForService(marketplaceApi, "Marketplace API", () => probeJson(`${URLS.marketplaceApi}/api/health`, ServiceStatusSchema));
 
   const dispatch = start("Dispatch Engine", "go", ["run", "./cmd/server"], {
     cwd: path.join(ROOT, "services/dispatch-engine"),
     env: {
       DATABASE_URL,
       DISPATCH_INTERNAL_TOKEN: INTERNAL_TOKEN,
-      BUSINESS_API_URL: URLS.business,
+      MARKETPLACE_API_URL: URLS.marketplaceApi,
       DISPATCH_HTTP_ADDRESS: `127.0.0.1:${PORTS.dispatch}`,
       DISPATCH_PUBLIC_URL: URLS.dispatch,
       DISPATCH_QUEUE_MODE: "local",
@@ -271,7 +272,7 @@ async function main() {
 	  // 与用户可能已运行的默认 `.next/dev` 隔离；目录已被 Web 工程 gitignore 覆盖。
 	  AICP_NEXT_DIST_DIR: "dev-dist/local-mvp",
       NEXT_PUBLIC_SERVER_URL: URLS.web,
-      NEXT_PUBLIC_BUSINESS_API_URL: `${URLS.business}/api`,
+      NEXT_PUBLIC_MARKETPLACE_API_URL: `${URLS.marketplaceApi}/api`,
       NEXT_PUBLIC_ETHEREUM_RPC_URL: URLS.anvil,
 	  // 交易详情只解析当前启动实例的已知合约日志；把公开地址显式传给 Web，避免
 	  // 仅凭事件签名把其他合约误标成平台资金或 DAO 操作。
@@ -282,7 +283,7 @@ async function main() {
       NEXT_PUBLIC_ARBITRATION_DAO_MINIMUM_STAKE_MINOR: daoMinimumStakeMinor,
       NEXT_PUBLIC_AICP_LOCAL_DEMO_MODE: "true",
       AICP_LOCAL_DEMO_MODE: "true",
-      LOCAL_DEMO_BUSINESS_API_URL: URLS.business,
+      LOCAL_DEMO_MARKETPLACE_API_URL: URLS.marketplaceApi,
       LOCAL_DEMO_ETHEREUM_RPC_URL: URLS.anvil,
       LOCAL_DEMO_MINE_BLOCKS: "2",
       DISPATCH_INTERNAL_TOKEN: INTERNAL_TOKEN,
@@ -668,7 +669,7 @@ async function advanceLocalSettlementOnce(runWorker, mineBlocks) {
 }
 
 async function runInternalWorker(pathname) {
-  const response = await fetch(`${URLS.business}${pathname}`, {
+  const response = await fetch(`${URLS.marketplaceApi}${pathname}`, {
     method: "POST",
     headers: { authorization: `Bearer ${INTERNAL_TOKEN}`, "content-type": "application/json" },
     body: "{}",
@@ -727,7 +728,7 @@ async function assertApplicationPortsAvailable() {
     ["Web", PORTS.web, "AICP_WEB_PORT"],
     ["Product Workflow Agent", PORTS.workflow, "AICP_WORKFLOW_AGENT_PORT"],
     ["网页调研助手", PORTS.browser, "AICP_BROWSER_AGENT_PORT"],
-    ["Business API", PORTS.business, "AICP_BUSINESS_API_PORT"],
+    ["Marketplace API", PORTS.marketplaceApi, "AICP_MARKETPLACE_API_PORT"],
     ["Dispatch Engine", PORTS.dispatch, "AICP_DISPATCH_PORT"],
   ];
   return assertPortsAvailable(services, portOpen);

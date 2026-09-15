@@ -1,16 +1,16 @@
 import { z } from "zod";
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
-import { BUSINESS_API_BASE_URL } from "./base-url";
+import { MARKETPLACE_API_BASE_URL } from "./base-url";
 
 /**
  * Agent 市场与生命周期操作的浏览器客户端。
  *
- * 这里是外部响应进入 React 状态前的唯一可信边界：Business API 返回的 JSON、URL 中的
+ * 这里是外部响应进入 React 状态前的唯一可信边界：Marketplace API 返回的 JSON、URL 中的
  * Agent ID 和生命周期响应都不能直接当作内部类型使用。页面只消费本模块导出的窄类型，
  * 因而不需要了解后端字段命名、金额传输格式或错误体兼容策略。
  */
 
-const API_BASE_URL = BUSINESS_API_BASE_URL;
+const API_BASE_URL = MARKETPLACE_API_BASE_URL;
 const uuidSchema = z.uuid();
 const statusSchema = z.enum(["pending_review", "active", "paused", "delisted"]);
 const pauseReasonSchema = z.enum(["health_check", "manual"]).nullable();

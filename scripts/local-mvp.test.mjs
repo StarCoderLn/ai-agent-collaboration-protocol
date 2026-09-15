@@ -173,7 +173,7 @@ test("端口门禁会列出占用服务并在启动副作用之前失败", async
     assertPortsAvailable(
       [
         ["Web", 3001, "AICP_WEB_PORT"],
-        ["Business API", 3100, "AICP_BUSINESS_API_PORT"],
+        ["Marketplace API", 3100, "AICP_MARKETPLACE_API_PORT"],
       ],
       async (port) => {
         probes.push(port);

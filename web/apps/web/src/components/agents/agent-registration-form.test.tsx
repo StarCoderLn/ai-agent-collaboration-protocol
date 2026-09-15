@@ -351,7 +351,7 @@ describe("AgentRegistrationForm", () => {
 			),
 		);
 		expect(fetch).toHaveBeenLastCalledWith(
-			"https://business-api.test/api/agents",
+			"https://marketplace-api.test/api/agents",
 			expect.objectContaining({
 				method: "POST",
 				body: expect.stringContaining('"tags":["next.js"]'),

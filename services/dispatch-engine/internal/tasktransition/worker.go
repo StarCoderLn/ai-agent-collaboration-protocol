@@ -34,7 +34,7 @@ type Worker struct {
 	Lease      time.Duration
 }
 
-// RunOnce 领取一批数量受限的事件。数据库租约保证 worker 崩溃后可恢复；Business API
+// RunOnce 领取一批数量受限的事件。数据库租约保证 worker 崩溃后可恢复；Marketplace API
 // inbox 则保证远端事务已提交但响应丢失时仍可安全重试。
 func (w *Worker) RunOnce(ctx context.Context, limit int) (int, error) {
 	if w.Repository == nil || w.Sender == nil || limit <= 0 {

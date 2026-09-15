@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
-import { BUSINESS_API_BASE_URL } from "./base-url";
+import { MARKETPLACE_API_BASE_URL } from "./base-url";
 
 const addressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const assetBaseSchema = z.object({
@@ -64,7 +64,7 @@ export async function getWalletAssetDirectory(
 ): Promise<WalletAssetDirectory> {
 	let response: Response;
 	try {
-		response = await fetch(`${BUSINESS_API_BASE_URL}/wallet/assets`, {
+		response = await fetch(`${MARKETPLACE_API_BASE_URL}/wallet/assets`, {
 			credentials: "include",
 			cache: "no-store",
 			headers: { accept: "application/json" },

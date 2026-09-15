@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
-import { BUSINESS_API_BASE_URL } from "./base-url";
+import { MARKETPLACE_API_BASE_URL } from "./base-url";
 
 const integerString = z.string().regex(/^\d+$/);
 const transactionHash = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
@@ -101,7 +101,7 @@ export type DaoVoteInput = Readonly<{
 export async function getDaoOverview(
 	signal?: AbortSignal,
 ): Promise<DaoOverview> {
-	const response = await fetch(`${BUSINESS_API_BASE_URL}/dao`, {
+	const response = await fetch(`${MARKETPLACE_API_BASE_URL}/dao`, {
 		credentials: "include",
 		signal,
 	});
@@ -112,9 +112,12 @@ export async function getDaoOverview(
 export async function getDaoCandidatePool(
 	signal?: AbortSignal,
 ): Promise<DaoCandidatePool> {
-	const response = await fetch(`${BUSINESS_API_BASE_URL}/dao/candidate-pool`, {
-		signal,
-	});
+	const response = await fetch(
+		`${MARKETPLACE_API_BASE_URL}/dao/candidate-pool`,
+		{
+			signal,
+		},
+	);
 	return parseResponse(response, candidatePoolSchema);
 }
 
@@ -123,15 +126,18 @@ export async function syncDaoMembership(
 	txHash: string,
 	idempotencyKey: string,
 ) {
-	const response = await fetch(`${BUSINESS_API_BASE_URL}/dao/membership/sync`, {
-		method: "POST",
-		credentials: "include",
-		headers: {
-			"content-type": "application/json",
-			"idempotency-key": idempotencyKey,
+	const response = await fetch(
+		`${MARKETPLACE_API_BASE_URL}/dao/membership/sync`,
+		{
+			method: "POST",
+			credentials: "include",
+			headers: {
+				"content-type": "application/json",
+				"idempotency-key": idempotencyKey,
+			},
+			body: JSON.stringify({ txHash }),
 		},
-		body: JSON.stringify({ txHash }),
-	});
+	);
 	return parseResponse(response, syncSchema);
 }
 
@@ -141,7 +147,7 @@ export async function submitDaoVote(
 	idempotencyKey: string,
 ) {
 	const response = await fetch(
-		`${BUSINESS_API_BASE_URL}/dao/cases/${encodeURIComponent(roundId)}/votes`,
+		`${MARKETPLACE_API_BASE_URL}/dao/cases/${encodeURIComponent(roundId)}/votes`,
 		{
 			method: "POST",
 			credentials: "include",

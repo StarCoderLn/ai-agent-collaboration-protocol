@@ -2,7 +2,9 @@ package matching
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -19,6 +21,17 @@ type semanticRetrieverFake struct {
 	err    error
 	calls  int
 	seen   []domain.AgentCandidate
+}
+
+type funnelRankerFake struct {
+	version string
+	scores  []FunnelScore
+	err     error
+}
+
+func (f funnelRankerFake) ModelVersion() string { return f.version }
+func (f funnelRankerFake) Rank(context.Context, json.RawMessage) ([]FunnelScore, error) {
+	return f.scores, f.err
 }
 
 func (f *semanticRetrieverFake) Descriptor() SemanticDescriptor {
@@ -150,6 +163,45 @@ func TestSemanticMatchingRunsAfterHardConstraintsAndReplaysSuccessfulSnapshot(t 
 	}
 }
 
+func TestSemanticRecallPoolCreatesPrivateV2RequestWithoutExpandingFormalTopThree(t *testing.T) {
+	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	agents := make([]domain.AgentCandidate, 0, 5)
+	neighbors := make([]SemanticNeighbor, 0, 5)
+	for index := 0; index < 5; index++ {
+		id := "agent-" + strconv.Itoa(index+1)
+		agents = append(agents, domain.AgentCandidate{
+			ID: id, CategoryID: "code", Tags: []string{"go"}, State: domain.AgentState{Status: domain.AgentActive},
+			Currency: "USDC", PriceMinor: 100 + int64(index), EstimatedDuration: time.Minute,
+			Score: 4.5, AdmissionScore: 85,
+		})
+		neighbors = append(neighbors, SemanticNeighbor{AgentID: id, Similarity: 0.9 - float64(index)/100})
+	}
+	repository := &memoryRepository{input: MatchInput{
+		Task:   domain.MatchTask{ID: "task", CategoryID: "code", Tags: []string{"go"}, BudgetMinor: 200, Currency: "USDC", Deadline: now.Add(time.Hour)},
+		Agents: agents, Rules: domain.RankingRules{Version: "ranking-v1", QualityWeight: 1},
+	}}
+	retriever := &semanticRetrieverFake{result: SemanticResult{Neighbors: neighbors}}
+	service := Service{Repository: repository, Semantic: retriever, Now: func() time.Time { return now }}
+
+	record, err := service.RunMatching(context.Background(), "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Candidates) != DisplayTopK {
+		t.Fatalf("formal candidates expanded beyond Top-3: %+v", record.Candidates)
+	}
+	var request shadowScoreRequest
+	if err = json.Unmarshal(repository.records[0].ShadowRequest, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.FeatureSchemaVersion != matchingV2FeatureSchema || len(request.Candidates) != 5 {
+		t.Fatalf("private V2 recall pool mismatch: %+v", request)
+	}
+	if request.Candidates[0].AdmissionScore != 85 || request.Candidates[0].DataOrigin != "real" {
+		t.Fatalf("frozen V2 features are incomplete: %+v", request.Candidates[0])
+	}
+}
+
 func TestSemanticFailureFallsBackWithoutPermanentlyBlockingRecovery(t *testing.T) {
 	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
 	repository := &memoryRepository{input: MatchInput{
@@ -175,6 +227,54 @@ func TestSemanticFailureFallsBackWithoutPermanentlyBlockingRecovery(t *testing.T
 	}
 	if retriever.calls != 2 || recovered.MatchingMode != "semantic_v1" || recovered.ID == fallback.ID {
 		t.Fatalf("historical fallback permanently blocked V1 recovery: calls=%d fallback=%+v recovered=%+v", retriever.calls, fallback, recovered)
+	}
+}
+
+func TestRequiredV2UsesTheFullRecallPoolAndPersistsModelProbabilities(t *testing.T) {
+	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	agents := []domain.AgentCandidate{
+		{ID: "agent-a", CategoryID: "code", Tags: []string{"go"}, State: domain.AgentState{Status: domain.AgentActive}, Currency: "USDC", EstimatedDuration: time.Minute},
+		{ID: "agent-b", CategoryID: "code", Tags: []string{"go"}, State: domain.AgentState{Status: domain.AgentActive}, Currency: "USDC", EstimatedDuration: time.Minute},
+	}
+	repository := &memoryRepository{input: MatchInput{
+		Task:   domain.MatchTask{ID: "task", CategoryID: "code", Tags: []string{"go"}, Currency: "USDC", Deadline: now.Add(time.Hour)},
+		Agents: agents, Rules: domain.RankingRules{Version: "hard-filter-v2", QualityWeight: 1},
+	}}
+	retriever := &semanticRetrieverFake{result: SemanticResult{Neighbors: []SemanticNeighbor{
+		{AgentID: "agent-a", Similarity: 0.91}, {AgentID: "agent-b", Similarity: 0.82},
+	}}}
+	ranker := funnelRankerFake{version: "matching-v2-20260914153930-81cb1ad0", scores: []FunnelScore{
+		{AgentID: "agent-a", PCTR: 0.8, PCVR: 0.2, PCTCVR: 0.16, Rank: 2},
+		{AgentID: "agent-b", PCTR: 0.6, PCVR: 0.7, PCTCVR: 0.42, Rank: 1},
+	}}
+	service := Service{Repository: repository, Semantic: retriever, Ranker: ranker, RequireV2: true, Now: func() time.Time { return now }}
+
+	record, err := service.RunMatching(context.Background(), "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.MatchingMode != "learned_v2" || record.ModelVersion != ranker.version || record.Candidates[0].AgentID != "agent-b" {
+		t.Fatalf("formal V2 ranking evidence mismatch: %+v", record)
+	}
+	if record.Candidates[0].PCTCVR == nil || *record.Candidates[0].PCTCVR != 0.42 || len(record.ShadowRequest) != 0 {
+		t.Fatalf("V2 probabilities must be persisted without a second shadow job: %+v", record.Candidates[0])
+	}
+}
+
+func TestRequiredV2DoesNotSilentlyFallBackWhenTheModelFails(t *testing.T) {
+	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	repository := &memoryRepository{input: MatchInput{
+		Task:   domain.MatchTask{ID: "task", CategoryID: "code", Currency: "USDC", Deadline: now.Add(time.Hour)},
+		Agents: []domain.AgentCandidate{{ID: "agent", CategoryID: "code", State: domain.AgentState{Status: domain.AgentActive}, Currency: "USDC", EstimatedDuration: time.Minute}},
+		Rules:  domain.RankingRules{Version: "hard-filter-v2", QualityWeight: 1},
+	}}
+	service := Service{
+		Repository: repository, Semantic: &semanticRetrieverFake{result: SemanticResult{Neighbors: []SemanticNeighbor{{AgentID: "agent", Similarity: 0.9}}}},
+		Ranker: funnelRankerFake{version: "matching-v2-model", err: errors.New("model unavailable")}, RequireV2: true,
+		Now: func() time.Time { return now },
+	}
+	if _, err := service.RunMatching(context.Background(), "task"); err == nil || len(repository.records) != 0 {
+		t.Fatalf("V2 failure must fail closed without persisting a legacy ranking: err=%v records=%+v", err, repository.records)
 	}
 }
 

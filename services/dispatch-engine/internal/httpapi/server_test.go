@@ -15,11 +15,19 @@ import (
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/domain"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/executionproxy"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matching"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matchingfeedback"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/protocol"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/sandboxadmission"
 )
 
 type fakeMatcher struct{ record matching.Record }
+
+type exposureRepositoryFake struct{ exposure matchingfeedback.Exposure }
+
+func (f *exposureRepositoryFake) RecordExposure(_ context.Context, exposure matchingfeedback.Exposure) error {
+	f.exposure = exposure
+	return nil
+}
 
 func (f fakeMatcher) RunMatching(context.Context, string) (matching.Record, error) {
 	return f.record, nil
@@ -208,6 +216,42 @@ func TestWorkflowNodeRoutesKeepTaskAndNodeIdentityInTheContract(t *testing.T) {
 	server.Handler().ServeHTTP(latest, latestRequest)
 	if latest.Code != http.StatusOK || !strings.Contains(latest.Body.String(), `"workflowNodeId":"node-2"`) {
 		t.Fatalf("workflow latest assignment lost node identity: status=%d body=%s", latest.Code, latest.Body.String())
+	}
+}
+
+func TestCandidateExposureRouteRejectsTrailingJSONAndPreservesPathIdentity(t *testing.T) {
+	repository := &exposureRepositoryFake{}
+	server := Server{
+		InternalToken: "internal-secret",
+		MatchingFeedback: &matchingfeedback.Service{Repository: repository, Now: func() time.Time {
+			return time.Date(2026, 9, 14, 6, 30, 0, 0, time.UTC)
+		}},
+	}
+	body := `{"distributionRecordId":"record-1","viewSessionId":"session-1","agentId":"agent-1","eventKey":"candidate-exposure-0001","position":2,"visibleMillis":1000,"occurredAt":"2026-09-14T06:30:00Z"}`
+	request := httptest.NewRequest(http.MethodPost, "/internal/tasks/task-1/workflow-nodes/node-2/candidate-exposures", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer internal-secret")
+	request.Header.Set(headerInternalActor, "publisher-1")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || repository.exposure.TaskID != "task-1" || repository.exposure.WorkflowNodeID != "node-2" || repository.exposure.Position != 2 {
+		t.Fatalf("exposure identity was lost: status=%d exposure=%+v body=%s", response.Code, repository.exposure, response.Body.String())
+	}
+	ordinary := httptest.NewRequest(http.MethodPost, "/internal/tasks/task-1/candidate-exposures", strings.NewReader(body))
+	ordinary.Header.Set("Authorization", "Bearer internal-secret")
+	ordinary.Header.Set(headerInternalActor, "publisher-1")
+	ordinaryResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(ordinaryResponse, ordinary)
+	if ordinaryResponse.Code != http.StatusAccepted || repository.exposure.TaskID != "task-1" || repository.exposure.WorkflowNodeID != "" {
+		t.Fatalf("普通任务曝光被错误绑定到工作流节点: status=%d exposure=%+v body=%s", ordinaryResponse.Code, repository.exposure, ordinaryResponse.Body.String())
+	}
+
+	trailing := httptest.NewRequest(http.MethodPost, "/internal/tasks/task-1/workflow-nodes/node-2/candidate-exposures", strings.NewReader(body+` {}`))
+	trailing.Header.Set("Authorization", "Bearer internal-secret")
+	trailing.Header.Set(headerInternalActor, "publisher-1")
+	invalid := httptest.NewRecorder()
+	server.Handler().ServeHTTP(invalid, trailing)
+	if invalid.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("trailing JSON was accepted: status=%d body=%s", invalid.Code, invalid.Body.String())
 	}
 }
 

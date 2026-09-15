@@ -1,4 +1,4 @@
-// credentials 包包含仅供派发使用的凭证读取边界。Business API 仍不存在解密路径；只有
+// credentials 包包含仅供派发使用的凭证读取边界。Marketplace API 仍不存在解密路径；只有
 // 必须签署 Agent 请求的 worker 能取得明文，并且只在内存中短暂持有，绝不返回或记录。
 package credentials
 

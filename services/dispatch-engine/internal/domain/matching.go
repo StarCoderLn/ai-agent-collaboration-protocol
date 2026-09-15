@@ -42,6 +42,9 @@ type AgentCandidate struct {
 	OnTimeRate                      float64
 	ReworkRate                      float64
 	DeliveryCases                   []AgentDeliveryCase
+	// AdmissionScore 冻结最近一次通过的准入质量分。V2 只能消费匹配发生当时的值，
+	// 不能在训练或推理阶段回查未来评测，否则会把未来信息泄漏进历史样本。
+	AdmissionScore float64
 }
 
 type MatchTask struct {
@@ -103,6 +106,11 @@ type RankedCandidate struct {
 	// RankScore 使用整数避免浮点排序在不同平台/版本间出现边界差异；Score 原始值只在
 	// 进入排序前量化一次。相同输入和规则版本会得到逐位相同的结果。
 	RankScore int64
+	// V2 概率只在正式漏斗模型完成评分后存在。三个值随候选快照持久化，页面和审计无需
+	// 再次调用可能已经切换版本的模型重算历史结果。
+	PCTR   *float64
+	PCVR   *float64
+	PCTCVR *float64
 }
 
 type RankingRules struct {

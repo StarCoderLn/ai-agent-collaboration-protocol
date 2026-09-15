@@ -1,4 +1,4 @@
-// executionproxy 包把已经验签的 Agent 回调转发给 Business API；权威 TypeScript 状态机
+// executionproxy 包把已经验签的 Agent 回调转发给 Marketplace API；权威 TypeScript 状态机
 // 和结果事务均位于后者，Go 侧不重复实现业务状态规则。
 package executionproxy
 
@@ -70,15 +70,21 @@ func (c *Client) RunTimeoutScan(ctx context.Context, limit int) error {
 	return c.runWorker(ctx, "execution-timeouts", limit)
 }
 
-// RunScoreSnapshot 请求 Business API 计算带版本的评分快照。Go 调度器只控制执行频率；
+// RunScoreSnapshot 请求 Marketplace API 计算带版本的评分快照。Go 调度器只控制执行频率；
 // 评分公式和数据库事实仍由 TypeScript 侧统一管理。
 func (c *Client) RunScoreSnapshot(ctx context.Context, limit int) error {
 	return c.runWorker(ctx, "score-snapshots", limit)
 }
 
+// RunScoreRefresh 只处理业务事件留下的待刷新 Agent。请求队列和快照写入均由 Marketplace
+// API 在事务内管理；分发服务只提供短周期调度，不持有评分公式或失败恢复状态。
+func (c *Client) RunScoreRefresh(ctx context.Context, limit int) error {
+	return c.runWorker(ctx, "score-refresh-requests", limit)
+}
+
 func (c *Client) runWorker(ctx context.Context, worker string, limit int) error {
 	if c.BaseURL == "" || c.Token == "" || c.HTTP == nil || limit <= 0 {
-		return errors.New("business worker client is not configured")
+		return errors.New("Marketplace API worker client is not configured")
 	}
 	base, err := url.Parse(c.BaseURL)
 	if err != nil {
@@ -102,7 +108,7 @@ func (c *Client) runWorker(ctx context.Context, worker string, limit int) error 
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBytes))
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return errors.New("business worker request was rejected")
+		return errors.New("Marketplace API worker request was rejected")
 	}
 	return nil
 }

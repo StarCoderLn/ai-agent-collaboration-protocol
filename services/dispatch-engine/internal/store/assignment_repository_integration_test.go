@@ -213,7 +213,7 @@ func TestAssignmentRepositoryPostgresConcurrencyIdempotencyAndRecovery(t *testin
 	if !errors.Is(err, dispatch.ErrCandidateNotFound) {
 		t.Fatalf("replacement was allowed before task returned to matching: err=%v", err)
 	}
-	// 模拟 Business API 原子消费 assignment_failed outbox 后的权威状态；此时原候选
+	// 模拟 Marketplace API 原子消费 assignment_failed outbox 后的权威状态；此时原候选
 	// 快照仍有效，发布者无需重跑匹配即可选另一个候选。
 	if _, err = pool.Exec(ctx, `UPDATE tasks SET status='matching',status_version=status_version+1 WHERE id=$1`, dispatchTaskID); err != nil {
 		t.Fatal(err)
@@ -343,7 +343,7 @@ func TestAgentDeliveryRepositoryPersistsAndRecoversQuickHTTPResult(t *testing.T)
 	if err = repository.StoreQuickResult(ctx, locked.Attempt.ID, quickResult); err != nil {
 		t.Fatal(err)
 	}
-	// 模拟“结果已保存、接单已确认，但 Business API 结果转交尚未成功”的崩溃窗口。
+	// 模拟“结果已保存、接单已确认，但 Marketplace API 结果转交尚未成功”的崩溃窗口。
 	// LoadTarget 必须绕过 assignment/attempt 终态并取回快照，而且不再重建派发正文。
 	if _, err = pool.Exec(ctx, `UPDATE task_assignments SET status='accepted' WHERE id=$1`, locked.Assignment.ID); err != nil {
 		t.Fatal(err)

@@ -73,7 +73,7 @@ describe("CredentialReplacePanel", () => {
 			),
 		);
 		expect(fetch).toHaveBeenCalledWith(
-			"https://business-api.test/api/agents/agent-123/credentials",
+			"https://marketplace-api.test/api/agents/agent-123/credentials",
 			expect.objectContaining({
 				method: "PUT",
 				body: JSON.stringify({ credentialSecret: "top-secret" }),

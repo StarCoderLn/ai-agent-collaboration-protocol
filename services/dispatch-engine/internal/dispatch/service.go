@@ -1,5 +1,5 @@
 // dispatch 包负责候选锁定、持久化队列意图和分配确认。它刻意不持有平台任务状态机；
-// 仓储操作会在同一个 PostgreSQL 事务中写入迁移 outbox，交由 Business API 消费。
+// 仓储操作会在同一个 PostgreSQL 事务中写入迁移 outbox，交由 Marketplace API 消费。
 package dispatch
 
 import (
@@ -67,7 +67,7 @@ type DispatchMessage struct {
 }
 
 // ExecutionRetryResult 是“取消失败分配”这一持久化事实的最小回执。它不包含目标任务
-// 状态；目标状态仍由 Business API 的权威任务状态机根据 transition event 计算。
+// 状态；目标状态仍由 Marketplace API 的权威任务状态机根据 transition event 计算。
 type ExecutionRetryResult struct {
 	TaskID            string `json:"taskId"`
 	WorkflowNodeID    string `json:"workflowNodeId,omitempty"`

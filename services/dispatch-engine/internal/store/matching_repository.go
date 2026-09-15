@@ -233,7 +233,8 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		       COALESCE(history.probation_cap_minor, 50000000000000000)::bigint,
 		       COALESCE(score.dimensions,'{}'::jsonb),COALESCE(score.dispute_rate,0)::float8,
 		       COALESCE(similar_stats.completed,0)::int,COALESCE(similar_stats.on_time_rate,0)::float8,
-		       COALESCE(similar_stats.rework_rate,0)::float8,COALESCE(cases.items,'[]'::jsonb)
+		       COALESCE(similar_stats.rework_rate,0)::float8,COALESCE(cases.items,'[]'::jsonb),
+		       COALESCE(admission.final_score,50)::float8
 		  FROM agents a
 		  LEFT JOIN LATERAL (
 		    SELECT s.score,s.sample_size,s.dimensions,s.dispute_rate FROM agent_score_snapshots s
@@ -316,6 +317,13 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		         LIMIT 3
 		      ) limited
 		  ) cases ON TRUE
+		  LEFT JOIN LATERAL (
+		    -- 只冻结已经完成且通过的准入评分。没有自动准入历史的存量 Agent 使用中性值
+		    -- 50，不能把“缺数据”错误编码成质量为零。
+		    SELECT round.final_score FROM sandbox_admission_rounds round
+		     WHERE round.agent_id=a.id AND round.status='passed' AND round.final_score IS NOT NULL
+		     ORDER BY round.completed_at DESC,round.id DESC LIMIT 1
+		  ) admission ON TRUE
 		 ORDER BY a.id`)
 	if err != nil {
 		return matching.MatchInput{}, err
@@ -333,7 +341,7 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 			&candidate.RatingSampleSize, &candidate.PriorWeight,
 			&candidate.ProbationCompletedTaskThreshold, &candidate.ProbationBudgetCapMinor,
 			&dimensionsJSON, &candidate.DisputeRate, &candidate.SimilarCompleted,
-			&candidate.OnTimeRate, &candidate.ReworkRate, &casesJSON,
+			&candidate.OnTimeRate, &candidate.ReworkRate, &casesJSON, &candidate.AdmissionScore,
 		); err != nil {
 			return matching.MatchInput{}, err
 		}
@@ -378,6 +386,9 @@ func (r *MatchingRepository) SaveWorkflowNode(ctx context.Context, record matchi
 }
 
 func (r *MatchingRepository) save(ctx context.Context, record matching.Record, workflow bool) (matching.Record, error) {
+	if r == nil || r.Pool == nil {
+		return matching.Record{}, errors.New("matching repository requires pool")
+	}
 	candidates, err := json.Marshal(record.Candidates)
 	if err != nil {
 		return matching.Record{}, err
@@ -386,24 +397,49 @@ func (r *MatchingRepository) save(ctx context.Context, record matching.Record, w
 	if err != nil {
 		return matching.Record{}, err
 	}
-	inserted, err := scanDistribution(r.Pool.QueryRow(ctx, `
+	tx, err := r.Pool.Begin(ctx)
+	if err != nil {
+		return matching.Record{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	inserted, err := scanDistribution(tx.QueryRow(ctx, `
 		INSERT INTO job_distribution_records (
 		  task_id, workflow_node_id, rule_version, input_fingerprint, input_snapshot, candidates, filter_reasons,
-		  matching_mode,semantic_model,semantic_query_ms,fallback_reason
-		) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8,$9,$10,$11)
+		  matching_mode,semantic_model,semantic_query_ms,fallback_reason,matching_model_version
+		) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12)
 		ON CONFLICT DO NOTHING
 		RETURNING id::text, task_id::text, COALESCE(workflow_node_id::text,''), rule_version, input_fingerprint,
 		          input_snapshot, candidates, filter_reasons,
 		          COALESCE(final_selection_agent_id::text,''), created_at,
-		          matching_mode,COALESCE(semantic_model,''),COALESCE(semantic_query_ms,0),COALESCE(fallback_reason,'')`,
+		          matching_mode,COALESCE(semantic_model,''),COALESCE(semantic_query_ms,0),COALESCE(fallback_reason,''),
+		          COALESCE(matching_model_version,'')`,
 		record.TaskID, nullableNodeID(record.WorkflowNodeID), record.RuleVersion, record.InputFingerprint,
 		record.InputSnapshot, candidates, reasons, record.MatchingMode, nullableText(record.SemanticModel),
 		nullableQueryDuration(record.MatchingMode, record.SemanticQueryMS), nullableText(record.FallbackReason),
+		nullableText(record.ModelVersion),
 	))
 	if err == nil {
+		if len(record.ShadowRequest) > 0 {
+			// 分发记录与影子任务必须原子提交；否则进程在两次写入之间退出会永久丢失
+			// 该次召回池，同时正式 Top-3 已对用户可见且无法安全补算原始特征。
+			_, err = tx.Exec(ctx, `
+				INSERT INTO matching_v2_shadow_jobs(
+				  distribution_record_id,feature_schema_version,request_payload
+				) VALUES($1,'matching-v2.features.v1',$2::jsonb)
+				ON CONFLICT(distribution_record_id) DO NOTHING`, inserted.ID, record.ShadowRequest)
+			if err != nil {
+				return matching.Record{}, err
+			}
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return matching.Record{}, err
+		}
 		return inserted, nil
 	}
 	if !errors.Is(err, matching.ErrRecordNotFound) {
+		return matching.Record{}, err
+	}
+	if err = tx.Rollback(ctx); err != nil {
 		return matching.Record{}, err
 	}
 	// 并发请求可能在 Find 与 INSERT 之间写入同一指纹；唯一约束失败后原样读取赢家。
@@ -426,7 +462,8 @@ const distributionSelect = `
 	SELECT id::text, task_id::text, COALESCE(workflow_node_id::text,''), rule_version, input_fingerprint,
 	       input_snapshot, candidates, filter_reasons,
 	       COALESCE(final_selection_agent_id::text,''), created_at,
-	       matching_mode,COALESCE(semantic_model,''),COALESCE(semantic_query_ms,0),COALESCE(fallback_reason,'')
+	       matching_mode,COALESCE(semantic_model,''),COALESCE(semantic_query_ms,0),COALESCE(fallback_reason,''),
+	       COALESCE(matching_model_version,'')
 	  FROM job_distribution_records`
 
 type rowScanner interface {
@@ -440,6 +477,7 @@ func scanDistribution(row rowScanner) (matching.Record, error) {
 		&record.ID, &record.TaskID, &record.WorkflowNodeID, &record.RuleVersion, &record.InputFingerprint,
 		&record.InputSnapshot, &candidatesJSON, &reasonsJSON, &record.FinalSelectionID, &record.CreatedAt,
 		&record.MatchingMode, &record.SemanticModel, &record.SemanticQueryMS, &record.FallbackReason,
+		&record.ModelVersion,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return matching.Record{}, matching.ErrRecordNotFound
@@ -478,7 +516,7 @@ func nullableText(value string) any {
 }
 
 func nullableQueryDuration(mode string, milliseconds float64) any {
-	if mode != "semantic_v1" {
+	if mode != "semantic_v1" && mode != "learned_v2" {
 		return nil
 	}
 	return milliseconds

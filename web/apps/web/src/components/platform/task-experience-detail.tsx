@@ -48,6 +48,7 @@ import FormalWorkflowView, {
 } from "@/components/platform/formal-workflow-view";
 import PageBackLink from "@/components/platform/page-back-link";
 import TaskAgentAllocationGraph from "@/components/platform/task-agent-allocation-graph";
+import { useCandidateExposureTracking } from "@/components/platform/use-candidate-exposure-tracking";
 import SectionRefreshButton from "@/components/section-refresh-button";
 import {
 	acceptTaskResult,
@@ -70,6 +71,7 @@ import {
 	type OwnedTaskSummary,
 	openTaskDispute,
 	type PublicTask,
+	recordTaskCandidateExposure,
 	rematchTaskCandidates,
 	requestTaskRework,
 	retryFailedTaskExecution,
@@ -1543,6 +1545,16 @@ function CandidateSelection({
 	const [deadline, setDeadline] = useState(
 		deadlineIsoToLocalDate(task.deadline),
 	);
+	const sendExposure = useCallback(
+		(input: Parameters<typeof recordTaskCandidateExposure>[1]) =>
+			recordTaskCandidateExposure(task.id, input),
+		[task.id],
+	);
+	const candidateListRef = useCandidateExposureTracking(
+		record?.id ?? null,
+		record?.candidates.map((candidate) => candidate.agentId) ?? [],
+		sendExposure,
+	);
 	if (record === null)
 		return (
 			<Panel
@@ -1628,13 +1640,15 @@ function CandidateSelection({
 					}
 				/>
 			)}
-			<div className="space-y-3 p-5">
+			<div ref={candidateListRef} className="space-y-3 p-5">
 				{record.candidates.length === 0 ? (
 					<EmptyCandidates filterReasons={record.filterReasons} />
 				) : (
 					record.candidates.map((candidate, index) => (
 						<article
 							key={candidate.agentId}
+							data-matching-agent-id={candidate.agentId}
+							data-matching-position={index + 1}
 							className={`grid gap-4 rounded-lg border p-4 md:grid-cols-[1fr_auto] ${index === 0 ? "border-secondary/40 bg-secondary-container/30" : ""}`}
 						>
 							<div className="flex gap-3">

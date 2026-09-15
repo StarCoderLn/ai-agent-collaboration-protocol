@@ -21,6 +21,12 @@ var (
 	ErrRecordNotFound   = errors.New("DISTRIBUTION_RECORD_NOT_FOUND")
 )
 
+const (
+	DisplayTopK             = 3
+	matchingV2FeatureSchema = "matching-v2.features.v1"
+	matchingV2DatasetSchema = "matching-v2.dataset.v1"
+)
+
 type AssignmentMode string
 
 const (
@@ -40,6 +46,8 @@ type MatchInput struct {
 	// Semantic 仅在 V1 启用时进入快照和指纹；描述正文不进入冻结记录，只保存内容哈希，
 	// 既能识别输入变化，又避免把私有任务描述复制到分发审计表。
 	Semantic *SemanticSnapshot `json:"semantic,omitempty"`
+	// ModelVersion 进入输入指纹，保证模型升级后新匹配不会错误复用旧版本候选快照。
+	ModelVersion string `json:"modelVersion,omitempty"`
 	// DispatchReady 是节点当前阶段的瞬时门禁，不进入输入指纹。selecting 与 matching
 	// 使用同一份候选事实；托管确认只改变是否可派发，不应凭空生成另一版候选。
 	DispatchReady bool `json:"-"`
@@ -64,6 +72,9 @@ type CandidateView struct {
 	IsNew                   bool     `json:"isNew"`
 	RankScore               string   `json:"rankScore"`
 	SemanticSimilarity      *float64 `json:"semanticSimilarity,omitempty"`
+	PCTR                    *float64 `json:"pctr,omitempty"`
+	PCVR                    *float64 `json:"pcvr,omitempty"`
+	PCTCVR                  *float64 `json:"pctcvr,omitempty"`
 	// 推荐徽标与证据全部来自冻结输入，不由浏览器根据展示顺序临时猜测。
 	RecommendationBadges []string                   `json:"recommendationBadges"`
 	TaskFitScore         int                        `json:"taskFitScore"`
@@ -87,6 +98,7 @@ type Record struct {
 	SemanticModel    string                              `json:"semanticModel,omitempty"`
 	SemanticQueryMS  float64                             `json:"semanticQueryMs,omitempty"`
 	FallbackReason   string                              `json:"fallbackReason,omitempty"`
+	ModelVersion     string                              `json:"modelVersion,omitempty"`
 	InputFingerprint string                              `json:"inputFingerprint"`
 	InputSnapshot    json.RawMessage                     `json:"inputSnapshot"`
 	Candidates       []CandidateView                     `json:"candidates"`
@@ -98,6 +110,9 @@ type Record struct {
 	// PreviousAssignmentID 标识本轮派发正在替换的已取消分配。它只参与构造新的
 	// 派发幂等身份，不属于候选快照，也不能通过外部 API 伪造或持久化回候选记录。
 	PreviousAssignmentID string `json:"-"`
+	// ShadowRequest 保存完整 V1 召回池的版本化特征，只交给仓储创建私有影子任务。
+	// 它不进入候选 API，也绝不能被 dispatch.Service 当作可选择 Agent 集合。
+	ShadowRequest json.RawMessage `json:"-"`
 }
 
 type Repository interface {
@@ -120,6 +135,23 @@ type Service struct {
 	Repository Repository
 	Now        func() time.Time
 	Semantic   SemanticRetriever
+	Ranker     FunnelRanker
+	// RequireV2 只由正式服务入口开启；领域单元测试仍可独立验证硬约束和规则计算。
+	RequireV2 bool
+}
+
+type FunnelScore struct {
+	AgentID string
+	PCTR    float64
+	PCVR    float64
+	PCTCVR  float64
+	Rank    int
+}
+
+// FunnelRanker 隐藏 ONNX 服务的 HTTP 传输。匹配层只依赖模型版本和完整候选池评分。
+type FunnelRanker interface {
+	ModelVersion() string
+	Rank(context.Context, json.RawMessage) ([]FunnelScore, error)
 }
 
 type SemanticDescriptor struct {
@@ -229,6 +261,12 @@ func (s *Service) runMatching(
 		}
 	}
 	canonicalizeInput(&input)
+	if s.RequireV2 {
+		if s.Semantic == nil || s.Ranker == nil {
+			return Record{}, errors.New("matching V2 requires semantic retriever and funnel ranker")
+		}
+		input.ModelVersion = s.Ranker.ModelVersion()
+	}
 	if s.Semantic != nil {
 		input.Semantic = semanticSnapshot(input, s.Semantic.Descriptor())
 	}
@@ -255,6 +293,7 @@ func (s *Service) runMatching(
 	semanticModel := ""
 	semanticQueryMS := float64(0)
 	fallbackReason := ""
+	var shadowCandidates []domain.RankedCandidate
 	if s.Semantic != nil && len(distribution.Candidates) > 0 {
 		eligible := make([]domain.AgentCandidate, 0, len(distribution.Candidates))
 		for _, candidate := range distribution.Candidates {
@@ -262,10 +301,24 @@ func (s *Service) runMatching(
 		}
 		semanticResult, semanticErr := s.Semantic.Retrieve(ctx, input.Task, eligible)
 		if semanticErr == nil {
-			distribution.Candidates = semanticCandidates(distribution.Candidates, semanticResult.Neighbors)
-			matchingMode = "semantic_v1"
+			// 完整 V1 召回池只供 V2 影子重排。正式 V1 仍严格使用语义距离最前的
+			// 三名再按既有规则排序，扩大召回池不能在影子阶段偷偷改变用户结果。
+			shadowCandidates = semanticCandidates(distribution.Candidates, semanticResult.Neighbors)
+			if s.RequireV2 {
+				distribution.Candidates = shadowCandidates
+				matchingMode = "learned_v2"
+			} else {
+				formalNeighbors := semanticResult.Neighbors
+				if len(formalNeighbors) > DisplayTopK {
+					formalNeighbors = formalNeighbors[:DisplayTopK]
+				}
+				distribution.Candidates = semanticCandidates(distribution.Candidates, formalNeighbors)
+				matchingMode = "semantic_v1"
+			}
 			semanticModel = s.Semantic.Descriptor().Model
 			semanticQueryMS = float64(semanticResult.QueryDuration.Microseconds()) / 1000
+		} else if s.RequireV2 {
+			return Record{}, errors.New("matching V2 semantic retrieval failed")
 		} else {
 			// fallback 指纹与成功 V1 指纹分离，并且只在本次 V1 尝试失败后查询。模型恢复后
 			// 下一次请求仍会先尝试 V1，不会被历史 fallback 快照永久短路。
@@ -287,6 +340,29 @@ func (s *Service) runMatching(
 			semanticModel = s.Semantic.Descriptor().Model
 		}
 	}
+	var shadowRequest json.RawMessage
+	if (matchingMode == "semantic_v1" || matchingMode == "learned_v2") && len(shadowCandidates) > 0 {
+		shadowRequest, err = buildShadowRequest(input.Task, shadowCandidates, evaluatedAt)
+		if err != nil {
+			return Record{}, err
+		}
+	}
+	if matchingMode == "learned_v2" {
+		scores, rankErr := s.Ranker.Rank(ctx, shadowRequest)
+		if rankErr != nil {
+			return Record{}, errors.New("matching V2 ranking failed")
+		}
+		distribution.Candidates, err = applyFunnelRanking(distribution.Candidates, scores)
+		if err != nil {
+			return Record{}, err
+		}
+		// 正式 V2 已同步消费该特征池，不再创建异步影子任务。
+		shadowRequest = nil
+	}
+	formalCandidates := distribution.Candidates
+	if len(formalCandidates) > DisplayTopK {
+		formalCandidates = formalCandidates[:DisplayTopK]
+	}
 	record := Record{
 		TaskID:               taskID,
 		WorkflowNodeID:       workflowNodeID,
@@ -295,15 +371,118 @@ func (s *Service) runMatching(
 		SemanticModel:        semanticModel,
 		SemanticQueryMS:      semanticQueryMS,
 		FallbackReason:       fallbackReason,
+		ModelVersion:         input.ModelVersion,
 		InputFingerprint:     fingerprint,
 		InputSnapshot:        snapshotWithEvaluationTime(snapshot, evaluatedAt),
-		Candidates:           candidateViews(distribution.Candidates, input.Task.Tags),
+		Candidates:           candidateViews(formalCandidates, input.Task.Tags),
 		FilterReasons:        distribution.FilterReasons,
 		AssignmentMode:       input.AssignmentMode,
 		DispatchReady:        input.DispatchReady,
 		PreviousAssignmentID: input.PreviousAssignmentID,
+		ShadowRequest:        shadowRequest,
 	}
 	return save(ctx, record)
+}
+
+func applyFunnelRanking(candidates []domain.RankedCandidate, scores []FunnelScore) ([]domain.RankedCandidate, error) {
+	byAgent := make(map[string]FunnelScore, len(scores))
+	for _, score := range scores {
+		if score.AgentID == "" || score.Rank < 1 || score.Rank > len(candidates) {
+			return nil, errors.New("matching V2 returned invalid ranking")
+		}
+		byAgent[score.AgentID] = score
+	}
+	if len(byAgent) != len(candidates) {
+		return nil, errors.New("matching V2 returned incomplete ranking")
+	}
+	ranked := append([]domain.RankedCandidate(nil), candidates...)
+	for index := range ranked {
+		score, ok := byAgent[ranked[index].Agent.ID]
+		if !ok {
+			return nil, errors.New("matching V2 returned a different candidate set")
+		}
+		ranked[index].PCTR = pointer(score.PCTR)
+		ranked[index].PCVR = pointer(score.PCVR)
+		ranked[index].PCTCVR = pointer(score.PCTCVR)
+		ranked[index].RankScore = int64(score.PCTCVR * 1_000_000_000)
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		left, right := byAgent[ranked[i].Agent.ID], byAgent[ranked[j].Agent.ID]
+		if left.Rank == right.Rank {
+			return ranked[i].Agent.ID < ranked[j].Agent.ID
+		}
+		return left.Rank < right.Rank
+	})
+	return ranked, nil
+}
+
+func pointer(value float64) *float64 { return &value }
+
+type shadowScoreRequest struct {
+	FeatureSchemaVersion string                   `json:"featureSchemaVersion"`
+	Candidates           []shadowFeatureCandidate `json:"candidates"`
+}
+
+type shadowFeatureCandidate struct {
+	SchemaVersion      string  `json:"schemaVersion"`
+	DataOrigin         string  `json:"dataOrigin"`
+	TaskID             string  `json:"taskId"`
+	AgentID            string  `json:"agentId"`
+	TaskCategory       string  `json:"taskCategory"`
+	AgentCategory      string  `json:"agentCategory"`
+	OccurredAt         string  `json:"occurredAt"`
+	SemanticSimilarity float64 `json:"semanticSimilarity"`
+	TagCoverage        float64 `json:"tagCoverage"`
+	PriceRatio         float64 `json:"priceRatio"`
+	QualityScore       float64 `json:"qualityScore"`
+	Confidence         float64 `json:"confidence"`
+	ResponseMinutes    int     `json:"responseMinutes"`
+	CurrentLoad        int     `json:"currentLoad"`
+	OnTimeRate         float64 `json:"onTimeRate"`
+	ReworkRate         float64 `json:"reworkRate"`
+	DisputeRate        float64 `json:"disputeRate"`
+	AdmissionScore     float64 `json:"admissionScore"`
+	Position           int     `json:"position"`
+	IsNew              int     `json:"isNew"`
+}
+
+// buildShadowRequest 只从本次匹配的冻结输入构造特征。任务预算为 0 时用中性比率 1，
+// 避免除零；置信度用样本量与贝叶斯先验的比例表示，保持在 [0,1]。
+func buildShadowRequest(task domain.MatchTask, candidates []domain.RankedCandidate, occurredAt time.Time) (json.RawMessage, error) {
+	request := shadowScoreRequest{FeatureSchemaVersion: matchingV2FeatureSchema, Candidates: make([]shadowFeatureCandidate, 0, len(candidates))}
+	for index, candidate := range candidates {
+		agent := candidate.Agent
+		similarity := float64(0)
+		if candidate.SemanticSimilarity != nil {
+			similarity = *candidate.SemanticSimilarity
+		}
+		coverage := float64(1)
+		if len(task.Tags) > 0 {
+			coverage = float64(len(candidate.MatchedTags)) / float64(len(task.Tags))
+		}
+		priceRatio := float64(1)
+		if task.BudgetMinor > 0 {
+			priceRatio = float64(agent.PriceMinor) / float64(task.BudgetMinor)
+		}
+		confidenceDenominator := agent.RatingSampleSize + agent.PriorWeight
+		confidenceValue := float64(0)
+		if confidenceDenominator > 0 {
+			confidenceValue = float64(agent.RatingSampleSize) / float64(confidenceDenominator)
+		}
+		isNew := 0
+		if agent.Completed == 0 {
+			isNew = 1
+		}
+		request.Candidates = append(request.Candidates, shadowFeatureCandidate{
+			SchemaVersion: matchingV2DatasetSchema, DataOrigin: "real", TaskID: task.ID, AgentID: agent.ID,
+			TaskCategory: task.CategoryID, AgentCategory: agent.CategoryID, OccurredAt: occurredAt.UTC().Format(time.RFC3339Nano),
+			SemanticSimilarity: similarity, TagCoverage: coverage, PriceRatio: priceRatio, QualityScore: agent.Score,
+			Confidence: confidenceValue, ResponseMinutes: agent.ResponseMinutes, CurrentLoad: agent.CurrentLoad,
+			OnTimeRate: agent.OnTimeRate, ReworkRate: agent.ReworkRate, DisputeRate: agent.DisputeRate,
+			AdmissionScore: agent.AdmissionScore, Position: index + 1, IsNew: isNew,
+		})
+	}
+	return json.Marshal(request)
 }
 
 func (s *Service) LatestCandidates(ctx context.Context, taskID string) (Record, error) {
@@ -362,6 +541,9 @@ func candidateViews(candidates []domain.RankedCandidate, taskTags []string) []Ca
 			IsNew:                candidate.Agent.Completed == 0,
 			RankScore:            strconv.FormatInt(candidate.RankScore, 10),
 			SemanticSimilarity:   candidate.SemanticSimilarity,
+			PCTR:                 candidate.PCTR,
+			PCVR:                 candidate.PCVR,
+			PCTCVR:               candidate.PCTCVR,
 			RecommendationBadges: badges,
 			TaskFitScore:         fitScore,
 			Confidence:           confidence(candidate.Agent.RatingSampleSize, candidate.Agent.PriorWeight),

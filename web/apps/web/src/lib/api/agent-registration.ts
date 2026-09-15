@@ -10,7 +10,7 @@ import {
 	MVP_CURRENCY,
 } from "@/lib/platform/money";
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
-import { BUSINESS_API_BASE_URL } from "./base-url";
+import { MARKETPLACE_API_BASE_URL } from "./base-url";
 
 const ETHEREUM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 const portfolioCaseSchema = z.object({
@@ -148,18 +148,21 @@ export async function testAgentConnection(input: {
 }): Promise<AgentConnectionTestResult> {
 	let response: Response;
 	try {
-		response = await fetch(`${BUSINESS_API_BASE_URL}/agents/connection-test`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			credentials: "include",
-			body: JSON.stringify({
-				serviceEndpoint: input.serviceEndpoint,
-				...(input.credentialSecret === undefined ||
-				input.credentialSecret === ""
-					? {}
-					: { credentialSecret: input.credentialSecret }),
-			}),
-		});
+		response = await fetch(
+			`${MARKETPLACE_API_BASE_URL}/agents/connection-test`,
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				credentials: "include",
+				body: JSON.stringify({
+					serviceEndpoint: input.serviceEndpoint,
+					...(input.credentialSecret === undefined ||
+					input.credentialSecret === ""
+						? {}
+						: { credentialSecret: input.credentialSecret }),
+				}),
+			},
+		);
 	} catch {
 		return {
 			success: false,
@@ -219,13 +222,13 @@ export async function registerAgent(
 ): Promise<RegisterAgentResult> {
 	let response: Response;
 	try {
-		response = await fetch(`${BUSINESS_API_BASE_URL}/agents`, {
+		response = await fetch(`${MARKETPLACE_API_BASE_URL}/agents`, {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
 				"idempotency-key": idempotencyKey,
 			},
-			// business-api 与 web 是不同源部署，SIWE session 以 httpOnly cookie 下发
+			// marketplace-api 与 web 是不同源部署，SIWE session 以 httpOnly cookie 下发
 			// （同 lib/api/agents.ts 的修复，codex review T-007 P1 同类问题）。
 			credentials: "include",
 			body: JSON.stringify({

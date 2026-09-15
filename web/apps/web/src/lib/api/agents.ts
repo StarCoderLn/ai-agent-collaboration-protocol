@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
-import { BUSINESS_API_BASE_URL } from "./base-url";
+import { MARKETPLACE_API_BASE_URL } from "./base-url";
 
 /**
- * business-api（2.agent-registration）Agent 档案接口的前端客户端。
+ * marketplace-api（2.agent-registration）Agent 档案接口的前端客户端。
  *
  * 权威契约见 specs/2.agent-registration/design.md「接口契约」与
- * services/business-api/src/agents/{agent,patch-agent,credentials}.ts：
+ * web/apps/server/src/agents/{agent,patch-agent,credentials}.ts：
  * - `PATCH /api/agents/:id`：编辑除钱包地址外的字段，返回完整档案。
  * - `PUT /api/agents/:id/credentials`：整体覆盖写凭证，只返回 `keyVersion`/`configured`，
  *   不存在、也不会新增任何返回明文或密文的路径（AC-002）。
@@ -17,10 +17,10 @@ import { BUSINESS_API_BASE_URL } from "./base-url";
  * 会话过期或响应契约损坏由 `AgentApiRequestError` 统一承接，页面据此展示可重试错误态。
  */
 
-const API_BASE_URL = BUSINESS_API_BASE_URL;
+const API_BASE_URL = MARKETPLACE_API_BASE_URL;
 
 /**
- * 运行时校验 business-api 的响应体（codex review T-007 P2 修复：外部输入必须在边界
+ * 运行时校验 marketplace-api 的响应体（codex review T-007 P2 修复：外部输入必须在边界
  * 校验，见 .claude/rules/frontend.md 第 6 条）。网关返回结构不一致或字段缺失时
  * （如 `tags` 缺失/非数组）此前会直接进入可信表单状态，可能在 `agent.tags.join(...)`
  * 等处崩溃；现在会在边界处抛出 `AgentApiRequestError`，由调用方统一的错误态承接。
@@ -108,7 +108,7 @@ export async function fetchAgent(agentId: string): Promise<Agent> {
 	const response = await fetch(`${API_BASE_URL}/agents/${agentId}`, {
 		method: "GET",
 		headers: { accept: "application/json" },
-		// business-api 与 web 是不同源部署，SIWE session 以 httpOnly cookie 下发；
+		// marketplace-api 与 web 是不同源部署，SIWE session 以 httpOnly cookie 下发；
 		// 不带 credentials:"include" 时浏览器默认按 same-origin 处理，cookie 不会
 		// 被发送，所有请求都会得到 401（codex review T-007 P1 修复）。
 		credentials: "include",

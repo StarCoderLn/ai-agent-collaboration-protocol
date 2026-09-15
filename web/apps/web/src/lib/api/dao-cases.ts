@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
-import { BUSINESS_API_BASE_URL } from "./base-url";
+import { MARKETPLACE_API_BASE_URL } from "./base-url";
 
 const minor = z.string().regex(/^\d+$/);
 const hash = z.string().regex(/^0x[0-9a-f]{64}$/);
@@ -84,7 +84,7 @@ export async function confirmDaoEvidence(
 	txHash: string,
 ): Promise<void> {
 	const response = await fetch(
-		`${BUSINESS_API_BASE_URL}/dao/cases/${encodeURIComponent(disputeId)}/actions`,
+		`${MARKETPLACE_API_BASE_URL}/dao/cases/${encodeURIComponent(disputeId)}/actions`,
 		{
 			method: "POST",
 			credentials: "include",
@@ -145,7 +145,7 @@ export async function inspectDaoEvidence(
 	txHash: string,
 ): Promise<DaoEvidenceInspection> {
 	const response = await fetch(
-		`${BUSINESS_API_BASE_URL}/dao/cases/${encodeURIComponent(disputeId)}/actions`,
+		`${MARKETPLACE_API_BASE_URL}/dao/cases/${encodeURIComponent(disputeId)}/actions`,
 		{
 			method: "POST",
 			credentials: "include",
@@ -176,7 +176,7 @@ export async function prepareDaoCaseAction(
 	action: DaoCaseAction,
 ): Promise<PreparedDaoCaseAction> {
 	const response = await fetch(
-		`${BUSINESS_API_BASE_URL}/dao/cases/${encodeURIComponent(disputeId)}/actions`,
+		`${MARKETPLACE_API_BASE_URL}/dao/cases/${encodeURIComponent(disputeId)}/actions`,
 		{
 			method: "POST",
 			credentials: "include",

@@ -49,6 +49,7 @@ import ResultDeliverableWorkspace from "@/components/deliverables/result-deliver
 import { useFullscreenTarget } from "@/components/fullscreen/use-fullscreen-target";
 import { useLocale } from "@/components/i18n/locale-provider";
 import { DatePicker } from "@/components/platform/date-picker";
+import { useCandidateExposureTracking } from "@/components/platform/use-candidate-exposure-tracking";
 import {
 	acceptWorkflowNodeResult,
 	confirmWorkflowNodeCandidate,
@@ -56,6 +57,7 @@ import {
 	type FormalWorkflowNode,
 	getWorkflowNodeAcceptancePreview,
 	openTaskDispute,
+	recordWorkflowNodeCandidateExposure,
 	rematchWorkflowNodeCandidates,
 	requestWorkflowNodeRework,
 	retryFailedWorkflowNodeExecution,
@@ -1911,6 +1913,16 @@ function WorkflowCandidateSelection({
 			}),
 		[candidates, preference],
 	);
+	const sendExposure = useCallback(
+		(input: Parameters<typeof recordWorkflowNodeCandidateExposure>[2]) =>
+			recordWorkflowNodeCandidateExposure(taskId, node.id, input),
+		[node.id, taskId],
+	);
+	const candidateGridRef = useCandidateExposureTracking(
+		node.candidateRecord?.id ?? null,
+		orderedCandidates.map((candidate) => candidate.agentId),
+		sendExposure,
+	);
 
 	function handleRematch() {
 		if (deadlineBlocked) {
@@ -2033,7 +2045,7 @@ function WorkflowCandidateSelection({
 					runSelection={runSelection}
 				/>
 			) : (
-				<div className="mt-5 grid gap-4 xl:grid-cols-3">
+				<div ref={candidateGridRef} className="mt-5 grid gap-4 xl:grid-cols-3">
 					{orderedCandidates.map((candidate, index) => {
 						const currentlySelected =
 							candidate.agentId === node.selection?.agentId;
@@ -2042,6 +2054,8 @@ function WorkflowCandidateSelection({
 						return (
 							<article
 								key={candidate.agentId}
+								data-matching-agent-id={candidate.agentId}
+								data-matching-position={index + 1}
 								className="flex flex-col rounded-2xl border border-primary/20 bg-background/80 p-4 shadow-[0_14px_45px_rgb(0_0_0/10%)]"
 							>
 								<div className="flex items-start justify-between gap-3">

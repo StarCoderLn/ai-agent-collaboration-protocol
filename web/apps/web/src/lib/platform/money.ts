@@ -1,8 +1,8 @@
-/** Web 与 Business API 共用的唯一业务结算币种；ETH 只用于底层网络 Gas。 */
+/** Web 与 Marketplace API 共用的唯一业务结算币种；ETH 只用于底层网络 Gas。 */
 export const MVP_CURRENCY = "USDC" as const;
 const USDC_DECIMALS = 6;
 const USDC_MINOR_UNITS = BigInt("1000000");
-// 表单即时校验必须与 Business API 的资金契约一致。常量使用最小单位 bigint，
+// 表单即时校验必须与 Marketplace API 的资金契约一致。常量使用最小单位 bigint，
 // 禁止通过 Number 比较金额，避免 6 位精度金额在边界处出现舍入差异。
 export const MIN_USDC_BUSINESS_AMOUNT_MINOR = USDC_MINOR_UNITS;
 export const MAX_TASK_BUDGET_MINOR = BigInt("100000000000"); // 100,000 USDC

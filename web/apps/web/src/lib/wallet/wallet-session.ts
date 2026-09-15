@@ -19,7 +19,7 @@ import {
 } from "wagmi/actions";
 import { z } from "zod";
 
-import { BUSINESS_API_BASE_URL } from "../api/base-url";
+import { MARKETPLACE_API_BASE_URL } from "../api/base-url";
 import {
 	anvil,
 	metaMaskConnector,
@@ -71,7 +71,7 @@ export class WalletRequestTimeoutError extends Error {
 export async function restoreWalletSession(): Promise<WalletSession | null> {
 	let response: Response;
 	try {
-		response = await fetch(`${BUSINESS_API_BASE_URL}/auth/session`, {
+		response = await fetch(`${MARKETPLACE_API_BASE_URL}/auth/session`, {
 			credentials: "include",
 		});
 	} catch {
@@ -101,7 +101,7 @@ export async function restoreAuthorizedWalletConnection(): Promise<void> {
 }
 
 export async function connectWalletSession(): Promise<WalletSession> {
-	const nonceResponse = await fetch(`${BUSINESS_API_BASE_URL}/auth/nonce`, {
+	const nonceResponse = await fetch(`${MARKETPLACE_API_BASE_URL}/auth/nonce`, {
 		credentials: "include",
 	});
 	const nonce = nonceSchema.safeParse(await safeJson(nonceResponse));
@@ -119,12 +119,15 @@ export async function connectWalletSession(): Promise<WalletSession> {
 		() => signMessage(wagmiConfig, { account: walletAddress, message }),
 		"钱包没有返回有效签名",
 	);
-	const verifyResponse = await fetch(`${BUSINESS_API_BASE_URL}/auth/verify`, {
-		method: "POST",
-		credentials: "include",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ message, signature }),
-	});
+	const verifyResponse = await fetch(
+		`${MARKETPLACE_API_BASE_URL}/auth/verify`,
+		{
+			method: "POST",
+			credentials: "include",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ message, signature }),
+		},
+	);
 	const verified = verifiedSchema.safeParse(await safeJson(verifyResponse));
 	if (
 		!verifyResponse.ok ||
@@ -145,7 +148,7 @@ export async function connectWalletSession(): Promise<WalletSession> {
 export async function logoutWalletSession(): Promise<void> {
 	let response: Response;
 	try {
-		response = await fetch(`${BUSINESS_API_BASE_URL}/auth/session`, {
+		response = await fetch(`${MARKETPLACE_API_BASE_URL}/auth/session`, {
 			method: "DELETE",
 			credentials: "include",
 		});

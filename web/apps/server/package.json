@@ -1,0 +1,51 @@
+{
+	"name": "@web/marketplace-api",
+	"version": "0.0.0",
+	"private": true,
+	"description": "基于 Hono 的 Marketplace API，承载任务、Agent、托管、评分和 DAO 业务边界。",
+	"type": "module",
+	"engines": {
+		"node": ">=22"
+	},
+	"scripts": {
+		"generate:routes": "node scripts/generate-route-registry.mjs",
+		"dev": "pnpm generate:routes && tsx watch src/server.ts",
+		"typecheck": "tsc --noEmit",
+		"check-types": "tsc --noEmit",
+		"test": "vitest run",
+		"build": "pnpm generate:routes && esbuild src/server.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/server.mjs",
+		"start": "node dist/server.mjs",
+		"infra:build-lambda": "bash infra/build-lambda.sh",
+		"infra:synth": "pnpm infra:build-lambda && cd infra && pnpm exec cdk synth",
+		"infra:diff": "pnpm infra:build-lambda && cd infra && pnpm exec cdk diff",
+		"infra:deploy": "pnpm infra:build-lambda && cd infra && pnpm exec cdk deploy",
+		"localstack:start": "node scripts/localstack.mjs start",
+		"localstack:bootstrap": "node scripts/localstack.mjs bootstrap",
+		"localstack:deploy": "node scripts/localstack.mjs deploy",
+		"localstack:verify": "node scripts/localstack.mjs verify",
+		"localstack:status": "node scripts/localstack.mjs status",
+		"localstack:stop": "node scripts/localstack.mjs stop"
+	},
+	"dependencies": {
+		"@hono/node-server": "^2.1.1",
+		"@aws-sdk/client-kms": "^3.679.0",
+		"ethers": "^6.17.0",
+		"hono": "^4.13.3",
+		"js-sha3": "^0.13.0",
+		"pg": "^8.23.0",
+		"siwe": "^3.0.0",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@types/node": "^22.9.0",
+		"@types/pg": "^8.23.1",
+		"aws-cdk": "^2.1138.0",
+		"aws-cdk-local": "^3.0.1",
+		"aws-cdk-lib": "^2.266.0",
+		"constructs": "^10.8.1",
+		"esbuild": "^0.27.7",
+		"tsx": "^4.23.12",
+		"typescript": "^5.6.3",
+		"vitest": "^2.1.4"
+	}
+}

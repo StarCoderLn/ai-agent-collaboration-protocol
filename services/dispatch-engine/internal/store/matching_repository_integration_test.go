@@ -1,13 +1,22 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/dispatch"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/domain"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matching"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matchingfeedback"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matchingv2"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/semanticmatching"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/temporaltraining"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -361,10 +370,357 @@ func TestPendingInitialWorkflowNodesRetriesAutomaticNodeWithFrozenCandidates(t *
 	}
 }
 
+func TestMatchingFeedbackRepositoryPersistsOneImmutableExposureFact(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	cleanupMatchingFixtures(t, ctx, pool)
+	t.Cleanup(func() { cleanupMatchingFixtures(t, ctx, pool) })
+	deadline := time.Now().UTC().Add(2 * time.Hour)
+	_, err = pool.Exec(ctx, `
+		INSERT INTO tasks(
+		 id,publisher_id,title,description,acceptance_criteria,deliverable_format,category_id,
+		 category_version,tag_names,pricing_type,budget_min_minor,budget_max_minor,currency,
+		 deadline,required_capability,attachments,visibility,status,assignment_mode_config,
+		 acceptance_mode,acceptor_config
+		) VALUES($1,'publisher','曝光事实测试','只允许冻结候选形成训练曝光。','候选进入可视区域一秒。',
+		 'Go 测试',$2,1,ARRAY['agent'],'fixed',7000000,7000000,'USDC',$3,'匹配反馈','[]'::jsonb,
+		 'private','planning','{"mode":"manual"}'::jsonb,'manual','{}'::jsonb)`, integrationTaskID, integrationCategory, deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO task_workflow_runs(
+		 id,task_id,status,currency,total_budget_minor,released_amount_minor,refundable_amount_minor
+		) VALUES($1,$2,'planning','USDC',7000000,0,7000000)`, integrationRunID, integrationTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO task_workflow_nodes(
+		 id,workflow_run_id,task_id,node_key,kind,title,description,category_id,tags,
+		 required_capability,input_contract,output_contract,budget_cap_minor,position_index,status
+		) VALUES($1,$2,$3,'research','research','资料研究','生成研究材料',$4,ARRAY['agent'],
+		 '资料研究','TaskContract','ResearchArtifact',7000000,1,'selecting')`, integrationNodeID, integrationRunID, integrationTaskID, integrationCategory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO agents(
+		 id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,
+		 pricing_type,price_amount,price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
+		) VALUES($1,'0x1111111111111111111111111111111111111111','0x1111111111111111111111111111111111111111',
+		 '曝光 Agent',$2,'资料研究',ARRAY['agent'],'fixed',7000000,'USDC','http://127.0.0.1:3999/agent',
+		 'exposure@example.com','active',1800,1)`, integrationAgentID, integrationCategory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recordID string
+	err = pool.QueryRow(ctx, `
+		INSERT INTO job_distribution_records(
+		 task_id,workflow_node_id,rule_version,input_fingerprint,input_snapshot,candidates,filter_reasons
+		) VALUES($1,$2,'ranking-v1','exposure-integration','{}'::jsonb,
+		 '[{"agentId":"80000000-0000-4000-8000-000000000002"}]'::jsonb,'{}'::jsonb)
+		RETURNING id::text`, integrationTaskID, integrationNodeID).Scan(&recordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &MatchingFeedbackRepository{Pool: pool}
+	exposure := matchingfeedback.Exposure{
+		EventKey: "matching-exposure-integration-1", ViewSessionID: "80000000-0000-4000-8000-000000000007",
+		DistributionRecordID: recordID, TaskID: integrationTaskID, WorkflowNodeID: integrationNodeID,
+		AgentID: integrationAgentID, ActorID: "publisher", Position: 1, VisibleMillis: 1000,
+		OccurredAt: time.Now().UTC().Truncate(time.Millisecond),
+	}
+	if err = repository.RecordExposure(ctx, exposure); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.RecordExposure(ctx, exposure); err != nil {
+		t.Fatalf("same event must replay idempotently: %v", err)
+	}
+	exposure.Position = 2
+	if err = repository.RecordExposure(ctx, exposure); !errors.Is(err, matchingfeedback.ErrExposureDenied) {
+		t.Fatalf("same event key changed its immutable payload: %v", err)
+	}
+	var count int
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM matching_candidate_exposures WHERE event_key=$1`, exposure.EventKey).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("exposure was duplicated: count=%d err=%v", count, err)
+	}
+}
+
+func TestMatchingV2RepositoryClaimsAndAtomicallyPersistsShadowScores(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	cleanupMatchingFixtures(t, ctx, pool)
+	t.Cleanup(func() { cleanupMatchingFixtures(t, ctx, pool) })
+	deadline := time.Now().UTC().Add(2 * time.Hour)
+	_, err = pool.Exec(ctx, `
+		INSERT INTO tasks(
+		 id,publisher_id,title,description,acceptance_criteria,deliverable_format,category_id,
+		 category_version,tag_names,pricing_type,budget_min_minor,budget_max_minor,currency,
+		 deadline,required_capability,attachments,visibility,status,assignment_mode_config,
+		 acceptance_mode,acceptor_config
+		) VALUES($1,'publisher','影子任务测试','验证正式候选与 V2 影子分数隔离。','影子失败不得影响正式候选。',
+		 'Go 测试',$2,1,ARRAY['agent'],'fixed',7000000,7000000,'USDC',$3,'匹配 V2','[]'::jsonb,
+		 'private','matching','{"mode":"manual"}'::jsonb,'manual','{}'::jsonb)`, integrationTaskID, integrationCategory, deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO agents(
+		 id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,
+		 pricing_type,price_amount,price_currency,service_endpoint,email,status,estimated_duration_seconds,response_minutes
+		) VALUES($1,'0x1111111111111111111111111111111111111111','0x1111111111111111111111111111111111111111',
+		 '影子 Agent',$2,'后端服务',ARRAY['agent'],'fixed',7000000,'USDC','http://127.0.0.1:3999/agent',
+		 'shadow@example.com','active',1800,1)`, integrationAgentID, integrationCategory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := json.RawMessage(`{"featureSchemaVersion":"matching-v2.features.v1","candidates":[{"schemaVersion":"matching-v2.dataset.v1","dataOrigin":"real","taskId":"80000000-0000-4000-8000-000000000001","agentId":"80000000-0000-4000-8000-000000000002","taskCategory":"40000000-0000-4000-8000-000000000001","agentCategory":"40000000-0000-4000-8000-000000000001","occurredAt":"2026-09-14T00:00:00Z","semanticSimilarity":0.9,"tagCoverage":1,"priceRatio":1,"qualityScore":4.5,"confidence":0,"responseMinutes":1,"currentLoad":0,"onTimeRate":0,"reworkRate":0,"disputeRate":0,"admissionScore":80,"position":1,"isNew":1}]}`)
+	record, err := (&MatchingRepository{Pool: pool}).Save(ctx, matching.Record{
+		TaskID: integrationTaskID, RuleVersion: "ranking-v1", InputFingerprint: "matching-v2-shadow-integration",
+		InputSnapshot: json.RawMessage(`{"AssignmentMode":"manual"}`),
+		Candidates:    []matching.CandidateView{{AgentID: integrationAgentID, QuoteMinor: "7000000", MatchedTags: []string{}, UnmatchedTags: []string{}, RecommendationBadges: []string{}, DeliveryCases: []domain.AgentDeliveryCase{}}},
+		FilterReasons: map[string]domain.EligibilityReason{}, MatchingMode: "semantic_v1",
+		SemanticModel: "text-embedding-3-small", ShadowRequest: request,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO matching_v2_training_runs(
+		 id,workflow_id,request_fingerprint,status,data_origin,window_start,window_end,
+		 feature_schema_version,started_at,completed_at
+		) VALUES('80000000-0000-4000-8000-000000000008','shadow-integration-workflow',repeat('a',64),
+		 'succeeded','synthetic',now()-interval '1 day',now(),'matching-v2.features.v1',now(),now())`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const modelVersion = "matching-v2-20260914000000-12345678"
+	_, err = pool.Exec(ctx, `
+		INSERT INTO matching_v2_model_versions(
+		 version,training_run_id,state,feature_schema_version,artifact_uri,artifact_sha256,
+		 training_data_origin,sample_count,metrics
+		) VALUES($1,'80000000-0000-4000-8000-000000000008','candidate','matching-v2.features.v1',
+		 '/tmp/model.onnx',repeat('b',64),'synthetic',300,'{}'::jsonb)`, modelVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trainingRepository := &MatchingTrainingRepository{Pool: pool}
+	if err = trainingRepository.PromoteShadowModel(ctx, modelVersion, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	repository := &MatchingV2Repository{Pool: pool}
+	var databaseNow time.Time
+	var pendingJobs int
+	var modelState string
+	if err = pool.QueryRow(ctx, `SELECT now(),(SELECT count(*) FROM matching_v2_shadow_jobs WHERE distribution_record_id=$1),(SELECT state FROM matching_v2_model_versions WHERE version=$2)`, record.ID, modelVersion).Scan(&databaseNow, &pendingJobs, &modelState); err != nil {
+		t.Fatal(err)
+	}
+	if pendingJobs != 1 || modelState != "shadow" {
+		t.Fatalf("shadow prerequisites were not persisted: jobs=%d model=%s", pendingJobs, modelState)
+	}
+	claim, claimed, err := repository.Claim(ctx, databaseNow.Add(time.Millisecond), time.Minute)
+	if err != nil || !claimed || claim.DistributionRecordID != record.ID || claim.ModelVersion != modelVersion {
+		t.Fatalf("shadow task was not claimed with deployed model: claim=%+v claimed=%t err=%v", claim, claimed, err)
+	}
+	err = repository.Complete(ctx, claim, []matchingv2.Score{{
+		AgentID: integrationAgentID, PCTR: 0.5, PCVR: 0.4, PCTCVR: 0.2, ShadowRank: 1,
+	}}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	var scoreCount int
+	err = pool.QueryRow(ctx, `
+		SELECT job.status,count(score.agent_id)
+		  FROM matching_v2_shadow_jobs job
+		  LEFT JOIN matching_v2_shadow_scores score ON score.distribution_record_id=job.distribution_record_id
+		 WHERE job.distribution_record_id=$1 GROUP BY job.status`, record.ID).Scan(&status, &scoreCount)
+	if err != nil || status != "scored" || scoreCount != 1 {
+		t.Fatalf("shadow completion was not atomic: status=%s scores=%d err=%v", status, scoreCount, err)
+	}
+	skipped, err := trainingRepository.PrepareDataset(ctx, temporaltraining.PrepareInput{
+		WorkflowID: "matching-v2-small-integration", WindowStart: databaseNow.Add(-2 * time.Hour), WindowEnd: databaseNow.Add(-time.Hour),
+	}, t.TempDir()+"/small.jsonl")
+	if err != nil || skipped.SkipReason != "MATCHING_TRAINING_SAMPLE_TOO_SMALL" || skipped.SampleCount != 0 {
+		t.Fatalf("small dataset must be an audited skip: prepared=%+v err=%v", skipped, err)
+	}
+	// 300 次真实浏览器会话用于越过训练数据门槛。选中 Agent 明确拒单，因此 accepted
+	// 和 success 均为 false；这是一条完整终态，而不是把仍在执行的样本标成失败。
+	if _, err = pool.Exec(ctx, `UPDATE job_distribution_records SET final_selection_agent_id=$2 WHERE id=$1`, record.ID, integrationAgentID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO task_assignments(
+		 id,task_id,agent_id,distribution_record_id,agreed_amount_minor,status,assigned_by,
+		 assigned_at,accept_by,responded_at
+		) VALUES('80000000-0000-4000-8000-000000000009',$1,$2,$3,7000000,'accept_failed',
+		 'publisher',now()-interval '2 minutes',now()-interval '1 minute',now()-interval '1 minute')`, integrationTaskID, integrationAgentID, record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO matching_candidate_exposures(
+		 event_key,view_session_id,distribution_record_id,task_id,agent_id,actor_id,position,
+		 visible_millis,data_origin,occurred_at
+		)
+		SELECT 'matching-export-'||lpad(value::text,4,'0'),gen_random_uuid(),$1,$2,$3,
+		       'publisher',1,1000,'real',$4::timestamptz-interval '5 minutes'
+		  FROM generate_series(1,300) value`, record.ID, integrationTaskID, integrationAgentID, databaseNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := trainingRepository.PrepareDataset(ctx, temporaltraining.PrepareInput{
+		WorkflowID: "matching-v2-export-integration", WindowStart: databaseNow.Add(-time.Hour), WindowEnd: databaseNow.Add(time.Hour),
+	}, t.TempDir()+"/real.jsonl")
+	if err != nil || prepared.SampleCount != 300 || prepared.DataOrigin != "real" {
+		t.Fatalf("real funnel export mismatch: prepared=%+v err=%v", prepared, err)
+	}
+	encoded, err := os.ReadFile(prepared.DatasetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exported map[string]any
+	if err = json.Unmarshal(bytes.Split(encoded, []byte{'\n'})[0], &exported); err != nil || exported["selected"] != true || exported["accepted"] != false || exported["success"] != false {
+		t.Fatalf("terminal rejection labels are invalid: example=%+v err=%v", exported, err)
+	}
+}
+
+// TestMatchingV1ToV2WorkerLiveModels 是可选的真实组合验收：正式 MatchingService 先调用
+// OpenAI Embedding 和 pgvector 建立 V1 私有召回池，再由 Worker 调用正在运行的 PyTorch
+// HTTP 服务并原子保存 V2 分数。默认测试不依赖公网或常驻模型进程；只有调用方显式
+// 提供两类模型配置时才执行这条边界检查。
+func TestMatchingV1ToV2WorkerLiveModels(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	modelURL := os.Getenv("MATCHING_V2_LIVE_MODEL_URL")
+	modelVersion := os.Getenv("MATCHING_V2_LIVE_MODEL_VERSION")
+	openAIKey := os.Getenv("OPENAI_API_KEY")
+	if databaseURL == "" || modelURL == "" || modelVersion == "" || openAIKey == "" {
+		t.Skip("DATABASE_URL and live V1/V2 models are not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	cleanupMatchingFixtures(t, ctx, pool)
+	t.Cleanup(func() { cleanupMatchingFixtures(t, ctx, pool) })
+
+	deadline := time.Now().UTC().Add(2 * time.Hour)
+	_, err = pool.Exec(ctx, `
+		INSERT INTO tasks(
+		 id,publisher_id,title,description,acceptance_criteria,deliverable_format,category_id,
+		 category_version,tag_names,pricing_type,budget_min_minor,budget_max_minor,currency,
+		 deadline,required_capability,attachments,visibility,status,assignment_mode_config,
+		 acceptance_mode,acceptor_config
+		) VALUES($1,'publisher','真实 V2 模型组合验收','验证影子 Worker 调用模型并保存完整排序。',
+		 '影子结果不改变正式候选。','Go 测试',$2,1,ARRAY['agent'],'fixed',7000000,7000000,
+		 'USDC',$3,'匹配 V2','[]'::jsonb,'private','matching','{"mode":"manual"}'::jsonb,
+		 'manual','{}'::jsonb)`, integrationTaskID, integrationCategory, deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO agents(
+		 id,provider_wallet_address,payout_wallet_address,name,category_id,capability_desc,tags,
+		 pricing_type,price_amount,price_currency,service_endpoint,email,status,
+		 estimated_duration_seconds,response_minutes
+		) VALUES
+		 ($1,'0x1111111111111111111111111111111111111111',
+		  '0x1111111111111111111111111111111111111111','API 集成专家',$3,
+		  '设计 Go 与 TypeScript 后端接口并实现 Agent 调度服务',ARRAY['agent','api','go'],
+		  'fixed',6500000,'USDC','http://127.0.0.1:3999/agent',
+		  'live-shadow-api@example.com','active',1800,1),
+		 ($2,'0x2222222222222222222222222222222222222222',
+		  '0x2222222222222222222222222222222222222222','全栈交付专家',$3,
+		  '完成 Next.js 前端、Go API 与数据库集成',ARRAY['agent','next.js','postgresql'],
+		  'fixed',7000000,'USDC','http://127.0.0.1:3998/agent',
+		  'live-shadow-fullstack@example.com','active',2400,3)`,
+		integrationAgentID, overBudgetAgentID, integrationCategory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `
+		INSERT INTO agent_status_config(agent_id,probation_budget_cap_percentile)
+		VALUES($1,1),($2,1)`, integrationAgentID, overBudgetAgentID); err != nil {
+		t.Fatal(err)
+	}
+	repository := &MatchingRepository{Pool: pool}
+	service := &matching.Service{
+		Repository: repository,
+		Semantic: &semanticmatching.Service{
+			Embedder: &semanticmatching.OpenAIEmbedder{
+				Client: &http.Client{Timeout: 15 * time.Second}, BaseURL: "https://api.openai.com/v1",
+				APIKey: openAIKey, Model: semanticmatching.DefaultModel, Dimensions: semanticmatching.DefaultDimensions,
+			},
+			Store:  &semanticmatching.PostgresStore{Pool: pool},
+			Config: semanticmatching.Config{Model: semanticmatching.DefaultModel, Dimensions: semanticmatching.DefaultDimensions, TopK: 30},
+		},
+	}
+	record, err := service.RunMatching(ctx, integrationTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.MatchingMode != "semantic_v1" || len(record.Candidates) != 2 {
+		t.Fatalf("V1 did not persist its formal result: mode=%s candidates=%d", record.MatchingMode, len(record.Candidates))
+	}
+	scorer := &matchingv2.HTTPScorer{BaseURL: modelURL, Client: &http.Client{Timeout: 10 * time.Second}}
+	if err = scorer.CheckHealth(ctx, modelVersion); err != nil {
+		t.Fatal(err)
+	}
+	trainingRepository := &MatchingTrainingRepository{Pool: pool}
+	if err = trainingRepository.PromoteShadowModel(ctx, modelVersion, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	worker := &matchingv2.Worker{
+		Repository: &MatchingV2Repository{Pool: pool}, Scorer: scorer, Lease: time.Minute,
+	}
+	processed, err := worker.RunOnce(ctx)
+	if err != nil || !processed {
+		t.Fatalf("live shadow worker did not process the task: processed=%t err=%v", processed, err)
+	}
+	var status, persistedVersion string
+	var scoreCount int
+	err = pool.QueryRow(ctx, `
+		SELECT job.status,job.model_version,count(score.agent_id)
+		  FROM matching_v2_shadow_jobs job
+		  LEFT JOIN matching_v2_shadow_scores score
+		    ON score.distribution_record_id=job.distribution_record_id
+		 WHERE job.distribution_record_id=$1
+		 GROUP BY job.status,job.model_version`, record.ID).Scan(&status, &persistedVersion, &scoreCount)
+	if err != nil || status != "scored" || persistedVersion != modelVersion || scoreCount != 2 {
+		t.Fatalf("live model scores were not persisted: status=%s version=%s scores=%d err=%v", status, persistedVersion, scoreCount, err)
+	}
+}
+
 func cleanupMatchingFixtures(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	// 明确列出测试 UUID，避免清理命令影响用户或其他用例创建的数据。
 	statements := []string{
+		`DELETE FROM matching_candidate_exposures WHERE task_id='80000000-0000-4000-8000-000000000001'`,
+		`DELETE FROM matching_v2_shadow_scores WHERE distribution_record_id IN (SELECT id FROM job_distribution_records WHERE task_id='80000000-0000-4000-8000-000000000001')`,
+		`DELETE FROM matching_v2_shadow_jobs WHERE distribution_record_id IN (SELECT id FROM job_distribution_records WHERE task_id='80000000-0000-4000-8000-000000000001')`,
+		`DELETE FROM matching_v2_model_versions WHERE training_run_id='80000000-0000-4000-8000-000000000008'`,
+		`DELETE FROM matching_v2_training_runs WHERE id='80000000-0000-4000-8000-000000000008'`,
+		`DELETE FROM matching_v2_training_runs WHERE workflow_id='matching-v2-export-integration'`,
+		`DELETE FROM matching_v2_training_runs WHERE workflow_id='matching-v2-small-integration'`,
 		`DELETE FROM task_transition_outbox WHERE task_id='80000000-0000-4000-8000-000000000001'`,
 		`DELETE FROM dispatch_attempts WHERE assignment_id IN (SELECT id FROM task_assignments WHERE task_id='80000000-0000-4000-8000-000000000001')`,
 		`DELETE FROM task_assignments WHERE task_id='80000000-0000-4000-8000-000000000001'`,
@@ -373,6 +729,7 @@ func cleanupMatchingFixtures(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		`DELETE FROM task_workflow_nodes WHERE task_id='80000000-0000-4000-8000-000000000001'`,
 		`DELETE FROM task_workflow_runs WHERE task_id='80000000-0000-4000-8000-000000000001'`,
 		`DELETE FROM agent_status_config WHERE agent_id IN ('80000000-0000-4000-8000-000000000002','80000000-0000-4000-8000-000000000003')`,
+		`DELETE FROM agent_matching_embeddings WHERE agent_id IN ('80000000-0000-4000-8000-000000000002','80000000-0000-4000-8000-000000000003')`,
 		`DELETE FROM agents WHERE id IN ('80000000-0000-4000-8000-000000000002','80000000-0000-4000-8000-000000000003')`,
 		`DELETE FROM tasks WHERE id='80000000-0000-4000-8000-000000000001'`,
 	}

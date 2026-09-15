@@ -19,13 +19,13 @@ func (f fakeKMS) DecryptWithContext(aws.Context, *kms.DecryptInput, ...request.O
 	return &kms.DecryptOutput{Plaintext: append([]byte(nil), f.key...)}, nil
 }
 
-func TestEnvelopeDecryptorReadsBusinessAPIFormatWithoutExposingCiphertext(t *testing.T) {
+func TestEnvelopeDecryptorReadsMarketplaceAPIFormatWithoutExposingCiphertext(t *testing.T) {
 	key := []byte("12345678901234567890123456789012")
 	secret := "agent-hmac-secret"
 	packed := encryptedFixture(t, key, secret)
 	decrypted, err := (EnvelopeDecryptor{KMS: fakeKMS{key: key}}).DecryptCredential(context.Background(), packed)
 	if err != nil || decrypted != secret {
-		t.Fatalf("decrypt business envelope: secret=%q err=%v", decrypted, err)
+		t.Fatalf("decrypt Marketplace API envelope: secret=%q err=%v", decrypted, err)
 	}
 	if _, err = (EnvelopeDecryptor{KMS: fakeKMS{key: key}}).DecryptCredential(context.Background(), packed[:len(packed)-4]); err == nil {
 		t.Fatal("truncated or tampered envelope must be rejected")

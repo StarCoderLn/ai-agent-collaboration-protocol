@@ -29,7 +29,7 @@ type HTTPSender struct {
 
 func (s *HTTPSender) Send(ctx context.Context, event Event) error {
 	if s.BaseURL == "" || s.Token == "" || s.Client == nil {
-		return errors.New("business api transition sender is not configured")
+		return errors.New("Marketplace API transition sender is not configured")
 	}
 	base, err := url.Parse(s.BaseURL)
 	if err != nil {

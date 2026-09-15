@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 
-const require = createRequire(new URL("../services/business-api/package.json", import.meta.url));
+const require = createRequire(new URL("../web/apps/server/package.json", import.meta.url));
 const { Contract, JsonRpcProvider, getAddress, id } = require("ethers");
 const { SiweMessage } = require("siwe");
 const backgroundOnly = process.argv.slice(2).includes("--background");

@@ -13,7 +13,7 @@ export default defineConfig({
 		environment: "jsdom",
 		setupFiles: ["./src/test/setup.ts"],
 		env: {
-			NEXT_PUBLIC_BUSINESS_API_URL: "https://business-api.test/api",
+			NEXT_PUBLIC_MARKETPLACE_API_URL: "https://marketplace-api.test/api",
 		},
 	},
 });

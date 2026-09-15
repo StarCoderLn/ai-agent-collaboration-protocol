@@ -4,11 +4,11 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "../agents/product-workflow/node_modules/zod/index.js";
-import { SiweMessage } from "../services/business-api/node_modules/siwe/dist/siwe.js";
+import { SiweMessage } from "../web/apps/server/node_modules/siwe/dist/siwe.js";
 
 /**
  * 本脚本验证“正在运行的本地产品”，不是在内存中调用 service 的单元测试。
- * 它经过与浏览器相同的 SIWE、Business API、PostgreSQL、Go 调度、Agent 协议回调
+ * 它经过与浏览器相同的 SIWE、Marketplace API、PostgreSQL、Go 调度、Agent 协议回调
  * 和 Anvil Escrow 合约边界，最终覆盖一次返工、验收、结算和评分。
  *
  * 安全边界：只允许 loopback URL 和 Anvil 31337。脚本使用 Anvil 已解锁的公开默认
@@ -17,7 +17,7 @@ import { SiweMessage } from "../services/business-api/node_modules/siwe/dist/siw
  */
 
 const WEB_ORIGIN = process.env.AICP_WEB_ORIGIN ?? "http://127.0.0.1:3301";
-const API_ORIGIN = process.env.AICP_BUSINESS_API_ORIGIN ?? "http://127.0.0.1:3100";
+const API_ORIGIN = process.env.AICP_MARKETPLACE_API_ORIGIN ?? "http://127.0.0.1:3100";
 const RPC_URL = process.env.AICP_ANVIL_RPC_URL ?? "http://127.0.0.1:8545";
 const INTERNAL_TOKEN = process.env.DISPATCH_INTERNAL_TOKEN ?? "aicp-local-internal-token-2026";
 // 使用 EIP-55 形式写入 SIWE 消息；siwe v3 会与签名恢复地址做严格字符串比较。
@@ -115,7 +115,7 @@ await main().catch((error) => {
 
 async function main() {
 	assertLocalBoundary(WEB_ORIGIN, "AICP_WEB_ORIGIN");
-	assertLocalBoundary(API_ORIGIN, "AICP_BUSINESS_API_ORIGIN");
+	assertLocalBoundary(API_ORIGIN, "AICP_MARKETPLACE_API_ORIGIN");
 	assertLocalBoundary(RPC_URL, "AICP_ANVIL_RPC_URL");
 	const chainId = await rpc("eth_chainId", []);
 	if (chainId !== "0x7a69") throw new Error(`拒绝运行：RPC Chain ID 为 ${String(chainId)}，预期 Anvil 31337`);

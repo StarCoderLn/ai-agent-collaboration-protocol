@@ -15,6 +15,7 @@ import (
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/domain"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/executionproxy"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matching"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/matchingfeedback"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/protocol"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/sandboxadmission"
 )
@@ -49,6 +50,7 @@ type Server struct {
 	Matcher          Matcher
 	Dispatcher       Dispatcher
 	AssignmentReader AssignmentReader
+	MatchingFeedback *matchingfeedback.Service
 	AgentLifecycle   agentlifecycle.Transitioner
 	AdmissionRetry   interface {
 		RetryRound(ctx context.Context, agentID, actorID, idempotencyKey string, now time.Time) (sandboxadmission.RoundClaim, error)
@@ -65,7 +67,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/tasks/{id}/rematch", s.internal(s.rematch))
 	mux.HandleFunc("POST /internal/tasks/{id}/assignments", s.internal(s.confirmAssignment))
 	mux.HandleFunc("GET /internal/tasks/{id}/assignments/latest", s.internal(s.latestAssignment))
+	mux.HandleFunc("POST /internal/tasks/{id}/candidate-exposures", s.internal(s.recordTaskExposure))
 	mux.HandleFunc("GET /internal/tasks/{id}/workflow-nodes/{nodeId}/candidates", s.internal(s.getWorkflowNodeCandidates))
+	mux.HandleFunc("POST /internal/tasks/{id}/workflow-nodes/{nodeId}/candidate-exposures", s.internal(s.recordWorkflowNodeExposure))
 	mux.HandleFunc("POST /internal/tasks/{id}/workflow-nodes/{nodeId}/rematch", s.internal(s.rematchWorkflowNode))
 	mux.HandleFunc("POST /internal/tasks/{id}/workflow-nodes/{nodeId}/assignments", s.internal(s.confirmWorkflowNodeAssignment))
 	mux.HandleFunc("GET /internal/tasks/{id}/workflow-nodes/{nodeId}/assignments/latest", s.internal(s.latestWorkflowNodeAssignment))
@@ -82,6 +86,51 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	return mux
+}
+
+func (s *Server) recordTaskExposure(writer http.ResponseWriter, request *http.Request) {
+	s.recordCandidateExposure(writer, request, "")
+}
+
+func (s *Server) recordWorkflowNodeExposure(writer http.ResponseWriter, request *http.Request) {
+	s.recordCandidateExposure(writer, request, request.PathValue("nodeId"))
+}
+
+// recordCandidateExposure 是普通任务与工作流节点共享的可信边界。nodeID 为空明确表示
+// 普通任务快照；仓储会用 COALESCE 再次校验，不能跨两类快照伪造曝光。
+func (s *Server) recordCandidateExposure(writer http.ResponseWriter, request *http.Request, nodeID string) {
+	if s.MatchingFeedback == nil {
+		writeError(writer, http.StatusServiceUnavailable, "MATCHING_FEEDBACK_UNAVAILABLE", "匹配反馈服务暂不可用", true)
+		return
+	}
+	var input struct {
+		DistributionRecordID string    `json:"distributionRecordId"`
+		ViewSessionID        string    `json:"viewSessionId"`
+		AgentID              string    `json:"agentId"`
+		EventKey             string    `json:"eventKey"`
+		Position             int       `json:"position"`
+		VisibleMillis        int       `json:"visibleMillis"`
+		OccurredAt           time.Time `json:"occurredAt"`
+	}
+	if err := decodeStrictJSON(request, &input); err != nil {
+		writeError(writer, http.StatusUnprocessableEntity, "MATCHING_EXPOSURE_INVALID", "候选曝光格式不正确", false)
+		return
+	}
+	err := s.MatchingFeedback.RecordExposure(request.Context(), matchingfeedback.Exposure{
+		EventKey: input.EventKey, ViewSessionID: input.ViewSessionID, DistributionRecordID: input.DistributionRecordID,
+		TaskID: request.PathValue("id"), WorkflowNodeID: nodeID,
+		AgentID: input.AgentID, ActorID: request.Header.Get(headerInternalActor),
+		Position: input.Position, VisibleMillis: input.VisibleMillis, OccurredAt: input.OccurredAt,
+	})
+	if err == nil {
+		writeJSON(writer, http.StatusAccepted, map[string]bool{"recorded": true})
+		return
+	}
+	if errors.Is(err, matchingfeedback.ErrInvalidExposure) || errors.Is(err, matchingfeedback.ErrExposureDenied) {
+		writeError(writer, http.StatusUnprocessableEntity, "MATCHING_EXPOSURE_INVALID", "候选曝光与当前快照不一致", false)
+		return
+	}
+	writeError(writer, http.StatusInternalServerError, "MATCHING_EXPOSURE_FAILED", "候选曝光暂时无法记录", true)
 }
 
 func (s *Server) retryAgentAdmission(writer http.ResponseWriter, request *http.Request) {
@@ -138,7 +187,7 @@ func (s *Server) retryFailedExecution(writer http.ResponseWriter, request *http.
 		writeDispatchError(writer, err)
 		return
 	}
-	// 202 表示取消事实与 outbox 已持久化；任务主状态由 Business API 异步推进，调用方
+	// 202 表示取消事实与 outbox 已持久化；任务主状态由 Marketplace API 异步推进，调用方
 	// 应读取任务状态而不是假定这里已经进入 matching。
 	writeJSON(writer, http.StatusAccepted, result)
 }
@@ -283,7 +332,7 @@ func (s *Server) forwardExecutionCallback(writer http.ResponseWriter, request *h
 		request.Context(), request.PathValue("id"), workflowNodeID, operation, idempotencyKey, body,
 	)
 	if err != nil {
-		writeError(writer, http.StatusBadGateway, "BUSINESS_API_UNAVAILABLE", "业务状态服务暂不可用", true)
+		writeError(writer, http.StatusBadGateway, "MARKETPLACE_API_UNAVAILABLE", "业务状态服务暂不可用", true)
 		return
 	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")

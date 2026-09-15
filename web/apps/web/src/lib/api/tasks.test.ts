@@ -53,7 +53,7 @@ describe("formal task API client", () => {
 
 		expect(categories[0]?.name).toBe("产品与开发");
 		expect(fetch).toHaveBeenCalledWith(
-			"https://business-api.test/api/categories",
+			"https://marketplace-api.test/api/categories",
 			expect.objectContaining({ headers: expect.any(Headers) }),
 		);
 	});
@@ -117,7 +117,7 @@ describe("formal task API client", () => {
 		await archiveTask(taskId, "archive-task-idempotency-1");
 
 		expect(fetch).toHaveBeenCalledWith(
-			`https://business-api.test/api/tasks/${taskId}`,
+			`https://marketplace-api.test/api/tasks/${taskId}`,
 			expect.objectContaining({
 				method: "DELETE",
 				credentials: "include",
@@ -308,7 +308,7 @@ describe("formal task API client", () => {
 			],
 		});
 		expect(fetch).toHaveBeenCalledWith(
-			`https://business-api.test/api/tasks/${taskId}/workflow`,
+			`https://marketplace-api.test/api/tasks/${taskId}/workflow`,
 			expect.objectContaining({ credentials: "include" }),
 		);
 	});

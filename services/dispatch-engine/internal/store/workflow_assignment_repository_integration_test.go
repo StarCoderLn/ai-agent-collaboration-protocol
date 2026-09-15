@@ -322,7 +322,7 @@ func TestWorkflowExecutionRetryPostgresPreservesEscrowAndReplaysOnce(t *testing.
 			assignmentStatus, escrowStatus, nodeStatus, eventCount, err)
 	}
 
-	// 模拟 Business API 消费恢复事件后的权威状态迁移。匹配服务必须把被取消的旧
+	// 模拟 Marketplace API 消费恢复事件后的权威状态迁移。匹配服务必须把被取消的旧
 	// assignment 纳入新的派发身份；否则第一次派发的幂等记录会吞掉这次合法恢复。
 	if _, err = pool.Exec(ctx,
 		`UPDATE task_workflow_nodes SET status='matching' WHERE id=$1`, workflowNodeAID,

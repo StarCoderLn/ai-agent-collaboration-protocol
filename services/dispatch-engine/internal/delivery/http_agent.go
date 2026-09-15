@@ -122,7 +122,7 @@ func (c *HTTPAgentCaller) Call(ctx context.Context, message dispatch.DispatchMes
 	return AgentResult{Accepted: acknowledgement.Accepted}, nil
 }
 
-// quickAgentResult 把面向提供者的简单产物协议转换成 Business API 已有的
+// quickAgentResult 把面向提供者的简单产物协议转换成 Marketplace API 已有的
 // 验收输入。Agent 不需要知道 agentId、assignmentId、USDC 或工作流状态。
 func quickAgentResult(message dispatch.DispatchMessage, body []byte) (AgentResult, error) {
 	artifacts, err := quickagent.ParseResponse(body)

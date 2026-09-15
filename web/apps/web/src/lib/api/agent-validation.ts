@@ -1,7 +1,7 @@
 /**
  * Agent 配置编辑表单的前端字段校验规则。
  *
- * 权威规则来自 services/business-api/src/agents/patch-agent.ts 的
+ * 权威规则来自 web/apps/server/src/agents/patch-agent.ts 的
  * `patchAgentBodySchema`（后端会二次校验，不信任本文件的结果，见 F-003）；
  * 这里只是同一套规则在前端的镜像实现，用于提交前即时展示字段级错误
  * （requirements.md AC-001/AC-006），避免用户等待一次网络往返才发现格式问题。

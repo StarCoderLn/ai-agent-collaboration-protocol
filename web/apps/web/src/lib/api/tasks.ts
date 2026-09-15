@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
-import { BUSINESS_API_BASE_URL } from "./base-url";
+import { MARKETPLACE_API_BASE_URL } from "./base-url";
 import { chainArbitrationSchema } from "./dao-cases";
 
 /**
@@ -8,10 +8,10 @@ import { chainArbitrationSchema } from "./dao-cases";
  * 响应为准；外部 JSON 在这里经过运行时校验后才进入组件。
  */
 
-const API_BASE_URL = BUSINESS_API_BASE_URL;
+const API_BASE_URL = MARKETPLACE_API_BASE_URL;
 const uuidSchema = z.uuid();
 const integerStringSchema = z.string().regex(/^\d+$/);
-// Business API 使用 UTC `Z`，Go 分发引擎按 RFC 3339 可返回 `+08:00` 等合法偏移。
+// Marketplace API 使用 UTC `Z`，Go 分发引擎按 RFC 3339 可返回 `+08:00` 等合法偏移。
 // 浏览器边界统一接受带时区的 ISO 时间，避免一个有效时间使整个业务响应失效。
 const isoDateTimeSchema = z.iso.datetime({ offset: true });
 export const taskStatusSchema = z.enum([
@@ -377,6 +377,7 @@ const candidateRecordSchema = z.object({
 	finalSelectionAgentId: uuidSchema.optional(),
 	createdAt: isoDateTimeSchema,
 });
+const candidateExposureResultSchema = z.object({ recorded: z.literal(true) });
 const assignmentSchema = z.object({
 	id: uuidSchema,
 	taskId: uuidSchema,
@@ -894,6 +895,20 @@ export type TaskPreview = z.infer<typeof taskPreviewSchema>;
 export type EscrowPrepared = z.infer<typeof escrowPreparedSchema>;
 export type EscrowStatus = z.infer<typeof escrowStatusSchema>;
 export type TaskCandidateRecord = z.infer<typeof candidateRecordSchema>;
+
+/**
+ * 页面观察器生成的不可变曝光载荷。recordId 和位置来自当前候选快照，会话与 eventKey
+ * 在一次挂载期间固定；服务端仍会重新验证所有关联关系。
+ */
+export type CandidateExposureInput = Readonly<{
+	distributionRecordId: string;
+	viewSessionId: string;
+	agentId: string;
+	eventKey: string;
+	position: number;
+	visibleMillis: number;
+	occurredAt: string;
+}>;
 export type TaskCandidate = z.infer<typeof candidateSchema>;
 export type TaskAssignmentResult = z.infer<typeof assignmentResultSchema>;
 export type WorkflowSelectionResult = z.infer<
@@ -1210,6 +1225,38 @@ export async function rematchWorkflowNodeCandidates(
 		{},
 		`workflow-rematch:${crypto.randomUUID()}`,
 		candidateRecordSchema,
+	);
+}
+
+/**
+ * 曝光必须由候选卡稳定进入可视区域后调用。eventKey 与 viewSessionId 由组件在一次
+ * 展示会话内固定，网络重试因而只追加一条事实，不能把重试次数误当成用户曝光次数。
+ */
+export async function recordWorkflowNodeCandidateExposure(
+	taskId: string,
+	nodeId: string,
+	input: CandidateExposureInput,
+) {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow-nodes/${taskPathId(nodeId)}/candidate-exposures`,
+		"POST",
+		input,
+		input.eventKey,
+		candidateExposureResultSchema,
+	);
+}
+
+/** 普通任务候选使用同一曝光事实契约，服务端根据路由确保它不能引用工作流快照。 */
+export async function recordTaskCandidateExposure(
+	taskId: string,
+	input: CandidateExposureInput,
+) {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/candidate-exposures`,
+		"POST",
+		input,
+		input.eventKey,
+		candidateExposureResultSchema,
 	);
 }
 

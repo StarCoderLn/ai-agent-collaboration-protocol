@@ -41,7 +41,7 @@ type Acknowledger interface {
 	Acknowledge(ctx context.Context, assignmentID, agentID string, accepted bool) (domain.Assignment, error)
 }
 
-// ResultSubmitter 只把已经持久化的快速 Agent 结果转交给 Business API。
+// ResultSubmitter 只把已经持久化的快速 Agent 结果转交给 Marketplace API。
 // 它不解析产物业务规则，校验、自动验收和状态迁移仍由 TypeScript 权威实现。
 type ResultSubmitter interface {
 	Forward(ctx context.Context, taskID, workflowNodeID, operation, idempotencyKey string, body []byte) (executionproxy.Response, error)
@@ -90,7 +90,7 @@ func (p *ProcessorService) Process(ctx context.Context, message dispatch.Dispatc
 	}
 	_, err = p.Acknowledger.Acknowledge(ctx, message.AssignmentID, message.AgentID, *result.Accepted)
 	if errors.Is(err, domain.ErrAssignmentAlreadyFinal) {
-		// 快速结果可能在接单已成功、但 Business API 暂时不可用时重试。
+		// 快速结果可能在接单已成功、但 Marketplace API 暂时不可用时重试。
 		// 此时 assignment 已是终态不代表交付已送达，必须继续下方转交。
 		if len(result.QuickResultPayload) == 0 {
 			return ProcessResult{Delete: true}, nil

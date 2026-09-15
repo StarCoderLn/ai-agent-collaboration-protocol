@@ -26,7 +26,7 @@ func TestHTTPSenderUsesServiceAuthAndPreservesRetryability(t *testing.T) {
 		}, nil
 	})}
 
-	err := (&HTTPSender{BaseURL: "http://business-api.local", Token: "secret", Client: client}).Send(context.Background(), Event{
+	err := (&HTTPSender{BaseURL: "http://marketplace-api.local", Token: "secret", Client: client}).Send(context.Background(), Event{
 		ID: "event-1", TaskID: "task-1", AssignmentID: "assignment-1", EventType: "agent_accepted",
 	})
 	var delivery *DeliveryError
@@ -48,7 +48,7 @@ func TestHTTPSenderTargetsWorkflowNodeAuthorityWhenNodeIsPresent(t *testing.T) {
 			Request:    request,
 		}, nil
 	})}
-	err := (&HTTPSender{BaseURL: "http://business-api.local", Token: "secret", Client: client}).Send(
+	err := (&HTTPSender{BaseURL: "http://marketplace-api.local", Token: "secret", Client: client}).Send(
 		context.Background(),
 		Event{
 			ID: "event-1", TaskID: "task-1", WorkflowNodeID: "node-2",
