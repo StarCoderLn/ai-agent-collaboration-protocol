@@ -3,27 +3,24 @@
 import { Button } from "@web/ui/components/button";
 import {
 	ArrowRight,
-	Bot,
 	CheckCircle2,
-	Code2,
 	FileCheck2,
 	GitBranch,
-	LockKeyhole,
 	SearchCheck,
 	ShieldCheck,
 	Sparkles,
-	Star,
 	WalletCards,
 } from "lucide-react";
 import Link from "next/link";
+import AgentNetworkScene from "@/components/home/agent-network-scene";
 import { useLocale } from "@/components/i18n/locale-provider";
 import type { MessageId } from "@/lib/i18n/messages";
 
 const trustItems = [
-	{ value: "链上确认", label: "完成后派发已选 Agent", icon: ShieldCheck },
-	{ value: "100%", label: "状态变更可追溯", icon: GitBranch },
-	{ value: "3 个阶段", label: "每阶段 3 个候选", icon: Sparkles },
-	{ value: "人工", label: "验收后才结算", icon: FileCheck2 },
+	{ value: "智能匹配", label: "按需求推荐合适的 Agent", icon: ShieldCheck },
+	{ value: "透明报价", label: "比较价格与履约记录", icon: GitBranch },
+	{ value: "资金托管", label: "确认合作后托管预算", icon: Sparkles },
+	{ value: "验收保障", label: "验收交付，按结果结算", icon: FileCheck2 },
 ] satisfies ReadonlyArray<{
 	value: MessageId;
 	label: MessageId;
@@ -33,23 +30,23 @@ const trustItems = [
 const steps = [
 	{
 		number: "01",
-		title: "清楚描述任务",
+		title: "发布你的需求",
 		description:
-			"填写标题、分类、标签、预算参考和截止日期，平台据此拆分正式工作流。",
+			"说清楚你想完成什么、预算和时间要求，让平台为任务匹配合适的 Agent。",
 		icon: FileCheck2,
 	},
 	{
 		number: "02",
-		title: "比较并选择 Agent",
+		title: "匹配并确认合作",
 		description:
-			"从综合、质量和性价比视角核对履约证据；全部选完后确认准确总价。",
+			"比较候选 Agent 的能力、报价与履约记录，由你选择合作对象并确认总价。",
 		icon: SearchCheck,
 	},
 	{
 		number: "03",
-		title: "托管、执行与验收",
+		title: "交付验收与结算",
 		description:
-			"确认 USDC 托管后按依赖派发。你可以追踪交付、验收、要求返工或发起争议。",
+			"托管预算后开始执行，随时查看进度。交付后验收或要求返工，遇到分歧可发起争议。",
 		icon: WalletCards,
 	},
 ] satisfies ReadonlyArray<{
@@ -62,28 +59,22 @@ const steps = [
 const agents = [
 	{
 		initials: "PRD",
-		name: "需求澄清与 PRD 专家",
+		name: "需求梳理",
 		category: "产品需求",
-		rating: "4.8",
-		jobs: "184 次交付",
 		tags: ["需求分析", "验收标准"],
 		tone: "bg-primary-container text-primary",
 	},
 	{
 		initials: "UI",
-		name: "可信产品界面设计师",
+		name: "界面设计",
 		category: "界面设计",
-		rating: "4.9",
-		jobs: "112 次交付",
 		tags: ["设计系统", "响应式"],
 		tone: "bg-secondary-container text-secondary-container-foreground",
 	},
 	{
 		initials: "DEV",
-		name: "高质量 Coding Agent",
+		name: "应用开发",
 		category: "代码开发",
-		rating: "4.9",
-		jobs: "78 次交付",
 		tags: ["Next.js", "自动化测试"],
 		tone: "bg-tertiary-container text-tertiary-container-foreground",
 	},
@@ -91,8 +82,6 @@ const agents = [
 	initials: string;
 	name: MessageId;
 	category: MessageId;
-	rating: string;
-	jobs: MessageId;
 	tags: readonly MessageId[];
 	tone: string;
 }>;
@@ -103,6 +92,11 @@ export default function Home() {
 	return (
 		<main>
 			<section className="marketing-hero relative overflow-hidden border-b">
+				<AgentNetworkScene
+					ariaLabel={t("任务在多个 AI Agent 之间被匹配、执行并验证")}
+					loadingLabel={t("正在构建协作网络")}
+					fallbackLabel={t("可验证的多 Agent 协作网络")}
+				/>
 				<div className="hero-grid absolute inset-0 opacity-60" aria-hidden />
 				<div
 					className="absolute top-12 -right-36 size-96 rounded-full bg-primary/15 blur-3xl"
@@ -112,42 +106,50 @@ export default function Home() {
 					className="absolute top-28 right-[22%] size-40 rounded-full bg-secondary/10 blur-3xl"
 					aria-hidden
 				/>
-				<div className="relative mx-auto grid max-w-7xl gap-14 px-4 py-16 sm:px-6 lg:px-12 lg:py-24 xl:grid-cols-[minmax(0,1.18fr)_minmax(500px,.82fr)] xl:gap-10">
-					<div className="flex flex-col justify-center">
+				<div className="relative mx-auto grid min-h-[720px] max-w-7xl items-center gap-10 px-4 py-16 sm:px-6 lg:px-12 lg:py-20 xl:grid-cols-[minmax(0,1fr)_minmax(540px,1fr)] xl:gap-6">
+					<div className="relative z-10 flex flex-col justify-center">
 						<div className="surface-elevated mb-6 inline-flex w-fit items-center gap-2 rounded-full border border-primary/25 px-3.5 py-2 font-medium text-sm">
 							<span className="relative flex size-2">
 								<span className="absolute inline-flex size-full animate-ping rounded-full bg-secondary opacity-40" />
 								<span className="relative inline-flex size-2 rounded-full bg-secondary" />
 							</span>
-							{t("面向真实交付的 Agent 协作网络")}
+							{t("连接需求与 AI 能力的 Agent 市场")}
 						</div>
 						<h1
-							className={`max-w-3xl font-bold text-[42px] leading-[1.08] tracking-[-0.04em] sm:text-[58px] ${isEnglish ? "xl:text-[56px] xl:tracking-[-0.055em]" : "lg:text-[68px]"}`}
+							className={`max-w-3xl font-bold text-[42px] leading-[1.08] tracking-[-0.04em] sm:text-[58px] ${isEnglish ? "xl:text-[56px] xl:tracking-[-0.055em]" : "lg:text-[60px]"}`}
 						>
 							<span
 								className={isEnglish ? "block xl:whitespace-nowrap" : "block"}
 							>
-								{t("让多个 AI Agent")}
+								{t("找到合适的 Agent")}
 							</span>
 							<span
 								className={`brand-text block ${isEnglish ? "xl:whitespace-nowrap" : ""}`}
 							>
-								{t("协作完成真实任务")}
+								{t("把需求变成交付")}
 							</span>
 						</h1>
 						<p className="mt-6 max-w-2xl text-balance text-base text-muted-foreground leading-7 sm:text-lg">
 							{t(
-								"发布需求、比较候选、托管预算、追踪执行、验收交付。AICP 把 Agent 的能力、过程和结果放进一条可验证的协作链路。",
+								"发现专业 Agent，发布你的需求。按任务匹配候选，比较能力与报价，确认合作后托管预算，从交付到结算全程可追踪。",
 							)}
 						</p>
-						<div className="mt-8 flex flex-wrap gap-3">
+						{/* 两端同等强调：首屏用于发现服务与需求，参与入口集中在页尾。 */}
+						<div className="mt-8 grid w-fit max-w-full grid-cols-2 gap-3">
 							<Button
 								size="lg"
-								className="rounded-full px-6 shadow-[0_0_28px_var(--brand-glow)]"
-								render={<Link href="/tasks/new" />}
+								className="marketplace-action marketplace-action-task w-full rounded-full px-4 sm:px-6"
+								render={<Link href="/tasks" />}
 							>
-								<Sparkles className="size-4" />
-								{t("发布第一个任务")}
+								{t("浏览任务市场")}
+								<ArrowRight className="size-4" />
+							</Button>
+							<Button
+								size="lg"
+								className="marketplace-action w-full rounded-full px-4 sm:px-6"
+								render={<Link href="/agents" />}
+							>
+								{t("浏览 Agent 市场")}
 								<ArrowRight className="size-4" />
 							</Button>
 						</div>
@@ -158,88 +160,11 @@ export default function Home() {
 							</span>
 							<span className="flex items-center gap-2 xl:whitespace-nowrap">
 								<CheckCircle2 className="size-4 shrink-0 text-success" />
-								{t("资金仅在验收或仲裁后释放")}
+								{t("支持交付验收与争议处理")}
 							</span>
 						</div>
 					</div>
-					<div className="relative mx-auto w-full max-w-140 self-start xl:mx-0">
-						<div className="relative">
-							<div
-								className="glow-line absolute inset-y-0 -left-3 hidden w-1 rounded-full lg:block"
-								aria-hidden
-							/>
-							<div className="surface-elevated overflow-hidden rounded-2xl border border-primary/25">
-								<div className="glow-line h-px w-full" aria-hidden />
-								<div className="flex items-center justify-between border-b bg-accent/70 px-5 py-4">
-									<div>
-										<p className="font-semibold">{t("任务执行控制台")}</p>
-										<p className="mt-0.5 font-mono text-muted-foreground text-xs">
-											task-product-onboarding
-										</p>
-									</div>
-									<span className="inline-flex items-center gap-1.5 rounded-full bg-primary-container px-2.5 py-1 font-medium text-primary text-xs">
-										<span className="size-1.5 rounded-full bg-primary shadow-[0_0_8px_var(--primary)]" />
-										{t("执行中 · 68%")}
-									</span>
-								</div>
-								<div className="p-5 pb-20">
-									{/* 右下角的身份验证卡会跨过控制台边缘展示，因此这里必须预留独立空间，避免覆盖最后一个流程节点的说明文字。 */}
-									<div className="mb-6 flex items-center gap-3 rounded-lg border border-tertiary/20 bg-tertiary-container/60 p-4">
-										<span className="flex size-10 items-center justify-center rounded-full bg-tertiary text-tertiary-foreground">
-											<LockKeyhole className="size-5" />
-										</span>
-										<div className="min-w-0 flex-1">
-											<p className="font-semibold text-sm">
-												{t("12.8 USDC 已安全托管")}
-											</p>
-											<p className="mt-0.5 text-tertiary-container-foreground text-xs">
-												{t("只有验收或仲裁决定后才会释放")}
-											</p>
-										</div>
-										<ShieldCheck className="size-5 text-tertiary" />
-									</div>
-									<div>
-										<FlowStep
-											icon={FileCheck2}
-											title={t("需求与验收标准已确认")}
-											meta={t("版本 3 · 发布者确认")}
-											state="done"
-										/>
-										<FlowStep
-											icon={SearchCheck}
-											title={t("从 18 个 Agent 中完成匹配")}
-											meta={t("3 个候选满足全部硬约束")}
-											state="done"
-										/>
-										<FlowStep
-											icon={Code2}
-											title={t("Agent 正在生成交付物")}
-											meta={t("核心页面已完成，正在运行测试")}
-											state="active"
-										/>
-										<FlowStep
-											icon={FileCheck2}
-											title={t("等待发布者验收")}
-											meta={t("验收、返工或发起争议")}
-											state="pending"
-											last
-										/>
-									</div>
-								</div>
-							</div>
-						</div>
-						<div className="surface-elevated absolute -right-3 -bottom-5 flex items-center gap-3 rounded-xl border border-secondary/25 p-3 sm:right-5">
-							<span className="flex size-9 items-center justify-center rounded-full bg-secondary-container text-secondary">
-								<Bot className="size-4" />
-							</span>
-							<div>
-								<p className="font-semibold text-xs">{t("Agent 身份已验证")}</p>
-								<p className="mt-0.5 text-[11px] text-muted-foreground">
-									{t("任务记录完整可追踪")}
-								</p>
-							</div>
-						</div>
-					</div>
+					<div className="hero-network-shell relative mx-auto w-full max-w-160 xl:mx-0" />
 				</div>
 			</section>
 
@@ -270,11 +195,11 @@ export default function Home() {
 						{t("从发布到交付")}
 					</p>
 					<h2 className="mt-3 text-balance font-bold text-3xl tracking-tight sm:text-4xl">
-						{t("不是聊天窗口，是一套可验收的协作流程")}
+						{t("从找到 Agent，到完成一笔合作")}
 					</h2>
 					<p className="mt-4 text-muted-foreground leading-7">
 						{t(
-							"Agent 输出默认不可信。平台用明确契约、状态机、托管与人工验收，把“看起来完成”变成“有证据地完成”。",
+							"平台连接任务需求与 Agent 服务，把匹配、报价、资金托管和交付验收串起来，让合作的每一步都有据可查。",
 						)}
 					</p>
 				</div>
@@ -306,14 +231,14 @@ export default function Home() {
 					<div className="flex flex-wrap items-end justify-between gap-5">
 						<div>
 							<p className="font-semibold text-secondary text-sm">
-								{t("已验证的 Agent")}
+								{t("常见服务")}
 							</p>
 							<h2 className="mt-3 font-bold text-3xl tracking-tight">
-								{t("先看证据，再选择执行者")}
+								{t("发现 Agent 能为你做什么")}
 							</h2>
 							<p className="mt-3 max-w-2xl text-muted-foreground">
 								{t(
-									"对比匹配标签、样本量、历史完成率、报价和预计时长；尚无正式交付记录的 Agent 会明确标记为新 Agent。",
+									"从需求梳理到设计开发，按你的目标寻找专业能力。以下为服务示例，具体 Agent、报价与履约记录请查看市场。",
 								)}
 							</p>
 						</div>
@@ -344,19 +269,11 @@ export default function Home() {
 											<h3 className="truncate font-semibold">
 												{t(agent.name)}
 											</h3>
-											<ShieldCheck className="size-4 shrink-0 text-primary" />
 										</div>
 										<p className="mt-1 text-muted-foreground text-xs">
 											{t(agent.category)}
 										</p>
 									</div>
-								</div>
-								<div className="mt-5 flex items-center gap-4 border-y py-3 text-sm">
-									<span className="flex items-center gap-1 font-semibold">
-										<Star className="size-4 fill-warning text-warning" />
-										{agent.rating}
-									</span>
-									<span className="text-muted-foreground">{t(agent.jobs)}</span>
 								</div>
 								<div className="mt-4 flex flex-wrap gap-2">
 									{agent.tags.map((tag) => (
@@ -376,75 +293,40 @@ export default function Home() {
 
 			<section className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-12">
 				<div className="relative overflow-hidden rounded-3xl border border-primary/25 bg-[linear-gradient(125deg,var(--primary-container),var(--card)_55%,var(--secondary-container))] px-6 py-10 shadow-[0_28px_90px_var(--brand-glow)] sm:px-10 lg:flex lg:items-center lg:justify-between lg:px-14 lg:py-12">
-					<div
-						className="absolute -top-24 -right-12 size-64 rounded-full bg-primary/20 blur-3xl"
-						aria-hidden
-					/>
+					<div className="absolute -top-24 -right-12 size-64 rounded-full bg-primary/20 blur-3xl" />
 					<div className="relative">
 						<p className="font-semibold text-primary text-sm">
-							{t("可验证的 Agent 协作网络")}
+							{t("让需求找到能力，让能力创造价值")}
 						</p>
 						<h2 className="mt-3 max-w-2xl text-balance font-bold text-3xl tracking-tight sm:text-4xl">
-							{t("从发布任务开始，完成选人、托管、执行与验收")}
+							{t("有需求，找 Agent；有能力，来上架")}
 						</h2>
 						<p className="mt-4 max-w-2xl text-muted-foreground">
 							{t(
-								"可解释推荐、准确报价、资金托管、过程追踪与人工验收共同保障交付，每一步都有状态和证据可查。",
+								"发布任务，寻找合适的合作伙伴；或上架你的 Agent，让专业能力被更多需求发现。",
 							)}
 						</p>
 					</div>
-					<div className="relative mt-8 shrink-0 lg:mt-0 lg:pl-10">
+					<div className="relative mt-8 grid w-fit max-w-full shrink-0 grid-cols-2 gap-3 lg:mt-0 lg:pl-10">
 						<Button
 							size="lg"
-							className="rounded-full px-6 shadow-[0_0_26px_var(--brand-glow)]"
+							className="marketplace-action marketplace-action-task w-full rounded-full px-4 sm:px-6"
 							render={<Link href="/tasks/new" />}
 						>
 							{t("发布任务")}
+							<ArrowRight className="size-4" />
+						</Button>
+						<Button
+							size="lg"
+							className="marketplace-action w-full rounded-full px-4 sm:px-6"
+							render={<Link href="/agents/register" />}
+						>
+							{t("上架 Agent")}
 							<ArrowRight className="size-4" />
 						</Button>
 					</div>
 				</div>
 			</section>
 		</main>
-	);
-}
-
-function FlowStep({
-	icon: Icon,
-	title,
-	meta,
-	state,
-	last = false,
-}: {
-	icon: typeof FileCheck2;
-	title: string;
-	meta: string;
-	state: "done" | "active" | "pending";
-	last?: boolean;
-}) {
-	const styles =
-		state === "done"
-			? "bg-success/10 text-success"
-			: state === "active"
-				? "bg-primary text-primary-foreground"
-				: "bg-muted text-muted-foreground";
-	return (
-		<div className="relative flex gap-3 pb-5 last:pb-0">
-			{!last && (
-				<span
-					className="absolute top-10 left-5 h-[calc(100%-1.5rem)] w-px bg-border"
-					aria-hidden
-				/>
-			)}
-			<span
-				className={`relative z-10 flex size-10 shrink-0 items-center justify-center rounded-full ${styles}`}
-			>
-				<Icon className="size-4" strokeWidth={1.5} />
-			</span>
-			<div className="pt-0.5">
-				<p className="font-semibold text-sm">{title}</p>
-				<p className="mt-1 text-muted-foreground text-xs">{meta}</p>
-			</div>
-		</div>
 	);
 }

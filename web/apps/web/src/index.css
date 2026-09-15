@@ -343,12 +343,46 @@
 	mask-image: linear-gradient(to bottom right, black, transparent 82%);
 }
 
+/* 两种紫色以接近的明度呈现供需入口；尺寸和光晕强度一致，不制造主次关系。 */
+.marketplace-action[data-slot="button"] {
+	--action-start: #8860ca;
+	--action-end: #714bb3;
+	--action-glow: 151 89 231;
+	border: 1px solid rgb(219 183 255 / 18%);
+	color: #faf5ff;
+	background: linear-gradient(120deg, var(--action-start), var(--action-end));
+	box-shadow:
+		inset 0 1px 0 rgb(255 255 255 / 14%),
+		0 0 20px rgb(var(--action-glow) / 17%),
+		0 5px 16px rgb(var(--action-glow) / 13%);
+	transition:
+		box-shadow 180ms ease,
+		filter 180ms ease;
+}
+.marketplace-action-task[data-slot="button"] {
+	--action-start: #9361c6;
+	--action-end: #7b4bb0;
+	--action-glow: 160 104 216;
+}
+.marketplace-action[data-slot="button"]:hover {
+	background: linear-gradient(120deg, var(--action-start), var(--action-end));
+	filter: brightness(1.07);
+	box-shadow:
+		inset 0 1px 0 rgb(255 255 255 / 32%),
+		0 0 28px rgb(var(--action-glow) / 34%),
+		0 6px 20px rgb(var(--action-glow) / 20%);
+}
+.marketplace-action[data-slot="button"]:focus-visible {
+	outline: 2px solid #d6c1f2;
+	outline-offset: 4px;
+}
+
 .marketing-hero {
 	background:
 		radial-gradient(
-			circle at 74% 34%,
+			circle at 76% 38%,
 			var(--brand-glow-strong),
-			transparent 22rem
+			transparent 27rem
 		),
 		radial-gradient(
 			circle at 18% 5%,
@@ -356,6 +390,142 @@
 			transparent 22rem
 		),
 		linear-gradient(145deg, rgb(19 16 32 / 86%), rgb(8 6 17 / 82%));
+}
+
+/*
+ * 3D 网络是首页的视觉主角，外壳只提供构图边界和 WebGL 失败时的静态深度。
+ * Canvas 与左侧文案分层，构图锚点只保留尺寸，不添加遮挡模型的说明卡片。
+ */
+.hero-network-shell {
+	min-height: 560px;
+	isolation: isolate;
+}
+
+/* 画布以首屏 section 为边界；右侧 shell 仅用于测量构图，绝不裁切 WebGL。 */
+.agent-network-scene {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+}
+
+.agent-network-canvas {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	outline: none;
+	filter: saturate(1.08) contrast(1.04);
+	opacity: 0;
+	transition: opacity 600ms ease;
+	touch-action: pan-y;
+}
+
+.agent-network-scene[data-scene-status="ready"] .agent-network-canvas {
+	opacity: 1;
+}
+
+/* WebGL 初始化前和失败后都保留一个轻量网络纹理，避免右侧突然成为空白区域。 */
+.agent-network-static {
+	position: absolute;
+	inset: 12% 5% 12% 52%;
+	background:
+		radial-gradient(
+			circle at 50% 50%,
+			rgb(167 139 250 / 88%) 0 3px,
+			transparent 5px
+		),
+		radial-gradient(
+			circle at 18% 28%,
+			rgb(139 92 246 / 64%) 0 3px,
+			transparent 5px
+		),
+		radial-gradient(
+			circle at 83% 29%,
+			rgb(34 211 238 / 64%) 0 3px,
+			transparent 5px
+		),
+		radial-gradient(
+			circle at 18% 72%,
+			rgb(196 181 253 / 54%) 0 3px,
+			transparent 5px
+		),
+		radial-gradient(
+			circle at 82% 70%,
+			rgb(6 182 212 / 56%) 0 3px,
+			transparent 5px
+		),
+		repeating-radial-gradient(
+			circle at 50% 50%,
+			transparent 0 66px,
+			rgb(139 92 246 / 9%) 67px 68px
+		);
+	opacity: 0.56;
+	transition: opacity 500ms ease;
+}
+
+.agent-network-scene[data-scene-status="ready"] .agent-network-static {
+	opacity: 0.12;
+}
+
+/* 与办公室共用构图锚点；居中的是整组文字和流光条，不附加向下位移。 */
+.agent-network-loader {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: min(260px, 80%);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 1rem;
+	transform: translate(-50%, -50%);
+}
+.agent-network-loader-label {
+	color: #d8c9f5;
+	font-size: 0.8rem;
+	letter-spacing: 0.1em;
+	text-shadow: 0 0 20px rgb(168 110 255 / 40%);
+}
+.agent-network-loader-track {
+	position: relative;
+	width: 100%;
+	height: 6px;
+	overflow: hidden;
+	border-radius: 999px;
+	background: rgb(151 111 213 / 14%);
+	box-shadow:
+		0 0 0 1px rgb(185 148 245 / 16%),
+		0 0 24px rgb(149 80 255 / 15%);
+}
+.agent-network-loader-beam {
+	position: absolute;
+	inset: 0 auto 0 0;
+	width: 65%;
+	border-radius: inherit;
+	background: linear-gradient(
+		90deg,
+		transparent,
+		#8b5cf6 24%,
+		#c69bff 55%,
+		#f0dfff 72%,
+		#a174ee 90%,
+		transparent
+	);
+	box-shadow: 0 0 14px rgb(190 130 255 / 65%);
+	animation: network-loader-flow 1.6s ease-in-out infinite;
+}
+@keyframes network-loader-flow {
+	from {
+		transform: translateX(-110%);
+	}
+	to {
+		transform: translateX(165%);
+	}
+}
+
+@media (max-width: 767px) {
+	.hero-network-shell {
+		min-height: 400px;
+	}
 }
 
 .page-hero {
@@ -540,6 +710,15 @@
 	.workflow-edge-flow,
 	.execution-progress-fill-active {
 		transition: none;
+		animation: none;
+	}
+
+	.agent-network-canvas,
+	.agent-network-static {
+		transition: none;
+	}
+
+	.agent-network-loader-beam {
 		animation: none;
 	}
 }

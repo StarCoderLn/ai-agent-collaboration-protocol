@@ -139,6 +139,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@babylonjs/core':
+        specifier: ^9.26.0
+        version: 9.26.0
       '@swc/helpers':
         specifier: ^0.5.23
         version: 0.5.23
@@ -545,6 +548,9 @@ packages:
   '@babel/types@7.29.8':
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
+
+  '@babylonjs/core@9.26.0':
+    resolution: {integrity: sha512-YJe7Zh9vj6Wg8NawJoAycoGFFhuzW9KLZykNm2nvlNrs2P43HTMv3SvgbfwHKkDpHcga4crdyVNlSf055LLkXg==}
 
   '@base-ui/react@1.7.0':
     resolution: {integrity: sha512-j+8QjX44C32jrXD/qyEAGpFr70FRpGL2CY61mQd9nBPWN737CK0xxD1ceJ055rW4RtdvFDT1e7otzdlfxvsYug==}
@@ -4525,6 +4531,8 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
+
+  '@babylonjs/core@9.26.0': {}
 
   '@base-ui/react@1.7.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:

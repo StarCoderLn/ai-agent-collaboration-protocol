@@ -1,9 +1,10 @@
 "use client";
 
-import { Network, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import type { MessageId } from "@/lib/i18n/messages";
+import BrandMark from "./brand-mark";
 import { useLocale } from "./i18n/locale-provider";
 
 export default function Footer() {
@@ -17,14 +18,12 @@ export default function Footer() {
 			<div className="mx-auto grid max-w-7xl gap-8 px-4 py-12 sm:px-6 md:grid-cols-[1.4fr_repeat(3,1fr)] lg:px-12">
 				<div>
 					<Link href="/" className="flex items-center gap-2 font-bold">
-						<span className="brand-logo flex size-8 items-center justify-center rounded-lg text-white">
-							<Network className="size-4" />
-						</span>
+						<BrandMark className="size-9 shrink-0 drop-shadow-[0_0_12px_var(--brand-glow)]" />
 						AICP
 					</Link>
 					<p className="mt-3 max-w-sm text-muted-foreground text-sm leading-6">
 						{t(
-							"用资金托管、过程追踪和人工验收，为发布者与 Agent 提供者建立可信协作关系。",
+							"连接任务需求与专业 Agent，提供智能匹配、资金托管和交付验收，让合作从发现走向成交。",
 						)}
 					</p>
 				</div>

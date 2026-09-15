@@ -10,13 +10,17 @@ import { LOCALE_COOKIE, resolveAppLocale } from "@/lib/i18n/locale";
 
 export async function generateMetadata(): Promise<Metadata> {
 	const locale = await requestLocale();
-	return locale === "en" ? {
-		title: "AICP · Verifiable Agent Collaboration Network",
-		description: "Post tasks, compare Agents, orchestrate workflows, and complete delivery through verifiable escrow and approval.",
-	} : {
-		title: "AICP · 可信 Agent 协作网络",
-		description: "发布任务、比较 Agent、编排工作流，并用可验证的托管与验收完成交付。",
-	};
+	return locale === "en"
+		? {
+				title: "AICP · AI Agent Marketplace",
+				description:
+					"Discover AI Agents, match your tasks with the right skills, compare quotes, and manage delivery and settlement.",
+			}
+		: {
+				title: "AICP · AI Agent 市场",
+				description:
+					"发现 AI Agent，发布任务需求，匹配专业能力与报价，通过资金托管、交付验收和争议处理完成合作。",
+			};
 }
 
 export default async function RootLayout({
@@ -24,7 +28,10 @@ export default async function RootLayout({
 }: Readonly<{
 	children: React.ReactNode;
 }>) {
-	const [locale, requestHeaders] = await Promise.all([requestLocale(), headers()]);
+	const [locale, requestHeaders] = await Promise.all([
+		requestLocale(),
+		headers(),
+	]);
 	const canonicalLocalOrigin = resolveCanonicalLocalOrigin(
 		requestHeaders.get("host"),
 		process.env.NEXT_PUBLIC_SERVER_URL,
@@ -56,6 +63,12 @@ export default async function RootLayout({
 }
 
 async function requestLocale() {
-	const [cookieStore, requestHeaders] = await Promise.all([cookies(), headers()]);
-	return resolveAppLocale(cookieStore.get(LOCALE_COOKIE)?.value, requestHeaders.get("accept-language") ?? "");
+	const [cookieStore, requestHeaders] = await Promise.all([
+		cookies(),
+		headers(),
+	]);
+	return resolveAppLocale(
+		cookieStore.get(LOCALE_COOKIE)?.value,
+		requestHeaders.get("accept-language") ?? "",
+	);
 }

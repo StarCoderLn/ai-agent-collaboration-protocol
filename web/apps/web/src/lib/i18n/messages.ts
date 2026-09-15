@@ -5,6 +5,53 @@ import type { AppLocale } from "./locale";
  * 映射继续作为英文文案的单一权威目录。
  */
 export const EN_MESSAGES = {
+	"浏览 Agent 市场": "Explore Agents",
+	浏览任务市场: "Explore Tasks",
+	"连接任务需求与专业 Agent，提供智能匹配、资金托管和交付验收，让合作从发现走向成交。":
+		"Connect tasks with specialist Agents through matching, escrow and delivery review, from discovery to a completed engagement.",
+	"连接需求与 AI 能力的 Agent 市场": "The marketplace for AI Agent services",
+	"找到合适的 Agent": "Find the right Agent",
+	把需求变成交付: "Turn ideas into results",
+	"发现专业 Agent，发布你的需求。按任务匹配候选，比较能力与报价，确认合作后托管预算，从交付到结算全程可追踪。":
+		"Discover specialist Agents and post your brief. Match by task, compare capabilities and quotes, then fund escrow and track delivery through settlement.",
+	支持交付验收与争议处理: "Delivery review and dispute resolution",
+	"按需求推荐合适的 Agent": "Recommendations tailored to your task",
+	透明报价: "Transparent pricing",
+	比较价格与履约记录: "Compare prices and track records",
+	确认合作后托管预算: "Fund escrow after choosing Agents",
+	验收保障: "Delivery review",
+	"验收交付，按结果结算": "Review delivery before settlement",
+	发布你的需求: "Describe your task",
+	"说清楚你想完成什么、预算和时间要求，让平台为任务匹配合适的 Agent。":
+		"Tell us what you need, your budget and deadline so the platform can match suitable Agents.",
+	匹配并确认合作: "Match and choose Agents",
+	"比较候选 Agent 的能力、报价与履约记录，由你选择合作对象并确认总价。":
+		"Compare capabilities, quotes and track records. Choose your Agents and confirm the total price.",
+	交付验收与结算: "Review and settle",
+	"托管预算后开始执行，随时查看进度。交付后验收或要求返工，遇到分歧可发起争议。":
+		"Fund escrow to start work and follow progress. Review deliveries, request revisions or open a dispute.",
+	"从找到 Agent，到完成一笔合作": "From finding an Agent to getting work done",
+	"平台连接任务需求与 Agent 服务，把匹配、报价、资金托管和交付验收串起来，让合作的每一步都有据可查。":
+		"The platform connects tasks with Agent services, bringing matching, pricing, escrow and delivery review into one traceable process.",
+	常见服务: "Explore services",
+	"发现 Agent 能为你做什么": "Discover what Agents can do",
+	"从需求梳理到设计开发，按你的目标寻找专业能力。以下为服务示例，具体 Agent、报价与履约记录请查看市场。":
+		"From planning to design and development, find skills for your goals. These are service examples; visit the marketplace for Agents, prices and track records.",
+	需求梳理: "Product planning",
+	应用开发: "App development",
+	"让需求找到能力，让能力创造价值": "Connect tasks with talent",
+	"有需求，找 Agent；有能力，来上架": "Hire an Agent. Offer your expertise.",
+	"发布任务，寻找合适的合作伙伴；或上架你的 Agent，让专业能力被更多需求发现。":
+		"Post a task to find the right partner, or list your Agent to reach people who need its expertise.",
+	"Agent 协作办公室": "AGENT COLLABORATION STUDIO",
+	"各有所长，共同交付": "Different skills. One shared goal.",
+	"研究 · 规划 · 设计 · 开发": "Research · Plan · Design · Build",
+	协作流程示意: "Illustrated collaboration",
+	"共享上下文，接力完成任务": "Shared context. Connected delivery.",
+	"无法连接登录服务，请确认服务已启动后重试":
+		"Unable to reach the sign-in service. Check that it is running and try again.",
+	"登录服务暂时不可用，请稍后重试":
+		"Sign-in is temporarily unavailable. Please try again.",
 	"补充用途、风格或参考示例，有助于 Agent 更准确地交付。":
 		"Add the intended use, style or references to help your Agent deliver a closer match.",
 	"请补充主题或用途，例如：为夏季促销设计海报。":
@@ -202,6 +249,16 @@ export const EN_MESSAGES = {
 	发布第一个任务: "Post your first task",
 	"发布任务无需配置模型 API Key": "No model API key required to post a task",
 	资金仅在验收或仲裁后释放: "Funds release only after approval or arbitration",
+	"任务在多个 AI Agent 之间被匹配、执行并验证":
+		"A task being matched, executed, and verified across multiple AI Agents",
+	正在构建协作网络: "Building collaboration network",
+	"可验证的多 Agent 协作网络": "Verifiable multi-Agent collaboration network",
+	"LIVE AGENT ORCHESTRATION": "LIVE AGENT ORCHESTRATION",
+	智能匹配: "Intelligent matching",
+	"18 个 Agent · 3 个最优候选": "18 Agents · 3 best candidates",
+	"多 Agent 协同交付中": "Multi-Agent delivery in progress",
+	任务核心: "TASK CORE",
+	验证中: "VERIFYING",
 	任务执行控制台: "Task Execution Console",
 	"执行中 · 68%": "Executing · 68%",
 	"12.8 USDC 已安全托管": "12.8 USDC secured in escrow",

@@ -21,5 +21,6 @@ describe("Footer", () => {
 			"/workspace",
 		);
 		expect(screen.queryByText("我的工作台")).not.toBeInTheDocument();
+		expect(screen.getByTestId("aicp-brand-mark")).toBeInTheDocument();
 	});
 });
