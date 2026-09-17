@@ -181,6 +181,78 @@ describe("ResultDeliverableWorkspace", () => {
 		expect(onReadinessChange).not.toHaveBeenCalledWith(true);
 	});
 
+	it("把版本化演示设计 JSON 转换为可读大纲并开放验收", async () => {
+		const onReadinessChange = vi.fn();
+		render(
+			<ResultDeliverableWorkspace
+				result={{
+					summary: "新能源汽车路演设计",
+					kind: "inline",
+					content: JSON.stringify({
+						schemaVersion: "aicp.presentation-design.v1",
+						deck: {
+							title: "新能源汽车路演",
+							author: "路演策划师",
+							theme: {},
+							slides: [
+								{
+									kind: "cover",
+									kicker: "市场概览",
+									title: "增长进入新阶段",
+									subtitle: "从渗透率与出口观察行业变化",
+									bullets: ["新能源乘用车渗透率继续提升"],
+									notes: "说明数据口径与来源。",
+								},
+							],
+						},
+					}),
+					mimeType: "application/json",
+					sizeBytes: "512",
+					note: null,
+				}}
+				onReadinessChange={onReadinessChange}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("heading", { name: "1. 增长进入新阶段" }),
+		).toBeInTheDocument();
+		expect(screen.getByText("新能源乘用车渗透率继续提升")).toBeInTheDocument();
+		await waitFor(() =>
+			expect(onReadinessChange).toHaveBeenLastCalledWith(true),
+		);
+	});
+
+	it("把版本化演示质检 JSON 转换为可读检查结果并开放验收", async () => {
+		const onReadinessChange = vi.fn();
+		render(
+			<ResultDeliverableWorkspace
+				result={{
+					summary: "演示交付质检",
+					kind: "inline",
+					content: JSON.stringify({
+						schemaVersion: "aicp.presentation-review.v1",
+						passed: true,
+						checks: [
+							{ key: "html_preview", passed: true },
+							{ key: "editable_pptx", passed: true },
+						],
+					}),
+					mimeType: "application/json",
+					sizeBytes: "256",
+					note: null,
+				}}
+				onReadinessChange={onReadinessChange}
+			/>,
+		);
+
+		expect(screen.getByText("演示文稿交付检查通过")).toBeInTheDocument();
+		expect(screen.getByText("通过：html_preview")).toBeInTheDocument();
+		await waitFor(() =>
+			expect(onReadinessChange).toHaveBeenLastCalledWith(true),
+		);
+	});
+
 	it("为无法原生预览的 PPTX 文件提供明确下载入口", async () => {
 		const onReadinessChange = vi.fn();
 		render(

@@ -47,16 +47,22 @@ SVG 设计稿，作为用户主要验收产物和 Coding Agent 的视觉事实�
 4. `product-workflow/src/agents/design/`：三个设计 Agent 的独立核心实现。
 5. `product-workflow/src/agents/coding/`：四个 Coding Agent 的独立核心实现，包括 LangGraph StateGraph。
 6. `product-workflow/src/executors.ts`：只按十个稳定 Agent ID 路由，不包含模型策略分支。
-7. `product-workflow/src/model-client.ts`：DeepSeek JSON/TSX 客户端与代码安全校验。
-8. `agent-sdk/src/`：共用验签、幂等、HTTP、正式接单和结果回传基础设施。
-9. `product-workflow/src/formal-dispatch.ts`：工作流特有的制品适配、进度阶段和返工恢复。
-10. `product-workflow/src/api.ts`：工作流输入校验、错误分类和执行路由。
-11. `product-workflow/src/index.ts`：配置、执行器、API 与 HTTP 服务的组合根。
+7. `product-workflow/src/model-client.ts`：统一 `WorkflowModelClient` 与 OpenAI-compatible 实现；DeepSeek/OpenAI 只在配置层切换。
+8. `product-workflow/src/planning/`：LangGraph 工作流草案生成、确定性 DAG 审查和一次修正。
+9. `agent-sdk/src/`：共用验签、幂等、HTTP、正式接单和结果回传基础设施。
+10. `product-workflow/src/formal-dispatch.ts`：工作流特有的制品适配、进度阶段和返工恢复。
+11. `product-workflow/src/api.ts`：工作流输入校验、错误分类和执行路由。
+12. `product-workflow/src/index.ts`：配置、执行器、API 与 HTTP 服务的组合根。
 
 每个 Agent 的展示名、实现方式和核心文件完整对应表见
 [`product-workflow/README.md`](product-workflow/README.md)。
 
 ### 本地启动
+
+模型层使用 `WORKFLOW_MODEL_PROVIDER`、`WORKFLOW_MODEL_API_KEY`、
+`WORKFLOW_MODEL_BASE_URL` 和 `WORKFLOW_AGENT_MODEL` 四个统一变量。默认 provider 为
+`deepseek`，切换 `openai` 不需要修改领域 Agent、LangGraph 或 Mastra 代码；旧
+`DEEPSEEK_API_KEY/DEEPSEEK_BASE_URL` 仅在 DeepSeek 模式下兼容读取。
 
 可以复用论文 Agent 配置文件中的 DeepSeek Key 和 `WORKFLOW_AGENT_SECRET`：
 

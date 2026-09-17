@@ -14,7 +14,7 @@ import { PrdStateMachineAgent } from "./agents/prd/state-machine-agent.js";
 import type { RunContext, WorkflowExecutor } from "./agents/shared/contracts.js";
 import type { WorkflowAgentId } from "./catalog.js";
 import type { WorkflowArtifact, WorkflowExecutionInput } from "./domain.js";
-import type { JsonModelClient } from "./model-client.js";
+import type { WorkflowModelClient } from "./model-client.js";
 
 export type { RunContext, WorkflowExecutor } from "./agents/shared/contracts.js";
 export { LangGraphCodingFlow } from "./agents/coding/langgraph-coding-flow.js";
@@ -27,7 +27,7 @@ export class WorkflowExecutorRouter implements WorkflowExecutor {
   readonly #agents: Readonly<Record<WorkflowAgentId, WorkflowExecutor>>;
 
   constructor(options: {
-    jsonClient: JsonModelClient;
+    jsonClient: WorkflowModelClient;
     mastraModel: MastraModelConfig;
     modelStepTimeoutMs: number;
     now?: () => Date;

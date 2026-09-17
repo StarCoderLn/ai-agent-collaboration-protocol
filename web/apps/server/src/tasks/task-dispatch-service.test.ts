@@ -171,6 +171,7 @@ describe("TaskDispatchService", () => {
 		const dispatch = gateway();
 		const selection: WorkflowSelectionRepository = {
 			select: vi.fn(async () => neverCalled()),
+			selectRecommended: vi.fn(async () => neverCalled()),
 		};
 		const service = new TaskDispatchService(
 			repository(true, "matching"),
@@ -216,6 +217,7 @@ describe("TaskDispatchService", () => {
 	it("freezes a workflow candidate before escrow instead of dispatching it", async () => {
 		const dispatch = gateway();
 		const selection: WorkflowSelectionRepository = {
+			selectRecommended: vi.fn(async () => neverCalled()),
 			select: vi.fn(async () => ({
 				statusCode: 200,
 				body: {
@@ -251,6 +253,7 @@ describe("TaskDispatchService", () => {
 	it("replaces a frozen workflow candidate while the task is awaiting escrow", async () => {
 		const dispatch = gateway();
 		const selection: WorkflowSelectionRepository = {
+			selectRecommended: vi.fn(async () => neverCalled()),
 			select: vi.fn(async () => ({
 				statusCode: 200,
 				body: {
@@ -297,6 +300,7 @@ describe("TaskDispatchService", () => {
 	it("preserves the selection failure code instead of misreporting every conflict as a missing idempotency key", async () => {
 		const dispatch = gateway();
 		const selection: WorkflowSelectionRepository = {
+			selectRecommended: vi.fn(async () => neverCalled()),
 			select: vi.fn(async () => {
 				throw new WorkflowSelectionRepositoryError(
 					"CANDIDATE_NOT_FOUND",
@@ -321,6 +325,90 @@ describe("TaskDispatchService", () => {
 			),
 		).rejects.toMatchObject({ code: "CANDIDATE_NOT_FOUND", statusCode: 409 });
 		expect(dispatch.confirmWorkflowNode).not.toHaveBeenCalled();
+	});
+
+	it("批量确认只向事务仓储表达意图，不把 Agent 或报价交给浏览器", async () => {
+		const dispatch = gateway();
+		const selection: WorkflowSelectionRepository = {
+			select: vi.fn(async () => neverCalled()),
+			selectRecommended: vi.fn(async () => ({
+				statusCode: 200,
+				body: {
+					taskId: "task-1",
+					selections: [
+						{
+							nodeId: "node-1",
+							agentId: "agent-1",
+							agreedAmountMinor: "12000000",
+						},
+					],
+					selectedNodeCount: 3,
+					totalNodeCount: 3,
+					quotedTotalMinor: "52000000",
+					taskStatus: "awaiting_escrow" as const,
+				},
+			})),
+		};
+		const service = new TaskDispatchService(
+			repository(true, "planning"),
+			dispatch,
+			selection,
+		);
+
+		await expect(
+			service.confirmRecommendedWorkflowCandidates(
+				"task-1",
+				"publisher-1",
+				"select-recommended-1",
+			),
+		).resolves.toMatchObject({
+			body: { taskStatus: "awaiting_escrow", quotedTotalMinor: "52000000" },
+		});
+		expect(selection.selectRecommended).toHaveBeenCalledWith(
+			expect.objectContaining({
+				taskId: "task-1",
+				actorId: "publisher-1",
+				idempotencyKey: "select-recommended-1",
+				selectedAt: expect.any(Date),
+			}),
+		);
+	});
+
+	it("批量确认拒绝缺少幂等键或已经离开规划态的任务", async () => {
+		const dispatch = gateway();
+		const selection: WorkflowSelectionRepository = {
+			select: vi.fn(async () => neverCalled()),
+			selectRecommended: vi.fn(async () => neverCalled()),
+		};
+		await expect(
+			new TaskDispatchService(
+				repository(true, "planning"),
+				dispatch,
+				selection,
+			).confirmRecommendedWorkflowCandidates(
+				"task-1",
+				"publisher-1",
+				undefined,
+			),
+		).rejects.toMatchObject({
+			code: "IDEMPOTENCY_KEY_REQUIRED",
+			statusCode: 400,
+		});
+		await expect(
+			new TaskDispatchService(
+				repository(true, "awaiting_escrow"),
+				dispatch,
+				selection,
+			).confirmRecommendedWorkflowCandidates(
+				"task-1",
+				"publisher-1",
+				"select-recommended-2",
+			),
+		).rejects.toMatchObject({
+			code: "WORKFLOW_SELECTION_LOCKED",
+			statusCode: 409,
+		});
+		expect(selection.selectRecommended).not.toHaveBeenCalled();
 	});
 });
 

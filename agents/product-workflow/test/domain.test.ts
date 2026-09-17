@@ -38,9 +38,15 @@ describe("workflow domain contracts", () => {
 
     expect(pricesByStep).toEqual({
       requirements: [1_500_000n, 2_000_000n, 3_000_000n],
-      design: [2_000_000n, 3_000_000n, 4_000_000n],
-      code: [3_000_000n, 4_000_000n, 5_000_000n, 5_000_000n],
+      design: [1_500_000n, 3_000_000n, 4_000_000n],
+      code: [1_500_000n, 4_000_000n, 5_000_000n, 5_000_000n],
     });
+
+    // 冷启动门禁要求前三单不超过 1.5 USDC；每个分类至少有一个可成交基线，
+    // 才不会出现“必须先完成订单才能接到第一单”的目录死锁。
+    for (const prices of Object.values(pricesByStep)) {
+      expect(prices.some((price) => price <= 1_500_000n)).toBe(true);
+    }
   });
 
   it("rejects an Agent selected for the wrong workflow step", () => {

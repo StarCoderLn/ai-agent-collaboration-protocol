@@ -48,9 +48,9 @@ func (r *MatchingRepository) PendingInitialMatchTaskIDs(ctx context.Context, lim
 	return ids, rows.Err()
 }
 
-// PendingInitialWorkflowNodes 返回首次待匹配节点，以及“自动模式已有候选但尚未锁定
-// assignment”的恢复节点。后者让瞬时派发失败能够在下个 tick 幂等重试；手动模式已有
-// 候选后仍等待发布者选择，不会被后台 worker 反复扫描。
+// PendingInitialWorkflowNodes 返回首次待匹配节点，以及“已有冻结选择但尚未锁定
+// assignment”的恢复节点。并行 DAG 中一个分支等待人工验收时，run 的聚合状态会是
+// awaiting_review；其它 matching 分支仍必须继续派发，不能把展示层聚合状态误当调度锁。
 func (r *MatchingRepository) PendingInitialWorkflowNodes(
 	ctx context.Context,
 	limit int,
@@ -64,7 +64,7 @@ func (r *MatchingRepository) PendingInitialWorkflowNodes(
 		  JOIN task_workflow_runs run ON run.id=node.workflow_run_id
 		  JOIN tasks task ON task.id=node.task_id
 		 WHERE ((run.status='planning' AND node.status='selecting')
-		        OR (run.status='running' AND node.status='matching'))
+		        OR (run.status IN ('running','awaiting_review') AND node.status='matching'))
 		   AND NOT EXISTS (
 		     SELECT 1 FROM task_assignments assignment
 		      WHERE assignment.workflow_node_id=node.id
@@ -76,7 +76,7 @@ func (r *MatchingRepository) PendingInitialWorkflowNodes(
 		        WHERE record.workflow_node_id=node.id
 		     )
 		     OR (
-		       run.status='running'
+		       run.status IN ('running','awaiting_review')
 		       AND (
 		         EXISTS (
 		           SELECT 1 FROM job_distribution_records selected_record
@@ -171,7 +171,7 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 			`SELECT task.id::text,node.category_id::text,node.tags,node.description,
 			        COALESCE(node.price_preference_minor,0),
 			        task.currency,task.deadline,GREATEST(task.updated_at,node.updated_at),node.status,
-			        task.assignment_mode_config->>'mode',
+			        task.assignment_mode_config->>'mode',node.input_contract,node.output_contract,
 			        COALESCE((
 			        SELECT CASE
 			                 WHEN assignment.status IN ('accept_failed','cancelled')
@@ -185,9 +185,10 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 			   FROM task_workflow_nodes node
 			   JOIN task_workflow_runs run ON run.id=node.workflow_run_id
 			   JOIN tasks task ON task.id=node.task_id
-			  WHERE task.id=$1 AND node.id=$2 AND run.status IN ('planning','running')`, taskID, workflowNodeID,
+			  WHERE task.id=$1 AND node.id=$2
+			    AND run.status IN ('planning','running','awaiting_review')`, taskID, workflowNodeID,
 		).Scan(&input.Task.ID, &input.Task.CategoryID, &input.Task.Tags, &input.Task.Description, &input.Task.BudgetMinor, &input.Task.Currency,
-			&input.Task.Deadline, &input.TaskUpdatedAt, &status, &input.AssignmentMode, &input.PreviousAssignmentID)
+			&input.Task.Deadline, &input.TaskUpdatedAt, &status, &input.AssignmentMode, &input.Task.InputContract, &input.Task.OutputContract, &input.PreviousAssignmentID)
 		input.WorkflowNodeID = workflowNodeID
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -234,7 +235,8 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		       COALESCE(score.dimensions,'{}'::jsonb),COALESCE(score.dispute_rate,0)::float8,
 		       COALESCE(similar_stats.completed,0)::int,COALESCE(similar_stats.on_time_rate,0)::float8,
 		       COALESCE(similar_stats.rework_rate,0)::float8,COALESCE(cases.items,'[]'::jsonb),
-		       COALESCE(admission.final_score,50)::float8
+		       COALESCE(admission.final_score,50)::float8,
+		       COALESCE(contracts.items,'[]'::jsonb)
 		  FROM agents a
 		  LEFT JOIN LATERAL (
 		    SELECT s.score,s.sample_size,s.dimensions,s.dispute_rate FROM agent_score_snapshots s
@@ -324,6 +326,14 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		     WHERE round.agent_id=a.id AND round.status='passed' AND round.final_score IS NOT NULL
 		     ORDER BY round.completed_at DESC,round.id DESC LIMIT 1
 		  ) admission ON TRUE
+		  LEFT JOIN LATERAL (
+		    SELECT jsonb_agg(jsonb_build_object(
+		      'inputContract',contract.input_contract,
+		      'outputContract',contract.output_contract
+		    ) ORDER BY contract.input_contract,contract.output_contract) AS items
+		      FROM agent_workflow_contracts contract
+		     WHERE contract.agent_id=a.id
+		  ) contracts ON TRUE
 		 ORDER BY a.id`)
 	if err != nil {
 		return matching.MatchInput{}, err
@@ -333,7 +343,7 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		var candidate domain.AgentCandidate
 		var statusValue, pauseReason string
 		var estimatedSeconds int64
-		var dimensionsJSON, casesJSON []byte
+		var dimensionsJSON, casesJSON, contractsJSON []byte
 		if err = rows.Scan(
 			&candidate.ID, &candidate.Name, &candidate.CategoryID, &candidate.Tags, &candidate.CapabilityDescription, &statusValue,
 			&pauseReason, &candidate.PriceMinor, &candidate.Currency, &candidate.Score, &candidate.Completed,
@@ -341,7 +351,7 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 			&candidate.RatingSampleSize, &candidate.PriorWeight,
 			&candidate.ProbationCompletedTaskThreshold, &candidate.ProbationBudgetCapMinor,
 			&dimensionsJSON, &candidate.DisputeRate, &candidate.SimilarCompleted,
-			&candidate.OnTimeRate, &candidate.ReworkRate, &casesJSON, &candidate.AdmissionScore,
+			&candidate.OnTimeRate, &candidate.ReworkRate, &casesJSON, &candidate.AdmissionScore, &contractsJSON,
 		); err != nil {
 			return matching.MatchInput{}, err
 		}
@@ -350,6 +360,9 @@ func (r *MatchingRepository) loadInput(ctx context.Context, taskID, workflowNode
 		candidate.ScoreDimensions = append(json.RawMessage(nil), dimensionsJSON...)
 		if err = json.Unmarshal(casesJSON, &candidate.DeliveryCases); err != nil {
 			return matching.MatchInput{}, fmt.Errorf("decode agent delivery cases: %w", err)
+		}
+		if err = json.Unmarshal(contractsJSON, &candidate.WorkflowContracts); err != nil {
+			return matching.MatchInput{}, fmt.Errorf("decode agent workflow contracts: %w", err)
 		}
 		input.Agents = append(input.Agents, candidate)
 	}

@@ -4,6 +4,7 @@ import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import {
 	type BrowserResearchInput,
 	BrowserResearchInputSchema,
+	BrowserResearchIntentSchema,
 	type BrowserResearchReport,
 	BrowserResearchReportSchema,
 	type PageFailure,
@@ -14,6 +15,8 @@ import {
 	type DnsLookup,
 	UrlPolicyError,
 } from "./public-url-policy.js";
+import type { ResearchSourceDiscovery } from "./source-discovery.js";
+import { workflowOutputContract } from "./research-synthesis.js";
 import {
 	type BrowserResearchSession,
 	type BrowserResearchSessionFactory,
@@ -105,15 +108,45 @@ export class BrowserResearchFlow {
 export function createBrowserResearchExecutor(
 	factory: BrowserResearchSessionFactory,
 	resolve?: DnsLookup,
+	discovery?: ResearchSourceDiscovery,
+	synthesis?: QuickAgentExecutor,
 ): QuickAgentExecutor {
 	/**
 	 * 同一进程共用一个槽位，把 Chromium 峰值限制为一个会话。URL 审批在拿到槽位后执行，
 	 * 可以避免排队任务提前做外部 DNS 查询；无论图执行成功还是失败，finally 都关闭会话。
 	 */
 	const slot = new SingleBrowserSlot();
-	return async (request, signal) =>
-		slot.run(async () => {
-			const input = browserResearchInput(request);
+	return async (request, signal) => {
+		if (workflowInputContract(request.workflow) === "ResearchArtifact") {
+			if (workflowOutputContract(request.workflow) !== "ResearchArtifact") {
+				throw new Error(
+					`网页调研助手不能处理包含上游制品的输出契约：${workflowOutputContract(request.workflow) ?? "未提供"}`,
+				);
+			}
+			if (synthesis === undefined)
+				throw new Error("研究综合执行器尚未配置");
+			return synthesis(request, signal);
+		}
+		if (
+			request.upstreamArtifacts.length > 0 &&
+			workflowOutputContract(request.workflow) !== "ResearchArtifact"
+		) {
+			throw new Error(
+				`网页调研助手不能处理包含上游制品的输出契约：${workflowOutputContract(request.workflow) ?? "未提供"}`,
+			);
+		}
+		return slot.run(async () => {
+			const intent = browserResearchInput(request);
+			// 显式 URL 始终优先；只有任务完全没有给出来源时才启动搜索，避免改变已有任务的
+			// 访问范围。来源发现只负责给出候选地址，所有候选仍统一经过 SSRF 审批边界。
+			const urls =
+				intent.urls.length > 0
+					? intent.urls
+					: await discoverRequiredSources(discovery, intent.goal, signal);
+			const input = BrowserResearchInputSchema.parse({
+				goal: intent.goal,
+				urls,
+			});
 			const targets = await approveResearchTargets(input.urls, resolve);
 			const session = await factory.open(targets.domains);
 			try {
@@ -143,11 +176,12 @@ export function createBrowserResearchExecutor(
 				await session.close();
 			}
 		}, signal);
+	};
 }
 
 export function browserResearchInput(
 	request: QuickRunRequest,
-): BrowserResearchInput {
+): Readonly<{ goal: string; urls: readonly string[] }> {
 	// URL 只从用户明确填写的任务字段提取，不读取上游 Agent 产物，防止不可信产物扩大访问范围。
 	const text = [
 		request.task.description,
@@ -163,10 +197,50 @@ export function browserResearchInput(
 				?.map(trimTrailingPunctuation) ?? [],
 		),
 	];
-	return BrowserResearchInputSchema.parse({
-		goal: request.task.title ?? request.task.description ?? "研究给定网页",
+	// 此处只解析研究意图，允许暂时没有 URL；BrowserResearchFlow 的正式输入仍要求至少一个
+	// 已批准来源，防止来源发现失败后生成看似成功、实则没有证据的空报告。
+	return BrowserResearchIntentSchema.parse({
+		// 正式 DAG 派发会携带当前节点标题。它比整单标题更具体，必须作为搜索目标，
+		// 否则两个并行研究节点会用同一宽泛关键词发现近似来源。Quick Agent 契约允许
+		// 扩展字段，因此这里在消费前单独验证，旧的非工作流请求仍保持原有回退顺序。
+		goal:
+			workflowNodeTitle(request.workflow) ??
+			request.task.title ??
+			request.task.description ??
+			"研究给定网页",
 		urls,
 	});
+}
+
+function workflowNodeTitle(value: unknown): string | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const title = Reflect.get(value, "title");
+	return typeof title === "string" && title.trim() !== ""
+		? title.trim()
+		: undefined;
+}
+
+function workflowInputContract(value: unknown): string | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const contract = Reflect.get(value, "inputContract");
+	return typeof contract === "string" && contract.trim() !== ""
+		? contract.trim()
+		: undefined;
+}
+
+async function discoverRequiredSources(
+	discovery: ResearchSourceDiscovery | undefined,
+	goal: string,
+	signal: AbortSignal,
+): Promise<readonly string[]> {
+	if (discovery === undefined) {
+		throw new Error("任务未提供网页来源，且来源发现服务尚未配置");
+	}
+	const urls = await discovery.discover(goal, signal);
+	if (urls.length === 0) {
+		throw new Error("没有发现可用于本次研究的公开网页来源");
+	}
+	return urls;
 }
 
 function routeNext(

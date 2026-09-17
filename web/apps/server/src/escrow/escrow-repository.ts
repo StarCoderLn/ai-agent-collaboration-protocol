@@ -783,6 +783,19 @@ export class PgEscrowRepository implements EscrowRepository {
 				confirmations: input.confirmations,
 				now: input.now,
 			});
+			if (outcome === "confirmed") {
+				// RPC 会立刻返回最新链状态，而事件游标可能仍在分批追赶历史区块。此时对账器
+				// 会先看到链上终态并产生 mismatch；只要随后到达的事件通过金额、哈希和状态机
+				// 的全部校验，就已经证明这个差异只是游标延迟。必须在同一事务内解除冻结，
+				// 否则任务虽已正确结算，过期告警仍会永久阻止后续运营操作。
+				await client.query(
+					`UPDATE reconciliation_alerts
+					    SET operations_frozen=FALSE,resolved_at=$2
+					  WHERE task_id=$1 AND resolved_at IS NULL
+					    AND discrepancy_summary->>'code'='ESCROW_RECONCILIATION_MISMATCH'`,
+					[event.task_id, input.now],
+				);
+			}
 			return outcome;
 		});
 	}

@@ -10,12 +10,22 @@ import (
 	"net/http"
 	"net/url"
 
+	agentdelivery "github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/delivery"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/dispatch"
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/executionproxy"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/protocol"
 )
 
 const maxWebhookResponseBytes = 64 << 10
 
-type HTTPSender struct{ Client *http.Client }
+type ResultSubmitter interface {
+	Forward(ctx context.Context, taskID, workflowNodeID, operation, idempotencyKey string, body []byte) (executionproxy.Response, error)
+}
+
+type HTTPSender struct {
+	Client    *http.Client
+	Submitter ResultSubmitter
+}
 
 type eventEnvelope struct {
 	SchemaVersion string          `json:"schemaVersion"`
@@ -28,6 +38,9 @@ type eventEnvelope struct {
 }
 
 func (s *HTTPSender) Send(ctx context.Context, delivery Delivery, secret string) error {
+	if delivery.IntegrationMode == "http_json" {
+		return s.sendQuickRework(ctx, delivery, secret)
+	}
 	if s.Client == nil || secret == "" {
 		return errors.New("webhook sender is not configured")
 	}
@@ -91,6 +104,70 @@ func (s *HTTPSender) Send(ctx context.Context, delivery Delivery, secret string)
 			Code: fmt.Sprintf("AGENT_HTTP_%d", response.StatusCode),
 			Retryable: response.StatusCode == http.StatusRequestTimeout ||
 				response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500,
+		}
+	}
+	return nil
+}
+
+// sendQuickRework 把定向返工 outbox 转成 HTTP JSON Agent 已理解的 dispatch.v1，随后把
+// 同步产物交回 Marketplace API。业务状态仍只由 TypeScript 事务更新；本 worker 负责
+// 可重试的外部调用和转交，不在 Go 侧复制节点状态机。
+func (s *HTTPSender) sendQuickRework(ctx context.Context, item Delivery, secret string) error {
+	if s.Client == nil || s.Submitter == nil || item.EventType != "task.rework_requested" {
+		return &DeliveryError{Code: "QUICK_REWORK_SENDER_NOT_CONFIGURED", Retryable: false}
+	}
+	var eventPayload struct {
+		Dispatch       json.RawMessage `json:"dispatch"`
+		WorkflowNodeID string          `json:"workflowNodeId"`
+		RequestID      string          `json:"requestId"`
+	}
+	if err := json.Unmarshal(item.Payload, &eventPayload); err != nil || len(eventPayload.Dispatch) == 0 ||
+		eventPayload.WorkflowNodeID == "" || eventPayload.RequestID == "" {
+		return &DeliveryError{Code: "QUICK_REWORK_PAYLOAD_INVALID", Retryable: false}
+	}
+	var formalDispatch struct {
+		AssignmentID string `json:"assignmentId"`
+	}
+	if err := json.Unmarshal(eventPayload.Dispatch, &formalDispatch); err != nil || formalDispatch.AssignmentID == "" {
+		return &DeliveryError{Code: "QUICK_REWORK_PAYLOAD_INVALID", Retryable: false}
+	}
+	message := dispatch.DispatchMessage{
+		AssignmentID:      formalDispatch.AssignmentID,
+		TaskID:            item.TaskID,
+		WorkflowNodeID:    eventPayload.WorkflowNodeID,
+		AgentID:           item.AgentID,
+		AttemptID:         item.ID,
+		IdempotencyKey:    item.IdempotencyKey,
+		ProtocolRequestID: eventPayload.RequestID,
+	}
+	result, err := (&agentdelivery.HTTPAgentCaller{Client: s.Client}).Call(ctx, message, agentdelivery.Target{
+		Endpoint: item.Endpoint, Secret: secret, Body: eventPayload.Dispatch, IntegrationMode: "http_json",
+	})
+	if err != nil {
+		var callErr *agentdelivery.CallError
+		if errors.As(err, &callErr) {
+			return &DeliveryError{Code: callErr.Code, Retryable: callErr.Retryable}
+		}
+		return err
+	}
+	if len(result.QuickResultPayload) == 0 {
+		return &DeliveryError{Code: "QUICK_REWORK_RESULT_MISSING", Retryable: false}
+	}
+	response, err := s.Submitter.Forward(
+		ctx,
+		item.TaskID,
+		eventPayload.WorkflowNodeID,
+		"results",
+		"quick-rework-result:"+item.TaskID+":"+eventPayload.RequestID,
+		result.QuickResultPayload,
+	)
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return &DeliveryError{
+			Code:      fmt.Sprintf("QUICK_REWORK_RESULT_HTTP_%d", response.StatusCode),
+			Retryable: response.StatusCode == http.StatusRequestTimeout || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500,
 		}
 	}
 	return nil

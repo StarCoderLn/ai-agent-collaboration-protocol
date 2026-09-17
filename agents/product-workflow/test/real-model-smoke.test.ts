@@ -8,7 +8,7 @@ import {
   RequirementsArtifactSchema,
 } from "../src/domain.js";
 import { WorkflowExecutorRouter } from "../src/executors.js";
-import { DeepSeekJsonClient } from "../src/model-client.js";
+import { OpenAICompatibleModelClient } from "../src/model-client.js";
 
 const runRealModel = process.env.RUN_REAL_MODEL_SMOKE === "1" ? it : it.skip;
 
@@ -23,7 +23,7 @@ describe("真实模型 LangGraph Coding 链路", () => {
     const modelName = configuredModel.startsWith("deepseek/")
       ? configuredModel.slice("deepseek/".length)
       : configuredModel;
-    const client = new DeepSeekJsonClient({
+    const client = new OpenAICompatibleModelClient({
       baseUrl,
       apiKey,
       modelName,

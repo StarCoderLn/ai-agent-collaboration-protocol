@@ -8,9 +8,14 @@ export const MAX_RESEARCH_DOMAINS = 5;
 export const MAX_RESEARCH_PAGES = 20;
 
 // 输入上限同时约束成本、执行时间和单任务可访问范围，不能只在 UI 中限制。
-export const BrowserResearchInputSchema = z.object({
+export const BrowserResearchIntentSchema = z.object({
 	goal: z.string().trim().min(1).max(2_000),
-	urls: z.array(z.url()).min(1).max(MAX_RESEARCH_PAGES),
+	urls: z.array(z.url()).max(MAX_RESEARCH_PAGES),
+});
+
+// LangGraph 只能接收至少一个已批准来源；允许空 URL 的研究意图必须先经过来源发现阶段。
+export const BrowserResearchInputSchema = BrowserResearchIntentSchema.extend({
+	urls: BrowserResearchIntentSchema.shape.urls.min(1),
 });
 
 export type BrowserResearchInput = z.infer<typeof BrowserResearchInputSchema>;

@@ -45,28 +45,39 @@ type AgentCandidate struct {
 	// AdmissionScore 冻结最近一次通过的准入质量分。V2 只能消费匹配发生当时的值，
 	// 不能在训练或推理阶段回查未来评测，否则会把未来信息泄漏进历史样本。
 	AdmissionScore float64
+	// WorkflowContracts 是 Agent 明确声明并由平台持久化的输入/输出能力。它与搜索标签
+	// 分离，防止语义相似度把协议不兼容的 Agent 排到可执行候选中。
+	WorkflowContracts []WorkflowContract
+}
+
+type WorkflowContract struct {
+	InputContract  string `json:"inputContract"`
+	OutputContract string `json:"outputContract"`
 }
 
 type MatchTask struct {
-	ID          string
-	CategoryID  string
-	Tags        []string
-	Description string `json:"-"`
-	BudgetMinor int64
-	Currency    string
-	Deadline    time.Time
+	ID             string
+	CategoryID     string
+	Tags           []string
+	Description    string `json:"-"`
+	BudgetMinor    int64
+	Currency       string
+	Deadline       time.Time
+	InputContract  string
+	OutputContract string
 }
 type EligibilityReason string
 
 const (
-	Eligible                EligibilityReason = "eligible"
-	WrongCategory           EligibilityReason = "wrong_category"
-	InactiveAgent           EligibilityReason = "inactive_agent"
-	OverBudget              EligibilityReason = "over_budget"
-	CurrencyMismatch        EligibilityReason = "currency_mismatch"
-	DeadlinePassed          EligibilityReason = "deadline_passed"
-	CannotMeetDeadline      EligibilityReason = "cannot_meet_deadline"
-	ProbationBudgetExceeded EligibilityReason = "probation_budget_exceeded"
+	Eligible                     EligibilityReason = "eligible"
+	WrongCategory                EligibilityReason = "wrong_category"
+	InactiveAgent                EligibilityReason = "inactive_agent"
+	OverBudget                   EligibilityReason = "over_budget"
+	CurrencyMismatch             EligibilityReason = "currency_mismatch"
+	DeadlinePassed               EligibilityReason = "deadline_passed"
+	CannotMeetDeadline           EligibilityReason = "cannot_meet_deadline"
+	ProbationBudgetExceeded      EligibilityReason = "probation_budget_exceeded"
+	IncompatibleWorkflowContract EligibilityReason = "incompatible_workflow_contract"
 )
 
 // ValidateHardConstraints 是资格过滤的单一权威入口。冷启动报价限制只依赖已经验收
@@ -78,6 +89,18 @@ func ValidateHardConstraints(task MatchTask, agent AgentCandidate, now time.Time
 	}
 	if agent.State.Status != AgentActive {
 		return InactiveAgent
+	}
+	if task.InputContract != "" || task.OutputContract != "" {
+		supported := false
+		for _, contract := range agent.WorkflowContracts {
+			if contract.InputContract == task.InputContract && contract.OutputContract == task.OutputContract {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			return IncompatibleWorkflowContract
+		}
 	}
 	if agent.Currency != task.Currency {
 		return CurrencyMismatch

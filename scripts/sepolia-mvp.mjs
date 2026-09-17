@@ -31,6 +31,7 @@ const INTERNAL_TOKEN =
 	process.env.DISPATCH_INTERNAL_TOKEN ?? LOCAL_INTERNAL_TOKEN;
 const PORTS = Object.freeze({
 	workflow: readPort("AICP_WORKFLOW_AGENT_PORT", 9202),
+	presentation: readPort("AICP_PRESENTATION_AGENT_PORT", 9302),
 	browser: readPort("AICP_BROWSER_AGENT_PORT", 9304),
 	marketplaceApi: readPort("AICP_MARKETPLACE_API_PORT", 3100),
 	dispatch: readPort("AICP_DISPATCH_PORT", 3200),
@@ -38,6 +39,7 @@ const PORTS = Object.freeze({
 });
 const URLS = Object.freeze({
 	workflow: `http://127.0.0.1:${PORTS.workflow}`,
+	presentation: `http://127.0.0.1:${PORTS.presentation}`,
 	browser: `http://127.0.0.1:${PORTS.browser}`,
 	marketplaceApi: `http://127.0.0.1:${PORTS.marketplaceApi}`,
 	dispatch: `http://127.0.0.1:${PORTS.dispatch}`,
@@ -82,35 +84,18 @@ async function main() {
 	const paperEnvironment = parseEnv(
 		await readFile(path.join(ROOT, "agents/paper-writing/.env"), "utf8"),
 	);
-	const apiKey = required(paperEnvironment, "DEEPSEEK_API_KEY");
 	const openAIKey = required(paperEnvironment, "OPENAI_API_KEY");
+	// 自动准入仍独立使用 DeepSeek。工作流模型即使切到 OpenAI，也不能误把 OpenAI
+	// 密钥传给只接受 OpenAI-compatible DeepSeek 配置的准入评测器。
+	const deepSeekApiKey = required(paperEnvironment, "DEEPSEEK_API_KEY");
 	const agentSecret = required(paperEnvironment, "WORKFLOW_AGENT_SECRET");
+	const modelEnvironment = workflowModelEnvironment(paperEnvironment);
 	if (agentSecret.length < 16)
 		throw new Error("WORKFLOW_AGENT_SECRET 长度不足");
 
 	// Sepolia 演示仍通过本机 Agent 服务执行任务，因此目录端点必须在每次启动时与当前
 	// 端口配置幂等同步。同步只写 PostgreSQL，不部署合约，也不会广播链上交易。
-	await runOnce("Agent SDK", NODE, [SDK_TSC, "-p", "tsconfig.build.json"], {
-		cwd: path.join(ROOT, "agents/agent-sdk"),
-		env: {},
-	});
-	await runOnce("产品 Agent 目录", NODE, [TSX, "src/local-bootstrap.ts"], {
-		cwd: path.join(ROOT, "agents/product-workflow"),
-		env: {
-			AICP_LOCAL_DEMO_MODE: "true",
-			DATABASE_URL,
-			WORKFLOW_AGENT_PUBLIC_URL: URLS.workflow,
-		},
-	});
-	await runOnce("网页调研助手目录", NODE, [TSX, "src/local-bootstrap.ts"], {
-		cwd: path.join(ROOT, "agents/browser-research"),
-		env: {
-			AICP_LOCAL_DEMO_MODE: "true",
-			AICP_PLATFORM_AGENT_OWNER_ADDRESS: platformAgentWallet,
-			DATABASE_URL,
-			BROWSER_AGENT_PUBLIC_URL: URLS.browser,
-		},
-	});
+	await syncLocalAgentDirectory(platformAgentWallet);
 
 	const workflow = start(
 		"Product Workflow Agent",
@@ -119,13 +104,7 @@ async function main() {
 		{
 			cwd: path.join(ROOT, "agents/product-workflow"),
 			env: {
-				DEEPSEEK_API_KEY: apiKey,
-				DEEPSEEK_BASE_URL:
-					paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
-				WORKFLOW_AGENT_MODEL:
-					process.env.WORKFLOW_AGENT_MODEL ??
-					paperEnvironment.WORKFLOW_AGENT_MODEL ??
-					"deepseek-chat",
+				...modelEnvironment,
 				WORKFLOW_AGENT_SECRET: agentSecret,
 				WORKFLOW_AGENT_HOST: "127.0.0.1",
 				WORKFLOW_AGENT_PORT: String(PORTS.workflow),
@@ -139,41 +118,19 @@ async function main() {
 		`${URLS.workflow}/livez`,
 	);
 
-	const browserAgent = start(
-		"网页调研助手",
-		NODE,
-		// Stagehand 会独立管理 Chromium；这里不启用源码 watch，避免开发机为大依赖树
-		// 持续保留文件句柄并触发 EMFILE。代码变更后重启启动器即可加载新版本。
-		[TSX, "src/index.ts"],
-		{
-			cwd: path.join(ROOT, "agents/browser-research"),
-			env: {
-				DEEPSEEK_API_KEY: apiKey,
-				DEEPSEEK_BASE_URL:
-					paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
-				DEEPSEEK_MODEL: paperEnvironment.DEEPSEEK_MODEL ?? "deepseek-chat",
-				AGENT_HOST: "127.0.0.1",
-				AGENT_PORT: String(PORTS.browser),
-				AGENT_PUBLIC_BASE_URL: URLS.browser,
-				AGENT_API_KEY: agentSecret,
-				AGENT_ARTIFACT_DIR: path.join(
-					ROOT,
-					".local/artifacts/browser-research",
-				),
-				AGENT_RESPONSE_CACHE_DIR: path.join(
-					ROOT,
-					".local/responses/browser-research",
-				),
-			},
-		},
-	);
-	await waitForService(
-		browserAgent,
-		"网页调研助手",
-		`${URLS.browser}/healthz`,
-		true,
-		{ authorization: `Bearer ${agentSecret}` },
-	);
+	await startBrowserResearchAgent({
+		agentSecret,
+		deepSeekApiKey,
+		deepSeekBaseUrl:
+			paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+		deepSeekModel: paperEnvironment.DEEPSEEK_MODEL ?? "deepseek-chat",
+	});
+	await startPresentationAgent({
+		agentSecret,
+		deepSeekApiKey,
+		deepSeekBaseUrl: paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+		deepSeekModel: paperEnvironment.DEEPSEEK_MODEL ?? "deepseek-chat",
+	});
 
 	const chainEnvironment = {
 		...environment,
@@ -195,6 +152,8 @@ async function main() {
 		// 本机 workflow agent 使用 loopback HTTP。该开关只放宽服务端连接探测边界；
 		// Web 单独关闭本地链模式，因此不会出现 Anvil 挖块或测试币交互。
 		AICP_LOCAL_DEMO_MODE: "true",
+		WORKFLOW_AGENT_SECRET: agentSecret,
+		WORKFLOW_PLANNER_URL: URLS.workflow,
 	};
 	const marketplaceApi = start(
 		"Marketplace API",
@@ -215,32 +174,14 @@ async function main() {
 		`${URLS.marketplaceApi}/api/health`,
 	);
 
-	const dispatch = start("Dispatch Engine", "go", ["run", "./cmd/server"], {
-		cwd: path.join(ROOT, "services/dispatch-engine"),
-		env: {
-			DATABASE_URL,
-			DISPATCH_INTERNAL_TOKEN: INTERNAL_TOKEN,
-			MARKETPLACE_API_URL: URLS.marketplaceApi,
-			DISPATCH_HTTP_ADDRESS: `127.0.0.1:${PORTS.dispatch}`,
-			DISPATCH_PUBLIC_URL: URLS.dispatch,
-			DISPATCH_QUEUE_MODE: "local",
-			LOCAL_AGENT_SECRET: agentSecret,
-			DEEPSEEK_API_KEY: apiKey,
-			DEEPSEEK_BASE_URL:
-				paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
-			// V1 只在分发引擎内调用 Embeddings API，密钥不传给 Web 或 Agent 进程。
-			MATCHING_SEMANTIC_ENABLED: "true",
-			OPENAI_API_KEY: openAIKey,
-			AGENT_ADMISSION_EVALUATOR_MODEL:
-				process.env.AGENT_ADMISSION_EVALUATOR_MODEL ?? "deepseek-chat",
-			AGENT_ADMISSION_ENGINE: process.env.AGENT_ADMISSION_ENGINE ?? "postgres",
-			TEMPORAL_ADDRESS: process.env.TEMPORAL_ADDRESS ?? "127.0.0.1:7233",
-			TEMPORAL_NAMESPACE: process.env.TEMPORAL_NAMESPACE ?? "default",
-			TEMPORAL_ADMISSION_TASK_QUEUE:
-				process.env.TEMPORAL_ADMISSION_TASK_QUEUE ?? "aicp-agent-admission-v1",
-		},
+	await startDispatchEngine({
+		agentSecret,
+		deepSeekApiKey,
+		deepSeekBaseUrl:
+			paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+		openAIKey,
+		admissionEnabled: true,
 	});
-	await waitForService(dispatch, "Dispatch Engine", `${URLS.dispatch}/health`);
 
 	await startWeb(environment, agentSecret);
 
@@ -290,11 +231,56 @@ async function startWeb(environment, agentSecret) {
 }
 
 /**
- * 登录只依赖 API 和数据库，不依赖 operator 解密或链上 worker。启动时验证真实 nonce，
- * API 没就绪就不宣布网站可用；数据库缺失时明确失败，不创建或重置用户的数据。
+ * 界面模式不解密 operator，也不运行链上 worker；但会启动工作流规划、Hono API 与
+ * Dispatch Engine，让确认后的节点真正生成候选。数据库缺失时明确失败，不创建或重置。
  */
 async function startUiDevelopment(environment) {
 	await validateDatabaseVersion();
+	const manifest = JSON.parse(
+		await readFile(path.join(ROOT, ".local/sepolia-wallets.json"), "utf8"),
+	);
+	const platformAgentWallet = platformAdminAddress(environment, manifest);
+	const paperEnvironment = parseEnv(
+		await readFile(path.join(ROOT, "agents/paper-writing/.env"), "utf8"),
+	);
+	const agentSecret = required(paperEnvironment, "WORKFLOW_AGENT_SECRET");
+	const openAIKey = required(paperEnvironment, "OPENAI_API_KEY");
+	const deepSeekApiKey = required(paperEnvironment, "DEEPSEEK_API_KEY");
+	const modelEnvironment = workflowModelEnvironment(paperEnvironment);
+	await syncLocalAgentDirectory(platformAgentWallet);
+	const workflow = start(
+		"Product Workflow Agent",
+		NODE,
+		[TSX, "watch", "src/index.ts"],
+		{
+			cwd: path.join(ROOT, "agents/product-workflow"),
+			env: {
+				DATABASE_URL,
+				...modelEnvironment,
+				WORKFLOW_AGENT_SECRET: agentSecret,
+				WORKFLOW_AGENT_HOST: "127.0.0.1",
+				WORKFLOW_AGENT_PORT: String(PORTS.workflow),
+			},
+		},
+	);
+	await waitForService(
+		workflow,
+		"Product Workflow Agent",
+		`${URLS.workflow}/livez`,
+	);
+	await startBrowserResearchAgent({
+		agentSecret,
+		deepSeekApiKey,
+		deepSeekBaseUrl:
+			paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+		deepSeekModel: paperEnvironment.DEEPSEEK_MODEL ?? "deepseek-chat",
+	});
+	await startPresentationAgent({
+		agentSecret,
+		deepSeekApiKey,
+		deepSeekBaseUrl: paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+		deepSeekModel: paperEnvironment.DEEPSEEK_MODEL ?? "deepseek-chat",
+	});
 	const api = start("Marketplace API", NODE, [TSX, "src/server.ts"], {
 		cwd: path.join(ROOT, "web/apps/server"),
 		env: {
@@ -306,6 +292,10 @@ async function startUiDevelopment(environment) {
 			SIWE_EXPECTED_DOMAIN: `127.0.0.1:${PORTS.web}`,
 			SIWE_EXPECTED_URI: URLS.web,
 			SIWE_EXPECTED_CHAIN_ID: "11155111",
+			WORKFLOW_AGENT_SECRET: agentSecret,
+			WORKFLOW_PLANNER_URL: URLS.workflow,
+			DISPATCH_ENGINE_URL: URLS.dispatch,
+			DISPATCH_INTERNAL_TOKEN: INTERNAL_TOKEN,
 		},
 	});
 	await waitForService(
@@ -325,14 +315,164 @@ async function startUiDevelopment(environment) {
 	) {
 		throw new Error("登录 API 的 Sepolia 网络或站点配置不一致");
 	}
-	await startWeb(environment);
+	await startDispatchEngine({
+		agentSecret,
+		deepSeekBaseUrl:
+			paperEnvironment.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+		openAIKey,
+		// UI 模式需要候选匹配与手动选人，但不应顺带推进新 Agent 的模型准入轮次。
+		admissionEnabled: false,
+	});
+	await startWeb(environment, agentSecret);
 	startupComplete = true;
 	console.log(
-		`界面与钱包登录已就绪：${URLS.web}；任务派发与链上 worker 未启动`,
+		`界面、钱包登录与候选匹配已就绪：${URLS.web}；链上 worker 未启动`,
 	);
 	process.on("SIGINT", () => void shutdown(0));
 	process.on("SIGTERM", () => void shutdown(0));
 	await new Promise(() => undefined);
+}
+
+/** 同步本机可执行 Agent 的稳定目录；幂等更新端点和报价，不创建链上身份或资金事实。 */
+async function syncLocalAgentDirectory(platformAgentWallet) {
+	await runOnce("Agent SDK", NODE, [SDK_TSC, "-p", "tsconfig.build.json"], {
+		cwd: path.join(ROOT, "agents/agent-sdk"),
+		env: {},
+	});
+	await runOnce("产品 Agent 目录", NODE, [TSX, "src/local-bootstrap.ts"], {
+		cwd: path.join(ROOT, "agents/product-workflow"),
+		env: {
+			AICP_LOCAL_DEMO_MODE: "true",
+			DATABASE_URL,
+			WORKFLOW_AGENT_PUBLIC_URL: URLS.workflow,
+		},
+	});
+	await runOnce("网页调研助手目录", NODE, [TSX, "src/local-bootstrap.ts"], {
+		cwd: path.join(ROOT, "agents/browser-research"),
+		env: {
+			AICP_LOCAL_DEMO_MODE: "true",
+			AICP_PLATFORM_AGENT_OWNER_ADDRESS: platformAgentWallet,
+			DATABASE_URL,
+			BROWSER_AGENT_PUBLIC_URL: URLS.browser,
+		},
+	});
+	await runOnce("演示文稿 Agent 目录", NODE, [TSX, "src/local-bootstrap.ts"], {
+		cwd: path.join(ROOT, "agents/presentation-generation"),
+		env: {
+			AICP_LOCAL_DEMO_MODE: "true",
+			AICP_PLATFORM_AGENT_OWNER_ADDRESS: platformAgentWallet,
+			DATABASE_URL,
+			PRESENTATION_AGENT_PUBLIC_URL: URLS.presentation,
+		},
+	});
+}
+
+/**
+ * Stagehand 独立管理 Chromium；不启用源码 watch，避免为大依赖树持续保留文件句柄。
+ * 健康探测和正式执行必须访问同一端点，因此 UI 完整体验也必须启动该服务。
+ */
+async function startBrowserResearchAgent({
+	agentSecret,
+	deepSeekApiKey,
+	deepSeekBaseUrl,
+	deepSeekModel,
+}) {
+	const browserAgent = start("网页调研助手", NODE, [TSX, "src/index.ts"], {
+		cwd: path.join(ROOT, "agents/browser-research"),
+		env: {
+			DEEPSEEK_API_KEY: deepSeekApiKey,
+			DEEPSEEK_BASE_URL: deepSeekBaseUrl,
+			DEEPSEEK_MODEL: deepSeekModel,
+			AGENT_HOST: "127.0.0.1",
+			AGENT_PORT: String(PORTS.browser),
+			AGENT_PUBLIC_BASE_URL: URLS.browser,
+			AGENT_API_KEY: agentSecret,
+			AGENT_ARTIFACT_DIR: path.join(ROOT, ".local/artifacts/browser-research"),
+			AGENT_RESPONSE_CACHE_DIR: path.join(
+				ROOT,
+				".local/responses/browser-research",
+			),
+		},
+	});
+	await waitForService(
+		browserAgent,
+		"网页调研助手",
+		`${URLS.browser}/healthz`,
+		true,
+		{ authorization: `Bearer ${agentSecret}` },
+	);
+}
+
+/** 演示文稿服务在同一端点按工作流输出契约执行策划、制作或交付质检。 */
+async function startPresentationAgent({
+	agentSecret,
+	deepSeekApiKey,
+	deepSeekBaseUrl,
+	deepSeekModel,
+}) {
+	const agent = start("演示文稿 Agent", NODE, [TSX, "src/index.ts"], {
+		cwd: path.join(ROOT, "agents/presentation-generation"),
+		env: {
+			DEEPSEEK_API_KEY: deepSeekApiKey,
+			DEEPSEEK_BASE_URL: deepSeekBaseUrl,
+			DEEPSEEK_MODEL: deepSeekModel,
+			AGENT_HOST: "127.0.0.1",
+			AGENT_PORT: String(PORTS.presentation),
+			AGENT_PUBLIC_BASE_URL: URLS.presentation,
+			AGENT_API_KEY: agentSecret,
+			AGENT_ARTIFACT_DIR: path.join(ROOT, ".local/artifacts/presentation"),
+			AGENT_RESPONSE_CACHE_DIR: path.join(ROOT, ".local/responses/presentation"),
+		},
+	});
+	await waitForService(
+		agent,
+		"演示文稿 Agent",
+		`${URLS.presentation}/healthz`,
+		true,
+		{ authorization: `Bearer ${agentSecret}` },
+	);
+}
+
+/**
+ * 两种 Sepolia 启动方式共享同一个分发引擎装配。UI 模式只关闭自动准入；工作流节点
+ * 的首次匹配 worker 必须保留，否则“确认并推荐 Agent”会生成正式 DAG 却永久没有候选。
+ * 此函数不启动任何链上 worker，也不会持有 operator 私钥或广播交易。
+ */
+async function startDispatchEngine({
+	agentSecret,
+	deepSeekApiKey,
+	deepSeekBaseUrl,
+	openAIKey,
+	admissionEnabled,
+}) {
+	const dispatch = start("Dispatch Engine", "go", ["run", "./cmd/server"], {
+		cwd: path.join(ROOT, "services/dispatch-engine"),
+		env: {
+			DATABASE_URL,
+			DISPATCH_INTERNAL_TOKEN: INTERNAL_TOKEN,
+			MARKETPLACE_API_URL: URLS.marketplaceApi,
+			DISPATCH_HTTP_ADDRESS: `127.0.0.1:${PORTS.dispatch}`,
+			DISPATCH_PUBLIC_URL: URLS.dispatch,
+			DISPATCH_QUEUE_MODE: "local",
+			LOCAL_AGENT_SECRET: agentSecret,
+			...(deepSeekApiKey === undefined
+				? {}
+				: { DEEPSEEK_API_KEY: deepSeekApiKey }),
+			DEEPSEEK_BASE_URL: deepSeekBaseUrl,
+			// V1 只在分发引擎内调用 Embeddings API，密钥不传给 Web 或 Agent 进程。
+			MATCHING_SEMANTIC_ENABLED: "true",
+			OPENAI_API_KEY: openAIKey,
+			AGENT_ADMISSION_ENABLED: admissionEnabled ? "true" : "false",
+			AGENT_ADMISSION_EVALUATOR_MODEL:
+				process.env.AGENT_ADMISSION_EVALUATOR_MODEL ?? "deepseek-chat",
+			AGENT_ADMISSION_ENGINE: process.env.AGENT_ADMISSION_ENGINE ?? "postgres",
+			TEMPORAL_ADDRESS: process.env.TEMPORAL_ADDRESS ?? "127.0.0.1:7233",
+			TEMPORAL_NAMESPACE: process.env.TEMPORAL_NAMESPACE ?? "default",
+			TEMPORAL_ADMISSION_TASK_QUEUE:
+				process.env.TEMPORAL_ADMISSION_TASK_QUEUE ?? "aicp-agent-admission-v1",
+		},
+	});
+	await waitForService(dispatch, "Dispatch Engine", `${URLS.dispatch}/health`);
 }
 
 async function validateSepoliaDeployment(environment) {
@@ -665,9 +805,50 @@ function portOpen(port) {
 
 async function assertPortsAvailable() {
 	for (const [label, port] of Object.entries(PORTS)) {
-		if (uiOnly && !["web", "marketplaceApi"].includes(label)) continue;
+		if (
+			uiOnly &&
+			!["web", "marketplaceApi", "workflow", "browser", "dispatch"].includes(
+				label,
+			)
+		)
+			continue;
 		if (await portOpen(port)) throw new Error(`${label} 端口 ${port} 已被占用`);
 	}
+}
+
+/**
+ * 启动器只负责把统一模型配置传给 Product Workflow Agent。默认继续复用现有 DeepSeek
+ * 配置；切换 OpenAI 时设置 provider 即可复用同一份 OPENAI_API_KEY，不改启动代码。
+ */
+function workflowModelEnvironment(source) {
+	const provider =
+		process.env.WORKFLOW_MODEL_PROVIDER ??
+		source.WORKFLOW_MODEL_PROVIDER ??
+		"deepseek";
+	if (provider !== "deepseek" && provider !== "openai") {
+		throw new Error("WORKFLOW_MODEL_PROVIDER 只支持 deepseek 或 openai");
+	}
+	const apiKey =
+		process.env.WORKFLOW_MODEL_API_KEY ??
+		source.WORKFLOW_MODEL_API_KEY ??
+		(provider === "deepseek" ? source.DEEPSEEK_API_KEY : source.OPENAI_API_KEY);
+	if (apiKey === undefined || apiKey.length === 0) {
+		throw new Error(`${provider} 模式缺少 WORKFLOW_MODEL_API_KEY`);
+	}
+	return {
+		WORKFLOW_MODEL_PROVIDER: provider,
+		WORKFLOW_MODEL_API_KEY: apiKey,
+		WORKFLOW_MODEL_BASE_URL:
+			process.env.WORKFLOW_MODEL_BASE_URL ??
+			source.WORKFLOW_MODEL_BASE_URL ??
+			(provider === "openai"
+				? "https://api.openai.com/v1"
+				: (source.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com")),
+		WORKFLOW_AGENT_MODEL:
+			process.env.WORKFLOW_AGENT_MODEL ??
+			source.WORKFLOW_AGENT_MODEL ??
+			(provider === "openai" ? "gpt-5-mini" : "deepseek-chat"),
+	};
 }
 
 function shutdown(code) {

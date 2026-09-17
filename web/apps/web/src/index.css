@@ -101,7 +101,8 @@
 }
 
 .allocation-react-flow .react-flow__pane,
-.formal-workflow-react-flow .react-flow__pane {
+.formal-workflow-react-flow .react-flow__pane,
+.workflow-plan-react-flow .react-flow__pane {
 	background:
 		linear-gradient(rgb(255 255 255 / 1.2%) 1px, transparent 1px),
 		linear-gradient(90deg, rgb(255 255 255 / 1.2%) 1px, transparent 1px),
@@ -118,12 +119,14 @@
 
 /* 产品主图不展示底层画布框架品牌；仅隐藏 attribution，不影响缩放、无障碍或节点语义。 */
 .allocation-react-flow .react-flow__attribution,
-.formal-workflow-react-flow .react-flow__attribution {
+.formal-workflow-react-flow .react-flow__attribution,
+.workflow-plan-react-flow .react-flow__attribution {
 	display: none;
 }
 
 .allocation-react-flow .react-flow__controls,
 .formal-workflow-react-flow .react-flow__controls,
+.workflow-plan-react-flow .react-flow__controls,
 .allocation-react-flow .react-flow__minimap {
 	overflow: hidden;
 	border: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
@@ -134,7 +137,8 @@
 }
 
 .allocation-react-flow .react-flow__controls-button,
-.formal-workflow-react-flow .react-flow__controls-button {
+.formal-workflow-react-flow .react-flow__controls-button,
+.workflow-plan-react-flow .react-flow__controls-button {
 	width: 34px;
 	height: 34px;
 	border-color: color-mix(in srgb, var(--primary) 18%, transparent);
@@ -143,12 +147,14 @@
 }
 
 .allocation-react-flow .react-flow__controls-button:hover,
-.formal-workflow-react-flow .react-flow__controls-button:hover {
+.formal-workflow-react-flow .react-flow__controls-button:hover,
+.workflow-plan-react-flow .react-flow__controls-button:hover {
 	background: var(--primary-container);
 }
 
 .allocation-react-flow .react-flow__controls-button svg,
-.formal-workflow-react-flow .react-flow__controls-button svg {
+.formal-workflow-react-flow .react-flow__controls-button svg,
+.workflow-plan-react-flow .react-flow__controls-button svg {
 	fill: currentcolor;
 }
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/executionproxy"
 	"github.com/StarCoderLn/ai-agent-collaboration-protocol/services/dispatch-engine/internal/protocol"
 )
 
@@ -28,6 +29,21 @@ type webhookNonceStore struct{}
 
 func (webhookNonceStore) ReserveNonce(context.Context, string, string, time.Time) (bool, error) {
 	return true, nil
+}
+
+type recordingQuickSubmitter struct {
+	taskID, workflowNodeID, operation, idempotencyKey string
+	body                                              []byte
+}
+
+func (s *recordingQuickSubmitter) Forward(
+	_ context.Context,
+	taskID, workflowNodeID, operation, idempotencyKey string,
+	body []byte,
+) (executionproxy.Response, error) {
+	s.taskID, s.workflowNodeID, s.operation, s.idempotencyKey = taskID, workflowNodeID, operation, idempotencyKey
+	s.body = append([]byte(nil), body...)
+	return executionproxy.Response{StatusCode: http.StatusCreated}, nil
 }
 
 func TestHTTPSenderPostsStableSignedEventEnvelope(t *testing.T) {
@@ -112,5 +128,46 @@ func TestHTTPSenderRejectsEndpointCredentialsWithoutNetworkCall(t *testing.T) {
 	typed, ok := err.(*DeliveryError)
 	if !ok || typed.Code != "AGENT_WEBHOOK_ENDPOINT_INVALID" || typed.Retryable {
 		t.Fatalf("unexpected endpoint validation error: %#v", err)
+	}
+}
+
+func TestHTTPSenderRunsHTTPJSONReworkAndForwardsQuickResult(t *testing.T) {
+	var receivedBody []byte
+	client := &http.Client{Transport: webhookRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/run" || request.Header.Get("Idempotency-Key") != "dispatch:task-1:request-1" {
+			t.Fatalf("unexpected quick rework request: %s %s", request.URL.Path, request.Header.Get("Idempotency-Key"))
+		}
+		var err error
+		receivedBody, err = io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read quick rework body: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				`{"status":"completed","artifacts":[{"type":"document","summary":"修订报告","content":"# 新报告"}]}`,
+			)),
+			Request: request,
+		}, nil
+	})}
+	submitter := &recordingQuickSubmitter{}
+	dispatchBody := `{"schemaVersion":"dispatch.v1","requestId":"request-1","assignmentId":"assignment-1","task":{"title":"节点标题"}}`
+	payload := `{"workflowNodeId":"node-1","requestId":"request-1","dispatch":` + dispatchBody + `}`
+	err := (&HTTPSender{Client: client, Submitter: submitter}).Send(context.Background(), Delivery{
+		ID: "delivery-1", TaskID: "task-1", AgentID: "agent-1", Endpoint: "https://agent.local/run",
+		IdempotencyKey: "webhook:task-1:1:agent-1", EventType: "task.rework_requested",
+		IntegrationMode: "http_json", Payload: []byte(payload),
+	}, "")
+	if err != nil {
+		t.Fatalf("quick rework send failed: %v", err)
+	}
+	if string(receivedBody) != dispatchBody {
+		t.Fatalf("quick Agent did not receive reconstructed dispatch: %s", receivedBody)
+	}
+	if submitter.taskID != "task-1" || submitter.workflowNodeID != "node-1" ||
+		submitter.operation != "results" || submitter.idempotencyKey != "quick-rework-result:task-1:request-1" ||
+		!strings.Contains(string(submitter.body), `"assignmentId":"assignment-1"`) {
+		t.Fatalf("quick result was not forwarded with stable identifiers: %+v %s", submitter, submitter.body)
 	}
 }

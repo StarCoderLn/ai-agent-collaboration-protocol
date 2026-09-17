@@ -176,6 +176,26 @@ func TestMatchingRejectsAQuoteInAnotherCurrency(t *testing.T) {
 	}
 }
 
+func TestMatchingRejectsAnIncompatibleWorkflowContract(t *testing.T) {
+	now := time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC)
+	task := MatchTask{
+		ID: "deck", CategoryID: "content", Currency: "USDC", Deadline: now.Add(time.Hour),
+		InputContract: "DesignSpec", OutputContract: "PresentationArtifact",
+	}
+	agent := AgentCandidate{
+		ID: "browser", CategoryID: "content", Currency: "USDC",
+		State: AgentState{Status: AgentActive}, EstimatedDuration: time.Minute,
+		WorkflowContracts: []WorkflowContract{{InputContract: "ResearchArtifact", OutputContract: "ResearchArtifact"}},
+	}
+	record, err := MatchCandidates(task, []AgentCandidate{agent}, now, RankingRules{Version: "contracts-v1", QualityWeight: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.FilterReasons[agent.ID] != IncompatibleWorkflowContract || len(record.Candidates) != 0 {
+		t.Fatalf("contract-incompatible agent must be excluded: %+v", record)
+	}
+}
+
 func TestAssignmentConcurrentLockAndTimeout(t *testing.T) {
 	book := NewAssignmentBook()
 	now := time.Now()

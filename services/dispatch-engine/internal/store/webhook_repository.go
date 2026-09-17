@@ -51,9 +51,10 @@ func (r *WebhookRepository) ClaimDue(
 		SELECT claimed.id::text,claimed.lock_token::text,claimed.task_event_id::text,
 		       event.task_id::text,claimed.agent_id::text,claimed.endpoint,claimed.idempotency_key,
 		       claimed.attempt_no,event.event_type,event.status_version::text,event.payload,
-		       event.created_at,COALESCE(credential.encrypted_secret,'')
+		       event.created_at,agent.integration_mode,COALESCE(credential.encrypted_secret,'')
 		  FROM claimed
 		  JOIN task_events event ON event.id=claimed.task_event_id
+		  JOIN agents agent ON agent.id=claimed.agent_id
 		  LEFT JOIN agent_credentials credential ON credential.agent_id=claimed.agent_id
 		 ORDER BY event.id,claimed.id`, now, limit, now.Add(lease))
 	if err != nil {
@@ -66,7 +67,7 @@ func (r *WebhookRepository) ClaimDue(
 			&delivery.ID, &delivery.LockToken, &delivery.TaskEventID, &delivery.TaskID,
 			&delivery.AgentID, &delivery.Endpoint, &delivery.IdempotencyKey, &delivery.AttemptNo,
 			&delivery.EventType, &delivery.StatusVersion, &delivery.Payload,
-			&delivery.EventCreatedAt, &delivery.EncryptedCredential,
+			&delivery.EventCreatedAt, &delivery.IntegrationMode, &delivery.EncryptedCredential,
 		); err != nil {
 			rows.Close()
 			return nil, err

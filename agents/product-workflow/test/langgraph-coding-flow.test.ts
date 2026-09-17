@@ -8,7 +8,7 @@ import { LangGraphCodingFlow } from "../src/agents/coding/langgraph-coding-flow.
 import { CodingLangGraphAgent } from "../src/agents/coding/langgraph-agent.js";
 import { renderDesignScreens } from "../src/design-renderer.js";
 import { DesignArtifactSchema } from "../src/domain.js";
-import { ModelOutputError, type JsonModelClient } from "../src/model-client.js";
+import { ModelOutputError, type WorkflowModelClient } from "../src/model-client.js";
 
 const PAGE = `export default function Page() {
 	return <main data-design-id="hero"><h1>LangGraph 页面</h1><p>从已验收的页面结构继续生成样式。</p></main>;
@@ -23,7 +23,7 @@ p { margin: 0; line-height: 1.7; color: #64748b; }
 @media (max-width: 768px) { main { margin: 1rem auto; padding: 1rem; } }
 `;
 
-class CodingClient implements JsonModelClient {
+class CodingClient implements WorkflowModelClient {
 	pageCalls = 0;
 	styleCalls = 0;
 	readonly styleResults: Array<string | Error> = [];

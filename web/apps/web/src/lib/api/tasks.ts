@@ -422,6 +422,20 @@ const workflowSelectionResultSchema = z.object({
 	quotedTotalMinor: integerStringSchema.nullable(),
 	taskStatus: z.enum(["planning", "awaiting_escrow"]),
 });
+const workflowRecommendedSelectionResultSchema = z.object({
+	taskId: uuidSchema,
+	selections: z.array(
+		z.object({
+			nodeId: uuidSchema,
+			agentId: uuidSchema,
+			agreedAmountMinor: integerStringSchema,
+		}),
+	),
+	selectedNodeCount: z.number().int().positive(),
+	totalNodeCount: z.number().int().positive(),
+	quotedTotalMinor: integerStringSchema,
+	taskStatus: z.literal("awaiting_escrow"),
+});
 const executionRetrySchema = z.object({
 	taskId: uuidSchema,
 	assignmentId: uuidSchema,
@@ -842,6 +856,52 @@ const formalWorkflowSchema = z.object({
 		}),
 	),
 });
+const editableWorkflowPlanSchema = z.object({
+	summary: z.string(),
+	assumptions: z.array(z.string()),
+	nodes: z.array(
+		z.object({
+			key: z.string(),
+			kind: z.enum([
+				"requirements",
+				"design",
+				"coding",
+				"testing",
+				"deployment",
+				"research",
+				"image",
+				"video",
+				"generic",
+			]),
+			title: z.string(),
+			description: z.string(),
+			tags: z.array(z.string()),
+			requiredCapability: z.string(),
+			inputContract: z.string(),
+			outputContract: z.string(),
+			budgetWeight: z.number().int().positive(),
+		}),
+	),
+	edges: z.array(
+		z.object({
+			sourceKey: z.string(),
+			targetKey: z.string(),
+			artifactContract: z.string(),
+		}),
+	),
+});
+const storedWorkflowPlanSchema = z.object({
+	taskId: uuidSchema,
+	revision: integerStringSchema,
+	version: integerStringSchema,
+	status: z.enum(["draft", "confirmed"]),
+	source: z.enum(["template", "ai", "user"]),
+	provider: z.string().nullable(),
+	model: z.string().nullable(),
+	promptVersion: z.string().nullable(),
+	plan: editableWorkflowPlanSchema,
+	updatedAt: isoDateTimeSchema,
+});
 const workflowPreferenceResultSchema = z.object({
 	taskId: uuidSchema,
 	budgetPreferenceMinor: integerStringSchema.nullable(),
@@ -914,6 +974,9 @@ export type TaskAssignmentResult = z.infer<typeof assignmentResultSchema>;
 export type WorkflowSelectionResult = z.infer<
 	typeof workflowSelectionResultSchema
 >;
+export type WorkflowRecommendedSelectionResult = z.infer<
+	typeof workflowRecommendedSelectionResultSchema
+>;
 export type WorkflowPreferenceResult = z.infer<
 	typeof workflowPreferenceResultSchema
 >;
@@ -929,6 +992,8 @@ export type TaskDispute = z.infer<typeof disputeSchema>;
 export type TaskEventData = z.infer<typeof taskEventDataSchema> &
 	Readonly<{ id: string; type: string }>;
 export type FormalWorkflow = z.infer<typeof formalWorkflowSchema>;
+export type EditableWorkflowPlan = z.infer<typeof editableWorkflowPlanSchema>;
+export type StoredWorkflowPlan = z.infer<typeof storedWorkflowPlanSchema>;
 export type FormalWorkflowNode = z.infer<typeof workflowNodeSchema>;
 export type WorkflowArtifact = z.infer<typeof workflowArtifactSchema>;
 export type WorkflowAcceptancePreview = z.infer<
@@ -1149,6 +1214,64 @@ export async function getTaskWorkflow(
 	);
 }
 
+export async function getTaskWorkflowPlan(
+	taskId: string,
+	signal?: AbortSignal,
+): Promise<StoredWorkflowPlan> {
+	return credentialedGet(
+		`/tasks/${taskPathId(taskId)}/workflow-plan`,
+		storedWorkflowPlanSchema,
+		signal,
+	);
+}
+
+/**
+ * 草案接口始终携带服务端 version。生成和保存只追加新修订；确认会锁定当前版本并创建
+ * 正式 DAG。浏览器传入的 idempotency key 只处理网络重放，不能替代乐观锁。
+ */
+export async function generateTaskWorkflowPlan(
+	taskId: string,
+	version: string,
+	idempotencyKey: string,
+): Promise<StoredWorkflowPlan> {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow-plan/generate`,
+		"POST",
+		{ version },
+		idempotencyKey,
+		storedWorkflowPlanSchema,
+	);
+}
+
+export async function updateTaskWorkflowPlan(
+	taskId: string,
+	version: string,
+	plan: EditableWorkflowPlan,
+	idempotencyKey: string,
+): Promise<StoredWorkflowPlan> {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow-plan`,
+		"PUT",
+		{ version, plan },
+		idempotencyKey,
+		storedWorkflowPlanSchema,
+	);
+}
+
+export async function confirmTaskWorkflowPlan(
+	taskId: string,
+	version: string,
+	idempotencyKey: string,
+): Promise<unknown> {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow-plan/confirm`,
+		"POST",
+		{ version },
+		idempotencyKey,
+		z.unknown(),
+	);
+}
+
 /**
  * 保存匹配阶段的可选预算上限。该金额只影响候选排序；托管接口仍只接受服务端冻结的
  * quotedTotalMinor，浏览器不能把这个偏好直接作为交易金额。
@@ -1291,6 +1414,23 @@ export async function confirmWorkflowNodeCandidate(
 		{ agentId: parseUuid(agentId) },
 		idempotencyKey,
 		z.union([workflowSelectionResultSchema, assignmentResultSchema]),
+	);
+}
+
+/**
+ * 服务端从各阶段最新冻结快照选择第一推荐项。客户端不发送 Agent ID 或报价，避免弹窗
+ * 展示与提交之间的候选变化被静默写成旧金额；任一阶段失效时服务端整体回滚。
+ */
+export async function confirmRecommendedWorkflowCandidates(
+	taskId: string,
+	idempotencyKey: string,
+): Promise<WorkflowRecommendedSelectionResult> {
+	return credentialedMutation(
+		`/tasks/${taskPathId(taskId)}/workflow/recommended-agents`,
+		"POST",
+		{},
+		idempotencyKey,
+		workflowRecommendedSelectionResultSchema,
 	);
 }
 
@@ -1800,7 +1940,7 @@ export function subscribeTaskEvents(
 
 async function credentialedMutation<Schema extends z.ZodType>(
 	path: string,
-	method: "POST" | "PATCH" | "DELETE",
+	method: "POST" | "PUT" | "PATCH" | "DELETE",
 	body: unknown,
 	idempotencyKey: string,
 	schema: Schema,

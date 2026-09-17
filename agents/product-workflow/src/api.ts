@@ -11,6 +11,11 @@ import { WORKFLOW_AGENT_CATALOG, WorkflowAgentIdSchema } from "./catalog.js";
 import { WorkflowExecutionInputSchema } from "./domain.js";
 import type { WorkflowExecutor } from "./executors.js";
 import { ModelOutputError } from "./model-client.js";
+import type { LangGraphWorkflowPlanner } from "./planning/langgraph-workflow-planner.js";
+import {
+  WORKFLOW_PLAN_PROMPT_VERSION,
+  WorkflowPlanInputSchema,
+} from "./planning/workflow-plan.js";
 import {
   FormalDispatchError,
   FormalDispatchService,
@@ -34,6 +39,8 @@ export class WorkflowApi {
   readonly #verifier: ProtocolVerifier;
   readonly #executionTimeoutMs: number;
   readonly #formalDispatch: FormalDispatchService;
+  readonly #workflowPlanner: LangGraphWorkflowPlanner | undefined;
+  readonly #plannerModel: Readonly<{ provider: string; model: string }> | undefined;
   readonly #idempotency = new MemoryIdempotencyRegistry();
 
   constructor(options: {
@@ -42,6 +49,8 @@ export class WorkflowApi {
     executionTimeoutMs: number;
     now?: () => Date;
     formalDispatch?: FormalDispatchService;
+    workflowPlanner?: LangGraphWorkflowPlanner;
+    plannerModel?: Readonly<{ provider: string; model: string }>;
   }) {
     this.#executor = options.executor;
     this.#executionTimeoutMs = options.executionTimeoutMs;
@@ -57,6 +66,8 @@ export class WorkflowApi {
       }),
       ...(options.now === undefined ? {} : { now: options.now }),
     });
+    this.#workflowPlanner = options.workflowPlanner;
+    this.#plannerModel = options.plannerModel;
   }
 
   async handle(request: ApiRequest): Promise<ApiResponse> {
@@ -69,8 +80,9 @@ export class WorkflowApi {
     const formalRoute = parseFormalRoute(request.path);
     const isHealth = request.method === "GET" && request.path === "/healthz";
     const isWorkflow = request.method === "POST" && request.path === "/v1/workflow/execute";
+    const isPlan = request.method === "POST" && request.path === "/v1/workflow/plan";
     const isFormal = request.method === "POST" && formalRoute !== null;
-    if (!isHealth && !isWorkflow && !isFormal) {
+    if (!isHealth && !isWorkflow && !isPlan && !isFormal) {
       return jsonResponse(404, { error: "route not found" });
     }
     if (request.body.byteLength > MAX_BODY_BYTES) {
@@ -107,6 +119,8 @@ export class WorkflowApi {
       () =>
         isWorkflow
           ? this.#execute(request, callType)
+          : isPlan
+            ? this.#plan(request)
           : this.#handleFormal(request, callType, formalRoute as FormalRoute),
     );
     if (execution.kind === "conflict") {
@@ -115,6 +129,51 @@ export class WorkflowApi {
     return execution.replayed
       ? markIdempotentReplay(execution.response)
       : execution.response;
+  }
+
+  /** 规划接口只返回候选草案；模型失败和非法输出都不会创建正式工作流或资金事实。 */
+  async #plan(request: ApiRequest): Promise<ApiResponse> {
+    if (this.#workflowPlanner === undefined) {
+      return jsonResponse(503, {
+        error_code: "WORKFLOW_PLANNER_UNAVAILABLE",
+        retryable: true,
+      });
+    }
+    let rawInput: unknown;
+    try {
+      rawInput = JSON.parse(Buffer.from(request.body).toString("utf8"));
+    } catch {
+      return jsonResponse(400, { error_code: "INVALID_JSON", retryable: false });
+    }
+    const input = WorkflowPlanInputSchema.safeParse(rawInput);
+    if (!input.success) {
+      return jsonResponse(422, {
+        error_code: "VALIDATION_FAILED",
+        retryable: false,
+        issues: input.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })),
+      });
+    }
+    try {
+      const plan = await this.#workflowPlanner.plan(input.data, request.signal);
+      return jsonResponse(200, {
+        plan,
+        model: this.#plannerModel ?? null,
+        promptVersion: WORKFLOW_PLAN_PROMPT_VERSION,
+      });
+    } catch (error) {
+      // 不记录任务正文或模型原始输出；调用方只需要稳定的可重试失败类别。
+      console.error("workflow planning failed", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        message: error instanceof Error ? error.message : "non-Error value thrown",
+      });
+      return jsonResponse(502, {
+        error_code: "WORKFLOW_PLANNING_FAILED",
+        retryable: true,
+      });
+    }
   }
 
   async #handleFormal(request: ApiRequest, callType: CallType, route: FormalRoute): Promise<ApiResponse> {

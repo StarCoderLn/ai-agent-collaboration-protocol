@@ -63,7 +63,8 @@ func (r *AssignmentRepository) LockCandidate(ctx context.Context, command dispat
 		// 节点选择只读取该节点最新一次冻结候选，并同时校验任务归属、工作流状态和
 		// 节点预算上限。system:auto 表示平台按规则自动选择，system:selected 表示平台
 		// 在托管确认后派发发布者已冻结的选择；只接受这两个精确身份，不能放行任意
-		// system:* 字符串。这样调用方无法拿另一个节点或旧任务候选拼接出非法分配。
+		// system:* 字符串。awaiting_review 只表示并行兄弟节点需要人工验收，不会冻结
+		// 当前 matching 节点；这样调用方无法拿另一个节点或旧任务候选拼接出非法分配。
 		err = tx.QueryRow(ctx, `
 			SELECT record.id::text, (candidate.value->>'quoteMinor')::bigint
 			  FROM task_workflow_nodes node
@@ -76,7 +77,8 @@ func (r *AssignmentRepository) LockCandidate(ctx context.Context, command dispat
 			  ) record ON TRUE
 			  JOIN LATERAL jsonb_array_elements(record.candidates) candidate(value)
 			    ON candidate.value->>'agentId'=$3::text
-			 WHERE task.id=$1 AND node.id=$2 AND node.status='matching' AND run.status='running'
+			 WHERE task.id=$1 AND node.id=$2 AND node.status='matching'
+			   AND run.status IN ('running','awaiting_review')
 			   AND (lower(task.publisher_id)=lower($4) OR $4 IN ('system:auto','system:selected'))
 			   AND candidate.value->>'quoteMinor' ~ '^[0-9]+$'
 			   AND (candidate.value->>'quoteMinor')::bigint <= node.budget_cap_minor`,

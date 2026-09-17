@@ -216,6 +216,13 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
 			nodeStatus: "awaiting_review",
 			batchNo: 1,
 		});
+		// 历史版本允许 Agent 不先上报进度就直接提交结果，因而可能没有执行快照。
+		// 删除当前快照模拟这类已存在数据，证明返工依赖节点、结果与 assignment 权威事实，
+		// 并能自行重建只用于展示和恢复的派生执行快照。
+		await client.query(
+			"DELETE FROM workflow_node_execution_state WHERE workflow_node_id=$1",
+			[fixture.requirementsNodeId],
+		);
 
 		const rework = await repository.requestRework(
 			fixture.taskId,
@@ -226,7 +233,12 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
 			},
 			PUBLISHER,
 		);
-		expect(rework.body).toMatchObject({ nodeStatus: "rework", requestNo: 1 });
+		expect(rework.body).toMatchObject({
+			resultId: firstResultId,
+			requestId: expect.any(String),
+			nodeStatus: "rework",
+			requestNo: 1,
+		});
 
 		const reworkDispatch = await client.query<{
 			progress: number;
@@ -886,6 +898,16 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
 				(event) => event.blockNumber === 102n,
 			),
 		);
+		// RPC 可能早于分批扫描游标看见最新终态，先触发一条临时对账告警。确认事件经过
+		// 完整金额与清单校验后，仓储必须自动关闭它，不能让已结算任务继续被冻结。
+		await client.query(
+			`INSERT INTO reconciliation_alerts(task_id,discrepancy_summary,operations_frozen)
+			 VALUES ($1,$2::jsonb,TRUE)`,
+			[
+				fixture.taskId,
+				JSON.stringify({ code: "ESCROW_RECONCILIATION_MISMATCH" }),
+			],
+		);
 		await expect(
 			escrow.applyCanonicalConfirmation({
 				eventId: pending.id,
@@ -901,10 +923,13 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
 			released_amount_minor: string;
 			refundable_amount_minor: string;
 			settlement_status: string;
+			open_alerts: string;
 		}>(
 			`SELECT task.status AS task_status,intent.status AS intent_status,
-              run.released_amount_minor::text,run.refundable_amount_minor::text,
-              job.status AS settlement_status
+			      run.released_amount_minor::text,run.refundable_amount_minor::text,
+			      job.status AS settlement_status,
+			      (SELECT count(*)::text FROM reconciliation_alerts alert
+			        WHERE alert.task_id=task.id AND alert.resolved_at IS NULL) AS open_alerts
          FROM tasks task JOIN escrow_intents intent ON intent.task_id=task.id
          JOIN task_workflow_runs run ON run.task_id=task.id
          JOIN escrow_execution_jobs job ON job.source='workflow_run' AND job.source_ref=run.id
@@ -917,6 +942,7 @@ integration("workflow execution PostgreSQL transaction boundary", () => {
 			released_amount_minor: "36000000",
 			refundable_amount_minor: "0",
 			settlement_status: "executed",
+			open_alerts: "0",
 		});
 
 		// 工作流详情必须把唯一原子结算哈希挂到每个已验收节点。页面依赖这条证据进入

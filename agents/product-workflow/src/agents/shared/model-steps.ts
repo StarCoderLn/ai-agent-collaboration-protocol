@@ -7,7 +7,7 @@ import { findWorkflowAgent } from "../../catalog.js";
 import type { WorkflowExecutionInput } from "../../domain.js";
 import {
   ModelOutputError,
-  type JsonModelClient,
+  type WorkflowModelClient,
   type ModelOutputIssue,
   type ModelOutputValidationStage,
 } from "../../model-client.js";
@@ -119,7 +119,7 @@ export function generateValidatedTextWithMastra<T>(
 
 /** 自定义状态机的分析与评审共用同一模型边界，但步骤顺序仍由各 Agent 文件显式定义。 */
 export function analyzeWithClient(
-  client: JsonModelClient,
+  client: WorkflowModelClient,
   input: WorkflowExecutionInput,
   context: RunContext,
 	maxAttempts: 1 | 2 = 2,
@@ -132,7 +132,7 @@ export function analyzeWithClient(
 }
 
 export function reviewWithClient(
-  client: JsonModelClient,
+  client: WorkflowModelClient,
   input: WorkflowExecutionInput,
   draft: unknown,
   context: RunContext,

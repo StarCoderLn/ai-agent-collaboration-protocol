@@ -23,6 +23,7 @@ import {
 	getTaskExecutionStatus,
 	getTaskPreview,
 	getTaskWorkflow,
+	getTaskWorkflowPlan,
 	listOwnedTasks,
 	listTaskResults,
 	listWorkflowFeedback,
@@ -83,6 +84,7 @@ vi.mock("@/lib/api/tasks", async (importOriginal) => {
 		getLatestTaskAssignment: vi.fn(),
 		getTaskExecutionStatus: vi.fn(),
 		getTaskWorkflow: vi.fn(),
+		getTaskWorkflowPlan: vi.fn(),
 		getTaskDispute: vi.fn(),
 		listTaskResults: vi.fn(),
 		listWorkflowFeedback: vi.fn(),
@@ -180,6 +182,13 @@ describe("formal task detail", () => {
 			new TaskApiRequestError(404, {
 				error_code: "WORKFLOW_NOT_FOUND",
 				message: "该任务尚未生成正式多 Agent 工作流",
+				retryable: false,
+			}),
+		);
+		vi.mocked(getTaskWorkflowPlan).mockRejectedValue(
+			new TaskApiRequestError(404, {
+				error_code: "WORKFLOW_PLAN_NOT_FOUND",
+				message: "工作流草案不存在或无权访问",
 				retryable: false,
 			}),
 		);
@@ -433,12 +442,15 @@ describe("formal task detail", () => {
 		await setTaskStatus("planning");
 		render(<TaskExperienceDetail taskId={taskId} returnSource="workspace" />);
 
-		const archiveButton = await screen.findByRole("button", {
-			name: "删除任务",
+		const actionsButton = await screen.findByRole("button", {
+			name: "任务操作",
 		});
-		expect(archiveButton).toHaveClass("rounded-xl", "border-destructive/20");
-		fireEvent.click(archiveButton);
-		expect(screen.getByText("确认删除这个任务？")).toBeInTheDocument();
+		expect(actionsButton).toHaveClass("text-muted-foreground");
+		fireEvent.click(actionsButton);
+		fireEvent.click(screen.getByRole("menuitem", { name: "删除任务" }));
+		expect(
+			screen.getByRole("dialog", { name: "确认删除这个任务？" }),
+		).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
 
 		await waitFor(() =>

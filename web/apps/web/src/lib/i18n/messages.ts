@@ -5,6 +5,14 @@ import type { AppLocale } from "./locale";
  * 映射继续作为英文文案的单一权威目录。
  */
 export const EN_MESSAGES = {
+	"采用全部推荐 Agent": "Use all recommended Agents",
+	"采用其余 {count} 个推荐": "Use the other {count} recommendations",
+	"平台将为所有未选择阶段采用当前第一推荐项并冻结报价。这里只确认选择，不会托管、扣款或派发任务。":
+		"The platform will use the top current recommendation for every unselected stage and lock its quote. This confirms selections only; it does not fund escrow, charge you, or dispatch work.",
+	"暂无推荐 Agent": "No recommended Agent",
+	"确认 {count} 个未选择阶段": "Confirm {count} unselected stages",
+	确认采用并冻结报价: "Confirm and lock quotes",
+	任务操作: "Task actions",
 	"浏览 Agent 市场": "Explore Agents",
 	浏览任务市场: "Explore Tasks",
 	"连接任务需求与专业 Agent，提供智能匹配、资金托管和交付验收，让合作从发现走向成交。":
@@ -1360,6 +1368,8 @@ export const EN_MESSAGES = {
 	预计无法按时交付: "Cannot meet the deadline",
 	"Agent 当前报价超出冷启动风险上限":
 		"The Agent's current price exceeds the cold-start risk limit",
+	"Agent 不支持该阶段的输入与输出格式":
+		"The Agent does not support this stage's input and output contracts",
 	未满足平台硬约束: "Platform hard constraint not met",
 	需要发布者补充信息: "Client input required",
 	"Agent 正在处理返工": "Agent is handling revisions",
@@ -1857,6 +1867,7 @@ export const EN_MESSAGES = {
 		"Sum of the lowest and highest candidate quotes for every stage",
 	候选生成中: "Generating candidates",
 	暂无候选报价: "No candidate quote available",
+	"{count} 个阶段缺少候选": "{count} stage(s) have no candidates",
 	"期望总预算上限（可选）": "Preferred total budget limit (optional)",
 	"例如：100": "For example: 100",
 	"预算上限须在 1–100,000 USDC 之间，最多保留 6 位小数":
@@ -2017,6 +2028,8 @@ export const EN_MESSAGES = {
 	"Agent 主要责任": "Agent primarily responsible",
 	暂不判定责任: "Responsibility not determined",
 	"验收全部阶段并结算 {amount}": "Approve all stages and settle {amount}",
+	"验收全部阶段：结算 {payout}，退回 {refund}":
+		"Approve all stages: settle {payout}, refund {refund}",
 	"通过该阶段质量验收 {amount}": "Approve this stage's quality · {amount}",
 	"提交后全部 USDC 继续冻结，由无利益冲突的 DAO 仲裁小组投票裁决。":
 		"All USDC remains frozen after submission while a conflict-free DAO panel votes on the dispute.",

@@ -63,6 +63,22 @@ export type WorkflowSelectionResult = Readonly<{
 	}>;
 }>;
 
+export type WorkflowRecommendedSelectionResult = Readonly<{
+	statusCode: number;
+	body: Readonly<{
+		taskId: string;
+		selections: readonly Readonly<{
+			nodeId: string;
+			agentId: string;
+			agreedAmountMinor: string;
+		}>[];
+		selectedNodeCount: number;
+		totalNodeCount: number;
+		quotedTotalMinor: string;
+		taskStatus: "awaiting_escrow";
+	}>;
+}>;
+
 export interface WorkflowSelectionRepository {
 	select(
 		input: Readonly<{
@@ -74,6 +90,14 @@ export interface WorkflowSelectionRepository {
 			selectedAt: Date;
 		}>,
 	): Promise<WorkflowSelectionResult>;
+	selectRecommended(
+		input: Readonly<{
+			taskId: string;
+			actorId: string;
+			idempotencyKey: string;
+			selectedAt: Date;
+		}>,
+	): Promise<WorkflowRecommendedSelectionResult>;
 }
 
 export type WorkflowSelectionErrorCode =
@@ -81,7 +105,8 @@ export type WorkflowSelectionErrorCode =
 	| "WORKFLOW_NODE_NOT_FOUND"
 	| "WORKFLOW_SELECTION_LOCKED"
 	| "CANDIDATE_SNAPSHOT_INVALID"
-	| "CANDIDATE_NOT_FOUND";
+	| "CANDIDATE_NOT_FOUND"
+	| "RECOMMENDED_CANDIDATE_NOT_FOUND";
 
 export class WorkflowSelectionRepositoryError extends Error {
 	constructor(
@@ -178,29 +203,11 @@ export class PgWorkflowSelectionRepository
 			// task 行先于 intent 行加锁，与 prepareIntent 保持统一锁顺序。只有明确失败、没有
 			// Deposit 哈希且链同步器从未看到事件的意图才可改选；Approve 只改变授权额度，
 			// 不会移动 USDC，因此这种失败记录可以安全复用。任何已广播或链上未知状态继续锁定。
-			const escrowLock = await client.query<EscrowSelectionLockRow>(
-				`SELECT intent.status,intent.deposit_tx_hash,
-                EXISTS(SELECT 1 FROM escrow_sync sync WHERE sync.task_id=intent.task_id) AS chain_event_exists
-           FROM escrow_intents intent WHERE intent.task_id=$1 FOR UPDATE`,
-				[input.taskId],
+			const safelyFailedBeforeBroadcast = await assertEscrowAllowsSelection(
+				client,
+				input.taskId,
+				row.task_status,
 			);
-			const escrow = escrowLock.rows[0] ?? null;
-			const safelyFailedBeforeBroadcast =
-				escrow !== null &&
-				escrow.status === "failed" &&
-				escrow.deposit_tx_hash === null &&
-				!escrow.chain_event_exists;
-			if (
-				row.task_status === "awaiting_escrow" &&
-				escrow !== null &&
-				!safelyFailedBeforeBroadcast
-			) {
-				throw new WorkflowSelectionRepositoryError(
-					"WORKFLOW_SELECTION_LOCKED",
-					"USDC 存入交易可能已经开始；请先确认托管失败且没有待处理交易",
-					409,
-				);
-			}
 			const parsedCandidates = z
 				.array(frozenCandidateSchema)
 				.safeParse(row.candidates);
@@ -410,12 +417,324 @@ export class PgWorkflowSelectionRepository
 			return result;
 		});
 	}
+
+	/**
+	 * 为全部尚未选择的阶段冻结各自最新候选快照中的第一名。服务端重新读取候选和报价，
+	 * 浏览器只表达“采用当前推荐”的意图；任一阶段缺少有效推荐时整个事务回滚，避免用户
+	 * 得到一半已选、一半失败且难以恢复的工作流。
+	 */
+	async selectRecommended(
+		input: Readonly<{
+			taskId: string;
+			actorId: string;
+			idempotencyKey: string;
+			selectedAt: Date;
+		}>,
+	): Promise<WorkflowRecommendedSelectionResult> {
+		return withTransaction(this.pool, async (client) => {
+			const idempotency = new Idempotency(new PgIdempotencyStore(client));
+			const reservation = await idempotency.checkAndReserve(
+				input.idempotencyKey,
+				`workflow.candidates.select_recommended:${input.taskId}`,
+			);
+			if (reservation.existing !== null)
+				return asRecommendedSelectionResult(reservation.existing);
+			if (!reservation.reserved)
+				throw new WorkflowSelectionRepositoryError(
+					"SELECTION_IN_PROGRESS",
+					"推荐 Agent 正在批量确认，请稍后刷新任务",
+					409,
+				);
+
+			const taskResult = await client.query<{
+				publisher_id: string;
+				task_status: string;
+				task_status_version: string;
+				workflow_run_id: string;
+				run_status: string;
+			}>(
+				`SELECT task.publisher_id,task.status AS task_status,
+				        task.status_version::text AS task_status_version,
+				        run.id::text AS workflow_run_id,run.status AS run_status
+				   FROM tasks task
+				   JOIN task_workflow_runs run ON run.task_id=task.id
+				  WHERE task.id=$1
+				  FOR UPDATE OF task,run`,
+				[input.taskId],
+			);
+			const task = taskResult.rows[0];
+			if (
+				task === undefined ||
+				task.publisher_id.toLowerCase() !== input.actorId.toLowerCase()
+			)
+				throw new WorkflowSelectionRepositoryError(
+					"WORKFLOW_NODE_NOT_FOUND",
+					"工作流不存在或无权访问",
+					404,
+				);
+			if (task.task_status !== "planning" || task.run_status !== "planning")
+				throw new WorkflowSelectionRepositoryError(
+					"WORKFLOW_SELECTION_LOCKED",
+					"只有仍在规划中的工作流可以批量采用推荐 Agent",
+					409,
+				);
+
+			const safelyFailedBeforeBroadcast = await assertEscrowAllowsSelection(
+				client,
+				input.taskId,
+				task.task_status,
+			);
+			const nodeResult = await client.query<{
+				node_id: string;
+				node_title: string;
+				node_status: "selecting" | "selected";
+				node_version: string;
+				selected_agent_id: string | null;
+			}>(
+				`SELECT node.id::text AS node_id,node.title AS node_title,node.status AS node_status,
+				        node.version::text AS node_version,node.selected_agent_id::text
+				   FROM task_workflow_nodes node
+				  WHERE node.workflow_run_id=$1
+				  ORDER BY node.position_index,node.id
+				  FOR UPDATE OF node`,
+				[task.workflow_run_id],
+			);
+			if (nodeResult.rows.length === 0)
+				throw new WorkflowSelectionRepositoryError(
+					"WORKFLOW_NODE_NOT_FOUND",
+					"工作流没有可选择的执行阶段",
+					404,
+				);
+
+			const unselectedNodes = nodeResult.rows.filter(
+				(node) => node.selected_agent_id === null,
+			);
+			if (unselectedNodes.length === 0)
+				throw new WorkflowSelectionRepositoryError(
+					"WORKFLOW_SELECTION_LOCKED",
+					"该工作流没有尚待选择的阶段，请刷新任务状态",
+					409,
+				);
+
+			const recommendations: Array<{
+				node: (typeof unselectedNodes)[number];
+				candidate: z.infer<typeof frozenCandidateSchema>;
+				distributionId: string;
+			}> = [];
+			for (const node of unselectedNodes) {
+				// 先锁住全部节点，再逐个锁定其最新候选快照。不能在 LEFT JOIN LATERAL 的
+				// 可空侧使用 FOR UPDATE；PostgreSQL 会拒绝该锁法，也会让无候选阶段绕过回滚。
+				const distributionResult = await client.query<{
+					distribution_id: string;
+					candidates: unknown;
+				}>(
+					`SELECT record.id::text AS distribution_id,record.candidates
+					   FROM job_distribution_records record
+					  WHERE record.workflow_node_id=$1
+					  ORDER BY record.created_at DESC,record.id DESC
+					  LIMIT 1
+					  FOR UPDATE`,
+					[node.node_id],
+				);
+				const distribution = distributionResult.rows[0];
+				const parsed = z
+					.array(frozenCandidateSchema)
+					.safeParse(distribution?.candidates);
+				const candidate = parsed.success ? parsed.data[0] : undefined;
+				if (
+					distribution === undefined ||
+					candidate === undefined ||
+					BigInt(candidate.quoteMinor) <= 0n
+				)
+					throw new WorkflowSelectionRepositoryError(
+						"RECOMMENDED_CANDIDATE_NOT_FOUND",
+						`“${node.node_title}”暂无有效推荐 Agent，请先重新匹配该阶段`,
+						409,
+					);
+				recommendations.push({
+					node,
+					candidate,
+					distributionId: distribution.distribution_id,
+				});
+			}
+
+			for (const { node, candidate, distributionId } of recommendations) {
+				const nextVersion = BigInt(node.node_version) + 1n;
+				await client.query(
+					`UPDATE task_workflow_nodes
+					    SET selected_agent_id=$3,selection_record_id=$4,agreed_amount_minor=$5,
+					        budget_cap_minor=$5,status='selected',version=$6,updated_at=$7
+					  WHERE id=$1 AND task_id=$2 AND selected_agent_id IS NULL`,
+					[
+						node.node_id,
+						input.taskId,
+						candidate.agentId,
+						distributionId,
+						candidate.quoteMinor,
+						nextVersion.toString(),
+						input.selectedAt,
+					],
+				);
+				await client.query(
+					"UPDATE job_distribution_records SET final_selection_agent_id=$2 WHERE id=$1",
+					[distributionId, candidate.agentId],
+				);
+				await client.query(
+					`INSERT INTO workflow_node_events(
+					   workflow_node_id,task_id,node_version,event_type,payload,created_at
+					 ) VALUES ($1,$2,$3,'candidate_selected',$4::jsonb,$5)`,
+					[
+						node.node_id,
+						input.taskId,
+						nextVersion.toString(),
+						JSON.stringify({
+							agentId: candidate.agentId,
+							previousAgentId: null,
+							distributionRecordId: distributionId,
+							agreedAmountMinor: candidate.quoteMinor,
+							previousAgreedAmountMinor: null,
+							selectionSource: "recommended_batch",
+						}),
+						input.selectedAt,
+					],
+				);
+			}
+
+			const totals = await readWorkflowTotals(client, task.workflow_run_id);
+			if (
+				Number(totals.total_count) === 0 ||
+				totals.selected_count !== totals.total_count
+			)
+				throw new Error("WORKFLOW_RECOMMENDED_SELECTION_INCOMPLETE");
+			const quotedTotalMinor = BigInt(totals.quoted_total_minor).toString();
+			const nextTaskVersion = BigInt(task.task_status_version) + 1n;
+			const taskStatus = transitionTaskStatus("planning", {
+				type: "workflow_quote_confirmed",
+				amountMinor: BigInt(quotedTotalMinor),
+			});
+			if (taskStatus !== "awaiting_escrow")
+				throw new Error("WORKFLOW_QUOTE_TRANSITION_INVALID");
+			await client.query(
+				`UPDATE task_workflow_runs
+				    SET quoted_total_minor=$2,total_budget_minor=$2,refundable_amount_minor=$2,
+				        quote_confirmed_at=$3,version=version+1,updated_at=$3
+				  WHERE id=$1`,
+				[task.workflow_run_id, quotedTotalMinor, input.selectedAt],
+			);
+			await client.query(
+				`UPDATE tasks
+				    SET status='awaiting_escrow',status_version=$2,pricing_type='fixed',
+				        budget_min_minor=$3,budget_max_minor=$3,updated_at=$4
+				  WHERE id=$1`,
+				[
+					input.taskId,
+					nextTaskVersion.toString(),
+					quotedTotalMinor,
+					input.selectedAt,
+				],
+			);
+			if (safelyFailedBeforeBroadcast) {
+				await client.query(
+					`UPDATE escrow_intents
+					    SET amount_minor=$2,failure_reason='Agent 已更换，请重新开始托管',updated_at=$3
+					  WHERE task_id=$1 AND status='failed' AND deposit_tx_hash IS NULL`,
+					[input.taskId, quotedTotalMinor, input.selectedAt],
+				);
+			}
+			await emitTaskEvent(client, {
+				taskId: input.taskId,
+				statusVersion: nextTaskVersion,
+				eventType: "task.workflow_quote_confirmed",
+				payload: {
+					quotedTotalMinor,
+					selectedNodeCount: Number(totals.selected_count),
+					selectionSource: "recommended_batch",
+				},
+				createdAt: input.selectedAt,
+			});
+			await new PgAuditLogWriter(client).write({
+				actorId: input.actorId,
+				actorType: "publisher",
+				action: "workflow.candidates.select_recommended",
+				targetType: "workflow_run",
+				targetId: task.workflow_run_id,
+				beforeSummary: {
+					selectedNodeCount:
+						Number(totals.selected_count) - recommendations.length,
+					taskStatus: task.task_status,
+				},
+				afterSummary: {
+					selectedNodeCount: Number(totals.selected_count),
+					quotedTotalMinor,
+					taskStatus,
+				},
+			});
+
+			const result: WorkflowRecommendedSelectionResult = {
+				statusCode: 200,
+				body: {
+					taskId: input.taskId,
+					selections: recommendations.map(({ node, candidate }) => ({
+						nodeId: node.node_id,
+						agentId: candidate.agentId,
+						agreedAmountMinor: candidate.quoteMinor,
+					})),
+					selectedNodeCount: Number(totals.selected_count),
+					totalNodeCount: Number(totals.total_count),
+					quotedTotalMinor,
+					taskStatus,
+				},
+			};
+			await idempotency.commit(input.idempotencyKey, result);
+			return result;
+		});
+	}
 }
 
 function asSelectionResult(
 	snapshot: ResponseSnapshot,
 ): WorkflowSelectionResult {
 	return snapshot as WorkflowSelectionResult;
+}
+
+function asRecommendedSelectionResult(
+	snapshot: ResponseSnapshot,
+): WorkflowRecommendedSelectionResult {
+	return snapshot as WorkflowRecommendedSelectionResult;
+}
+
+/**
+ * 选择操作与托管准备共享同一锁语义。返回 true 表示只存在明确未广播的失败意图，调用方
+ * 可以在最终总价确定后同步改写其金额；其余链上未知或已广播状态一律锁定选人。
+ */
+async function assertEscrowAllowsSelection(
+	db: QueryExecutor,
+	taskId: string,
+	taskStatus: string,
+): Promise<boolean> {
+	const escrowLock = await db.query<EscrowSelectionLockRow>(
+		`SELECT intent.status,intent.deposit_tx_hash,
+		        EXISTS(SELECT 1 FROM escrow_sync sync WHERE sync.task_id=intent.task_id) AS chain_event_exists
+		   FROM escrow_intents intent WHERE intent.task_id=$1 FOR UPDATE`,
+		[taskId],
+	);
+	const escrow = escrowLock.rows[0] ?? null;
+	const safelyFailedBeforeBroadcast =
+		escrow !== null &&
+		escrow.status === "failed" &&
+		escrow.deposit_tx_hash === null &&
+		!escrow.chain_event_exists;
+	if (
+		taskStatus === "awaiting_escrow" &&
+		escrow !== null &&
+		!safelyFailedBeforeBroadcast
+	)
+		throw new WorkflowSelectionRepositoryError(
+			"WORKFLOW_SELECTION_LOCKED",
+			"USDC 存入交易可能已经开始；请先确认托管失败且没有待处理交易",
+			409,
+		);
+	return safelyFailedBeforeBroadcast;
 }
 
 function required<T>(value: T | undefined, code: string): T {

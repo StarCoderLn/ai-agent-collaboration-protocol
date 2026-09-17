@@ -92,6 +92,17 @@ export async function bootstrapBrowserResearchAgent(
 			],
 		);
 		await database.query(
+			"DELETE FROM agent_workflow_contracts WHERE agent_id=$1",
+			[BROWSER_RESEARCH_AGENT.platformId],
+		);
+		for (const inputContract of ["TaskContract", "RequirementsSpec", "ResearchArtifact"] as const) {
+			await database.query(
+				`INSERT INTO agent_workflow_contracts(agent_id,input_contract,output_contract)
+				 VALUES ($1,$2,'ResearchArtifact')`,
+				[BROWSER_RESEARCH_AGENT.platformId, inputContract],
+			);
+		}
+		await database.query(
 			`INSERT INTO agent_status_config(agent_id) VALUES ($1)
 			 ON CONFLICT (agent_id) DO NOTHING`,
 			[BROWSER_RESEARCH_AGENT.platformId],

@@ -91,3 +91,7 @@ migrate -path services/business-service/migrations \
 - `0052_matching_v2_funnel_and_models`：记录真实候选曝光、私有召回池影子任务、Temporal 训练运行、Wide & Deep + ESMM 模型版本与影子分数；仿真模型由数据库约束禁止切为正式排序。
 - `0053_matching_v2_online_ranking`：允许分发记录声明 `learned_v2`，并强制保存获得正式排序授权的模型版本；历史 V0/V1/回退记录继续保持可审计。
 - `0054_agent_score_refresh_requests`：评分、结算和仲裁事件在业务事务内合并写入 Agent 刷新请求；异步 Worker 定向生成快照，周期扫描继续负责时间衰减校准和故障恢复。
+- `0055_ai_workflow_plan_drafts`：保存 AI、模板和用户编辑形成的追加式工作流草案版本；发布者确认后才固化正式 DAG，回滚不得删除已有规划审计记录。
+- `0056_platform_agent_cold_start_prices`：让平台内置设计与代码分类各保留一个不超过冷启动单笔上限的 Agent，避免前三单无法成交的目录死锁；不改用户 Agent、历史候选或冻结报价。
+- `0057_agent_workflow_contracts`：持久化 Agent 明确支持的输入/输出契约二元组，作为正式 DAG 匹配硬门禁；展示标签与语义相似不能绕过协议兼容性。
+- `0058_workflow_plan_recovery_archives`：保存尚未选人和托管的错误正式工作流在恢复前的完整审计快照；存在恢复记录时 down migration 拒绝丢失历史。

@@ -13,7 +13,7 @@ import {
 	codeVisualRequirements,
 	ModelOutputError,
 	type GeneratedCodeFiles,
-	type JsonModelClient,
+	type WorkflowModelClient,
 	type ModelOutputIssue,
 	type ModelOutputValidationStage,
 } from "../../model-client.js";
@@ -62,7 +62,7 @@ export class LangGraphCodingFlow {
 	readonly #graph;
 
 	constructor(
-		private readonly model: JsonModelClient,
+		private readonly model: WorkflowModelClient,
 		checkpointer: BaseCheckpointSaver = new MemorySaver(),
 	) {
 		this.#graph = new StateGraph(CodingGraphState)

@@ -52,6 +52,7 @@ import { DatePicker } from "@/components/platform/date-picker";
 import { useCandidateExposureTracking } from "@/components/platform/use-candidate-exposure-tracking";
 import {
 	acceptWorkflowNodeResult,
+	confirmRecommendedWorkflowCandidates,
 	confirmWorkflowNodeCandidate,
 	type FormalWorkflow,
 	type FormalWorkflowNode,
@@ -200,7 +201,7 @@ export default function FormalWorkflowView({
 	run: RunAction;
 	runSelection: RunSelectionAction;
 }) {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
 	const orderedNodes = useMemo(
 		() =>
 			[...workflow.nodes].sort(
@@ -222,6 +223,10 @@ export default function FormalWorkflowView({
 		error: string | null;
 	}> | null>(null);
 	const [retryRequest, setRetryRequest] = useState<WorkflowRetryRequest | null>(
+		null,
+	);
+	const [bulkConfirmationOpen, setBulkConfirmationOpen] = useState(false);
+	const [bulkSelectionError, setBulkSelectionError] = useState<string | null>(
 		null,
 	);
 	const previousViewMode = useRef(viewMode);
@@ -295,6 +300,67 @@ export default function FormalWorkflowView({
 		orderedNodes.find((node) => node.id === selectedNodeId) ??
 		orderedNodes[0] ??
 		null;
+	const unselectedRecommendations = useMemo(
+		() =>
+			orderedNodes
+				.filter((node) => node.selection === null)
+				.map((node) => ({
+					node,
+					candidate: node.candidateRecord?.candidates[0] ?? null,
+				})),
+		[orderedNodes],
+	);
+	const canSelectAllRecommended =
+		selectionEditable &&
+		unselectedRecommendations.length > 0 &&
+		unselectedRecommendations.every((item) => item.candidate !== null);
+	const recommendedWorkflowTotal = useMemo(
+		() =>
+			orderedNodes.reduce(
+				(total, node) =>
+					total +
+					BigInt(
+						node.selection?.agreedAmountMinor ??
+							node.candidateRecord?.candidates[0]?.quoteMinor ??
+							"0",
+					),
+				BigInt(0),
+			),
+		[orderedNodes],
+	);
+
+	function focusNextUnselectedNode(currentNodeId: string) {
+		const currentIndex = orderedNodes.findIndex(
+			(node) => node.id === currentNodeId,
+		);
+		const next = orderedNodes.find(
+			(node, index) => index > currentIndex && node.selection === null,
+		);
+		if (next === undefined) return;
+		setSelectedNodeId(next.id);
+		requestAnimationFrame(() => {
+			const workspace = document.getElementById("workflow-node-workspace");
+			// jsdom、旧 WebView 或降级浏览器可能没有实现 scrollIntoView；节点切换本身
+			// 仍应成功，平滑滚动只是增强体验，不能让缺少该 API 破坏选人流程。
+			if (typeof workspace?.scrollIntoView === "function")
+				workspace.scrollIntoView({ behavior: "smooth", block: "start" });
+		});
+	}
+
+	async function selectAllRecommended() {
+		setBulkSelectionError(null);
+		const result = await runSelection("workflow-select-recommended", () =>
+			confirmRecommendedWorkflowCandidates(
+				workflow.run.taskId,
+				key("workflow-select-recommended"),
+			),
+		);
+		if (result.ok) {
+			setBulkConfirmationOpen(false);
+			return;
+		}
+		setBulkSelectionError(result.message);
+	}
 	const graph = useMemo(
 		() =>
 			buildGraph({
@@ -469,6 +535,7 @@ export default function FormalWorkflowView({
 					workflowTotalMinor={
 						workflow.run.quotedTotalMinor ?? workflow.run.totalBudgetMinor
 					}
+					workflowAcceptedGrossMinor={sumAcceptedWorkflowGross(orderedNodes)}
 					activeDisputeId={activeDisputeId}
 					selectionEditable={selectionEditable}
 					selectionUnlockable={unlockPreparedSelection !== undefined}
@@ -495,6 +562,13 @@ export default function FormalWorkflowView({
 						}
 					}}
 					onCancelReselection={() => setReselection(null)}
+					onSelectionComplete={() => focusNextUnselectedNode(selectedNode.id)}
+					recommendedSelectionCount={unselectedRecommendations.length}
+					canSelectAllRecommended={canSelectAllRecommended}
+					onOpenRecommendedSelection={() => {
+						setBulkSelectionError(null);
+						setBulkConfirmationOpen(true);
+					}}
 					onCancelSelectionUnlock={() => setSelectionUnlock(null)}
 					onConfirmSelectionUnlock={async () => {
 						if (
@@ -522,6 +596,94 @@ export default function FormalWorkflowView({
 					run={run}
 					runSelection={runSelection}
 				/>
+			)}
+
+			{bulkConfirmationOpen && (
+				<div className="fixed inset-0 z-80 flex items-end justify-center bg-background/45 p-0 backdrop-blur-sm sm:items-center sm:p-6">
+					<section
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="recommended-agents-title"
+						className="max-h-[88vh] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-primary/20 bg-card shadow-[0_28px_100px_rgb(0_0_0/45%)] sm:rounded-3xl"
+					>
+						<header className="border-primary/15 border-b bg-primary-container/20 px-5 py-5 sm:px-6">
+							<h2
+								id="recommended-agents-title"
+								className="font-semibold text-xl"
+							>
+								{t("采用全部推荐 Agent")}
+							</h2>
+							<p className="mt-2 text-muted-foreground text-sm leading-6">
+								{t(
+									"平台将为所有未选择阶段采用当前第一推荐项并冻结报价。这里只确认选择，不会托管、扣款或派发任务。",
+								)}
+							</p>
+						</header>
+						<div className="max-h-[52vh] space-y-2 overflow-y-auto px-5 py-4 sm:px-6">
+							{unselectedRecommendations.map(({ node, candidate }) => (
+								<div
+									key={node.id}
+									className="flex items-center justify-between gap-4 rounded-xl border border-primary/15 bg-accent/35 px-4 py-3"
+								>
+									<div className="min-w-0">
+										<p className="truncate font-medium text-sm">{node.title}</p>
+										<p className="mt-1 truncate text-muted-foreground text-xs">
+											{candidate === null
+												? t("暂无推荐 Agent")
+												: translateKnownText(locale, candidate.name)}
+										</p>
+									</div>
+									<span className="shrink-0 font-semibold text-secondary text-sm">
+										{candidate === null
+											? "—"
+											: formatMinorAmount(
+													candidate.quoteMinor,
+													workflow.run.currency,
+												)}
+									</span>
+								</div>
+							))}
+						</div>
+						<footer className="border-primary/15 border-t px-5 py-4 sm:px-6">
+							<div className="mb-4 flex items-center justify-between gap-4">
+								<span className="text-muted-foreground text-sm">
+									{t("确认 {count} 个未选择阶段", {
+										count: unselectedRecommendations.length,
+									})}
+								</span>
+								<strong className="text-lg text-secondary">
+									{formatMinorAmount(
+										recommendedWorkflowTotal.toString(),
+										workflow.run.currency,
+									)}
+								</strong>
+							</div>
+							{bulkSelectionError !== null && (
+								<p className="mb-3 text-destructive text-sm" role="alert">
+									{bulkSelectionError}
+								</p>
+							)}
+							<div className="flex justify-end gap-3">
+								<Button
+									type="button"
+									variant="outline"
+									disabled={busy}
+									onClick={() => setBulkConfirmationOpen(false)}
+								>
+									{t("取消")}
+								</Button>
+								<Button
+									type="button"
+									disabled={busy || !canSelectAllRecommended}
+									onClick={() => void selectAllRecommended()}
+								>
+									{busy && <Loader2 className="size-4 animate-spin" />}
+									{t("确认采用并冻结报价")}
+								</Button>
+							</div>
+						</footer>
+					</section>
+				</div>
 			)}
 		</div>
 	);
@@ -740,6 +902,7 @@ function WorkflowNodeWorkspace({
 	terminalResolution,
 	isFinalNode,
 	workflowTotalMinor,
+	workflowAcceptedGrossMinor,
 	activeDisputeId,
 	selectionEditable,
 	selectionUnlockable,
@@ -747,6 +910,10 @@ function WorkflowNodeWorkspace({
 	selectionUnlock,
 	onStartReselection,
 	onCancelReselection,
+	onSelectionComplete,
+	recommendedSelectionCount,
+	canSelectAllRecommended,
+	onOpenRecommendedSelection,
 	onCancelSelectionUnlock,
 	onConfirmSelectionUnlock,
 	retryRequest,
@@ -763,6 +930,7 @@ function WorkflowNodeWorkspace({
 	terminalResolution: "refunded" | null;
 	isFinalNode: boolean;
 	workflowTotalMinor: string | null;
+	workflowAcceptedGrossMinor: string;
 	activeDisputeId: string | null;
 	selectionEditable: boolean;
 	selectionUnlockable: boolean;
@@ -773,6 +941,11 @@ function WorkflowNodeWorkspace({
 	}> | null;
 	onStartReselection(): void;
 	onCancelReselection(): void;
+	/** 单个阶段选人成功后，由父级按流程顺序聚焦下一未选择阶段。 */
+	onSelectionComplete(): void;
+	recommendedSelectionCount: number;
+	canSelectAllRecommended: boolean;
+	onOpenRecommendedSelection(): void;
 	onCancelSelectionUnlock(): void;
 	onConfirmSelectionUnlock(): Promise<void>;
 	retryRequest: WorkflowRetryRequest | null;
@@ -826,6 +999,14 @@ function WorkflowNodeWorkspace({
 		"rework",
 	].includes(node.status);
 	const executionStarted = node.execution !== null;
+	const finalSettlement =
+		isFinalNode && workflowTotalMinor !== null && acceptancePreview !== null
+			? calculateFinalSettlement(
+					workflowTotalMinor,
+					workflowAcceptedGrossMinor,
+					acceptancePreview.settlement.grossAmountMinor,
+				)
+			: null;
 
 	useEffect(() => {
 		// 结果批次变化时即使首个制品 ID 恰好相同，也必须清空上一轮预览与返工表单。
@@ -856,7 +1037,10 @@ function WorkflowNodeWorkspace({
 	}, [node.id, node.status, selectedArtifactId, taskId, viewMode]);
 
 	return (
-		<section className="overflow-hidden rounded-2xl border border-primary/20 bg-card shadow-[0_20px_70px_rgb(0_0_0/16%)]">
+		<section
+			id="workflow-node-workspace"
+			className="scroll-mt-24 overflow-hidden rounded-2xl border border-primary/20 bg-card shadow-[0_20px_70px_rgb(0_0_0/16%)]"
+		>
 			<header className="flex flex-wrap items-start justify-between gap-5 border-primary/15 border-b bg-accent/55 px-5 py-5 sm:px-6">
 				<div>
 					<p className="font-mono text-[10px] text-primary uppercase tracking-[0.18em]">
@@ -899,6 +1083,10 @@ function WorkflowNodeWorkspace({
 						runSelection={runSelection}
 						replacing={reselecting}
 						onCancel={onCancelReselection}
+						onSelectionComplete={onSelectionComplete}
+						recommendedSelectionCount={recommendedSelectionCount}
+						canSelectAllRecommended={canSelectAllRecommended}
+						onOpenRecommendedSelection={onOpenRecommendedSelection}
 					/>
 				)}
 
@@ -1139,13 +1327,24 @@ function WorkflowNodeWorkspace({
 									)}
 									{acceptancePreview === null
 										? t("正在核对结算金额")
-										: isFinalNode && workflowTotalMinor !== null
-											? t("验收全部阶段并结算 {amount}", {
-													amount: formatMinorAmount(
-														workflowTotalMinor,
-														currency,
-													),
-												})
+										: finalSettlement !== null
+											? finalSettlement.refundMinor === "0"
+												? t("验收全部阶段并结算 {amount}", {
+														amount: formatMinorAmount(
+															finalSettlement.payoutMinor,
+															currency,
+														),
+													})
+												: t("验收全部阶段：结算 {payout}，退回 {refund}", {
+														payout: formatMinorAmount(
+															finalSettlement.payoutMinor,
+															currency,
+														),
+														refund: formatMinorAmount(
+															finalSettlement.refundMinor,
+															currency,
+														),
+													})
 											: t("通过该阶段质量验收 {amount}", {
 													amount: formatMinorAmount(
 														acceptancePreview.settlement.grossAmountMinor,
@@ -1715,12 +1914,12 @@ function WorkflowBudgetPreferencePanel({
 	).length;
 	const locked = selectedCount > 0;
 	const quoteRange = workflowQuoteRange(workflow.nodes);
-	const hasCompletedEmptyMatch = workflow.nodes.some(
+	const completedEmptyMatchCount = workflow.nodes.filter(
 		(node) =>
 			node.selection === null &&
 			node.candidateRecord !== null &&
 			node.candidateRecord.candidates.length === 0,
-	);
+	).length;
 	const quoteRangeIsSinglePrice =
 		quoteRange !== null && quoteRange.minimumMinor === quoteRange.maximumMinor;
 	const parsed = input.trim() === "" ? null : parseUsdcToMinor(input);
@@ -1790,8 +1989,10 @@ function WorkflowBudgetPreferencePanel({
 					</p>
 					<p className="mt-1 font-semibold text-secondary">
 						{quoteRange === null
-							? hasCompletedEmptyMatch
-								? t("暂无候选报价")
+							? completedEmptyMatchCount > 0
+								? t("{count} 个阶段缺少候选", {
+										count: completedEmptyMatchCount,
+									})
 								: t("候选生成中")
 							: quoteRangeIsSinglePrice
 								? formatMinorAmount(
@@ -1878,6 +2079,10 @@ function WorkflowCandidateSelection({
 	runSelection,
 	replacing,
 	onCancel,
+	onSelectionComplete,
+	recommendedSelectionCount,
+	canSelectAllRecommended,
+	onOpenRecommendedSelection,
 }: {
 	taskId: string;
 	taskDeadline: string | null;
@@ -1888,6 +2093,11 @@ function WorkflowCandidateSelection({
 	runSelection: RunSelectionAction;
 	replacing: boolean;
 	onCancel(): void;
+	/** 仅在服务端确认成功后触发；失败时必须保留当前阶段和错误信息。 */
+	onSelectionComplete(): void;
+	recommendedSelectionCount: number;
+	canSelectAllRecommended: boolean;
+	onOpenRecommendedSelection(): void;
 }) {
 	const { locale, t } = useLocale();
 	const candidates = node.candidateRecord?.candidates ?? [];
@@ -1951,7 +2161,11 @@ function WorkflowCandidateSelection({
 					key("workflow-select"),
 				),
 			);
-			if (!result.ok) setSelectionError(result.message);
+			if (!result.ok) {
+				setSelectionError(result.message);
+				return;
+			}
+			onSelectionComplete();
 		} finally {
 			setPendingAgentId(null);
 		}
@@ -1983,19 +2197,34 @@ function WorkflowCandidateSelection({
 						{t("取消重新选择")}
 					</Button>
 				) : (
-					<Button
-						type="button"
-						variant="outline"
-						disabled={busy}
-						onClick={handleRematch}
-					>
-						{deadlineBlocked ? (
-							<CalendarClock className="size-4" />
-						) : (
-							<RefreshCw className="size-4" />
+					<div className="flex flex-wrap items-center gap-2">
+						{canSelectAllRecommended && (
+							<Button
+								type="button"
+								className="border-primary/30 bg-gradient-to-r from-primary/90 to-secondary/90 text-primary-foreground shadow-[0_0_18px_var(--brand-glow)] hover:brightness-110"
+								disabled={busy}
+								onClick={onOpenRecommendedSelection}
+							>
+								<CheckCircle2 className="size-4" aria-hidden />
+								{t("采用其余 {count} 个推荐", {
+									count: recommendedSelectionCount,
+								})}
+							</Button>
 						)}
-						{deadlineBlocked ? t("调整截止时间") : t("重新匹配该阶段")}
-					</Button>
+						<Button
+							type="button"
+							variant="outline"
+							disabled={busy}
+							onClick={handleRematch}
+						>
+							{deadlineBlocked ? (
+								<CalendarClock className="size-4" />
+							) : (
+								<RefreshCw className="size-4" />
+							)}
+							{deadlineBlocked ? t("调整截止时间") : t("重新匹配该阶段")}
+						</Button>
+					</div>
 				)}
 			</div>
 			{!replacing && (
@@ -3242,11 +3471,43 @@ function artifactAsResult(artifact: WorkflowArtifact) {
 	return {
 		summary: artifact.summary,
 		kind: artifact.kind,
-		content: artifact.kind === "inline" ? artifact.contentOrFileRef : undefined,
+		// 文件制品同样必须把服务端返回的短期/本机 URL 交给统一预览器。此前这里只传
+		// 内联正文，导致真实 PPTX 虽已持久化为 file，页面仍因缺少下载地址而禁用验收。
+		content: artifact.contentOrFileRef,
 		mimeType: artifact.mimeType,
 		sizeBytes: artifact.sizeBytes,
 		note: artifact.note,
 	} as const;
+}
+
+/** 已验收节点的毛额来自服务端验收事实；未验收节点的选择报价不能提前算作应付。 */
+function sumAcceptedWorkflowGross(
+	nodes: readonly FormalWorkflowNode[],
+): string {
+	return nodes
+		.reduce(
+			(total, node) => total + BigInt(node.acceptance?.grossAmountMinor ?? "0"),
+			BigInt(0),
+		)
+		.toString();
+}
+
+/**
+ * 最终确认同时展示 Agent 应付和发布者退款。托管额减去“既有验收 + 当前验收”即退款，
+ * 负数代表服务端事实自相矛盾，此时返回 null 让按钮保持普通阶段文案而不伪造金额。
+ */
+function calculateFinalSettlement(
+	escrowMinor: string,
+	acceptedGrossMinor: string,
+	currentGrossMinor: string,
+): Readonly<{ payoutMinor: string; refundMinor: string }> | null {
+	const escrow = BigInt(escrowMinor);
+	const payout = BigInt(acceptedGrossMinor) + BigInt(currentGrossMinor);
+	if (payout > escrow) return null;
+	return {
+		payoutMinor: payout.toString(),
+		refundMinor: (escrow - payout).toString(),
+	};
 }
 
 function key(scope: string): string {

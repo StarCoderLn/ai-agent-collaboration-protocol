@@ -36,7 +36,7 @@ describe("任务事件 Webhook 收件人", () => {
 		expect(query.mock.calls[0]?.[1]?.[5]).toContain("task.rated");
 	});
 
-	it("指定工作流 Agent 的事件同样仅为 aicp_hmac Agent 创建 outbox", async () => {
+	it("指定工作流 Agent 的事件同时支持 HMAC 与 HTTP JSON 的持久投递", async () => {
 		const query = vi.fn(async (_text: string, _params: readonly unknown[]) => ({
 			rows: [],
 			rowCount: 0,
@@ -47,7 +47,8 @@ describe("任务事件 Webhook 收件人", () => {
 		await emitTaskEventToAgent(db, EVENT, agentId);
 
 		const [sql, params] = query.mock.calls[0] ?? [];
-		expect(sql).toContain("agent.integration_mode='aicp_hmac'");
+		expect(sql).toContain("agent.integration_mode IN ('aicp_hmac','http_json')");
+		expect(sql).toContain("ELSE agent.service_endpoint END");
 		expect(params?.[5]).toBe(agentId);
 		expect(params?.[6]).toContain("task.workflow_feedback_submitted");
 	});

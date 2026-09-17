@@ -86,8 +86,10 @@ export interface TaskCommandDeps {
 	idempotency: Idempotency;
 	auditLogWriter: AuditLogWriter;
 	eventWriter: TaskEventWriter;
-	/** 与任务提交共用事务，保证 planning 状态和正式工作流不会只成功一半。 */
-	workflowPlanner: Readonly<{ ensure(taskId: string): Promise<unknown> }>;
+	/** 与任务提交共用事务，保证 planning 状态和可恢复草案不会只成功一半。 */
+	workflowPlanner: Readonly<{
+		ensure(taskId: string, actorId: string): Promise<unknown>;
+	}>;
 	now(): Date;
 }
 
@@ -551,9 +553,9 @@ export async function submitTaskDraft(
 			"任务已被其他请求修改，请刷新后重试",
 		);
 	}
-	// 工作流必须在发布事务内创建。候选 worker 只扫描已存在的 selecting 节点，因而
-	// 不会再出现“页面显示已发布，但后台尚无可匹配阶段”的半完成状态。
-	await deps.workflowPlanner.ensure(submitted.id);
+	// 发布事务只创建确定性种子草案；模型调用和用户编辑都发生在事务外。发布者确认后
+	// 才固化正式节点并开放候选，避免未审查的 AI 输出直接成为报价和交易事实。
+	await deps.workflowPlanner.ensure(submitted.id, actorId);
 	const createdAt = deps.now();
 	await deps.eventWriter.write({
 		taskId: submitted.id,
@@ -587,7 +589,7 @@ export async function submitTaskDraft(
 			planning: {
 				estimatedBudgetMinor: null,
 				message:
-					"工作流已生成；平台会先展示报价区间和能力需求，再由你选择 Agent",
+					"初始工作流草案已生成；请先使用 AI 规划或手动调整并确认，再选择 Agent",
 			},
 		},
 	};

@@ -9,6 +9,7 @@ import {
 	Video,
 } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
+import { z } from "zod";
 import DeliverableWorkspace, {
 	parseWorkflowDeliverable,
 } from "@/components/deliverables/deliverable-workspace";
@@ -32,6 +33,35 @@ type NativePreview =
 	| Readonly<{ kind: "pdf"; source: string }>
 	| Readonly<{ kind: "download"; source: string }>
 	| Readonly<{ kind: "unsupported" }>;
+
+const presentationDesignPreviewSchema = z
+	.object({
+		schemaVersion: z.literal("aicp.presentation-design.v1"),
+		deck: z.object({
+			title: z.string().trim().min(1),
+			author: z.string().trim(),
+			slides: z.array(
+				z.object({
+					kicker: z.string().trim(),
+					title: z.string().trim().min(1),
+					subtitle: z.string().trim(),
+					bullets: z.array(z.string().trim()),
+					notes: z.string().trim(),
+				}),
+			),
+		}),
+	})
+	.passthrough();
+
+const presentationReviewPreviewSchema = z
+	.object({
+		schemaVersion: z.literal("aicp.presentation-review.v1"),
+		passed: z.boolean(),
+		checks: z.array(
+			z.object({ key: z.string().trim().min(1), passed: z.boolean() }),
+		),
+	})
+	.passthrough();
 
 /**
  * 任务结果的 MIME 类型来自外部 Agent，不能让详情页自行猜测如何执行或渲染。这个适配器
@@ -322,6 +352,16 @@ function resolveNativePreview(result: ResultDeliverable): NativePreview {
 	if (
 		result.kind === "inline" &&
 		result.content !== undefined &&
+		mimeType === "application/json"
+	) {
+		const platformDocument = renderPlatformJsonDocument(result.content);
+		if (platformDocument !== null) {
+			return { kind: "document", markdown: true, content: platformDocument };
+		}
+	}
+	if (
+		result.kind === "inline" &&
+		result.content !== undefined &&
 		(mimeType === "text/markdown" || mimeType === "text/plain")
 	) {
 		return {
@@ -344,6 +384,53 @@ function resolveNativePreview(result: ResultDeliverable): NativePreview {
 	if (mimeType === "application/pdf") return { kind: "pdf", source };
 	if (result.kind === "file") return { kind: "download", source };
 	return { kind: "unsupported" };
+}
+
+/**
+ * JSON 只有通过平台自有的版本化 Schema 后才能进入可验收预览。这里把演示设计和质检
+ * 报告转换成用户可阅读的 Markdown；原始 JSON、未知版本和字段缺失仍保持拒绝状态，
+ * 避免仅凭 `application/json` MIME 类型就把任意 Agent 输出误判为可验收制品。
+ */
+function renderPlatformJsonDocument(content: string): string | null {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(content);
+	} catch {
+		return null;
+	}
+
+	const design = presentationDesignPreviewSchema.safeParse(parsed);
+	if (design.success) {
+		const lines = [
+			`# ${design.data.deck.title}`,
+			"",
+			`策划：${design.data.deck.author || "未署名"}`,
+			"",
+		];
+		for (const [index, slide] of design.data.deck.slides.entries()) {
+			lines.push(
+				`## ${index + 1}. ${slide.title}`,
+				...(slide.kicker === "" ? [] : [`${slide.kicker}`]),
+				...(slide.subtitle === "" ? [] : ["", slide.subtitle]),
+				...slide.bullets.map((bullet) => `- ${bullet}`),
+				...(slide.notes === "" ? [] : ["", `### 演讲提示`, slide.notes]),
+				"",
+			);
+		}
+		return lines.join("\n");
+	}
+
+	const review = presentationReviewPreviewSchema.safeParse(parsed);
+	if (review.success) {
+		return [
+			`# ${review.data.passed ? "演示文稿交付检查通过" : "演示文稿交付检查未通过"}`,
+			"",
+			...review.data.checks.map(
+				(check) => `- ${check.passed ? "通过" : "未通过"}：${check.key}`,
+			),
+		].join("\n");
+	}
+	return null;
 }
 
 /** 仅允许浏览器可独立读取的 URL；s3:// 等内部引用必须先由服务端换成短期下载地址。 */

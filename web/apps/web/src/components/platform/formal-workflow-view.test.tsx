@@ -5,10 +5,12 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+	confirmRecommendedWorkflowCandidates,
 	confirmWorkflowNodeCandidate,
 	type FormalWorkflow,
 	getWorkflowNodeAcceptancePreview,
@@ -28,6 +30,14 @@ vi.mock("@/lib/api/tasks", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@/lib/api/tasks")>();
 	return {
 		...actual,
+		confirmRecommendedWorkflowCandidates: vi.fn(async () => ({
+			taskId,
+			selections: [],
+			selectedNodeCount: 3,
+			totalNodeCount: 3,
+			quotedTotalMinor: "60000000",
+			taskStatus: "awaiting_escrow",
+		})),
 		confirmWorkflowNodeCandidate: vi.fn(async () => ({
 			taskId,
 			nodeId: designNodeId,
@@ -673,7 +683,7 @@ describe("FormalWorkflowView", () => {
 
 		expect(screen.getByText("任务截止时间已过")).toBeInTheDocument();
 		expect(screen.getByText("任务分类不匹配 · 1 个")).toBeInTheDocument();
-		expect(screen.getByText("暂无候选报价")).toBeInTheDocument();
+		expect(screen.getByText("1 个阶段缺少候选")).toBeInTheDocument();
 		expect(screen.queryByText("候选生成中")).not.toBeInTheDocument();
 		expect(
 			screen.queryByText("尚未生成该阶段的候选 Agent"),
@@ -1179,6 +1189,98 @@ describe("FormalWorkflowView", () => {
 		);
 	});
 
+	it("在候选选择区批量采用其余推荐，并在确认前展示阶段、Agent 与总价", async () => {
+		vi.mocked(confirmRecommendedWorkflowCandidates).mockClear();
+		const runSelection = vi.fn(
+			async (_label: string, action: () => Promise<unknown>) => {
+				await action();
+				return { ok: true } as const;
+			},
+		);
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={recommendedWorkflowFixture()}
+				viewMode="allocation"
+				selectionEditable
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={runSelection}
+			/>,
+		);
+
+		const bulkButton = screen.getByRole("button", {
+			name: "采用其余 2 个推荐",
+		});
+		expect(bulkButton.closest("header")).toBeNull();
+		expect(bulkButton).toHaveClass(
+			"bg-gradient-to-r",
+			"text-primary-foreground",
+		);
+		fireEvent.click(bulkButton);
+
+		const dialog = screen.getByRole("dialog", {
+			name: "采用全部推荐 Agent",
+		});
+		expect(within(dialog).getByText("界面设计")).toBeInTheDocument();
+		expect(within(dialog).getByText("代码开发")).toBeInTheDocument();
+		expect(within(dialog).getByText("Design Candidate")).toBeInTheDocument();
+		expect(within(dialog).getByText("Coding Candidate")).toBeInTheDocument();
+		expect(within(dialog).getByText("70 USDC")).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "确认采用并冻结报价" }));
+		await waitFor(() =>
+			expect(confirmRecommendedWorkflowCandidates).toHaveBeenCalledWith(
+				taskId,
+				expect.stringMatching(/^workflow-select-recommended:/),
+			),
+		);
+		expect(runSelection).toHaveBeenCalledWith(
+			"workflow-select-recommended",
+			expect.any(Function),
+		);
+	});
+
+	it("单个阶段选择成功后自动聚焦下一未选择阶段，失败时留在当前阶段", async () => {
+		const workflow = recommendedWorkflowFixture();
+		const runSelection = vi
+			.fn<
+				(
+					label: string,
+					action: () => Promise<unknown>,
+				) => Promise<SelectionActionResult>
+			>()
+			.mockResolvedValueOnce({ ok: false, message: "候选已失效" })
+			.mockImplementationOnce(async (_label, action) => {
+				await action();
+				return { ok: true };
+			});
+		render(
+			<FormalWorkflowView
+				taskTitle="开发可信工作台"
+				workflow={workflow}
+				viewMode="allocation"
+				selectionEditable
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={runSelection}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "选择此 Agent" }));
+		expect(await screen.findByRole("alert")).toHaveTextContent("候选已失效");
+		expect(
+			screen.getByRole("heading", { name: "界面设计" }),
+		).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "选择此 Agent" }));
+		await waitFor(() =>
+			expect(
+				screen.getByRole("heading", { name: "代码开发" }),
+			).toBeInTheDocument(),
+		);
+	});
+
 	it("收到真实进度后按阶段说明 Agent 正在执行的工作", () => {
 		const workflow = workflowFixture();
 		workflow.nodes[0] = {
@@ -1447,6 +1549,28 @@ describe("FormalWorkflowView", () => {
 				}),
 			).toBeDisabled(),
 		);
+	});
+
+	it("最终托管额高于真实阶段成交额时明确展示结算与退款", async () => {
+		const workflow = awaitingReviewPaperWorkflowFixture();
+		workflow.run.totalBudgetMinor = "30000000";
+		workflow.run.quotedTotalMinor = "30000000";
+		workflow.run.refundableAmountMinor = "30000000";
+		render(
+			<FormalWorkflowView
+				taskTitle="全球滑坡风险研究"
+				workflow={workflow}
+				viewMode="review"
+				busy={false}
+				run={vi.fn(async () => undefined)}
+				runSelection={successfulSelectionAction}
+			/>,
+		);
+
+		const settlementButton = await screen.findByRole("button", {
+			name: "验收全部阶段：结算 25 USDC，退回 5 USDC",
+		});
+		await waitFor(() => expect(settlementButton).toBeEnabled());
 	});
 
 	it("任务进入争议后在验收阶段仅保留历史交付和冻结提示", () => {
@@ -1729,6 +1853,59 @@ function singleNodeWorkflow(): FormalWorkflow {
 		...workflow,
 		nodes: [candidateNode],
 		edges: [],
+	};
+}
+
+/**
+ * 批量选人夹具保留一个已确认阶段，并让后续两个阶段各有首选候选。这样可以同时证明
+ * 已有人工选择不会出现在批量清单中，最终金额仍包含它的冻结报价。
+ */
+function recommendedWorkflowFixture(): FormalWorkflow {
+	const workflow = workflowFixture();
+	const requirements = workflow.nodes[0];
+	const design = workflow.nodes[1];
+	const coding = workflow.nodes[2];
+	const designRecord = design?.candidateRecord;
+	const designCandidate = designRecord?.candidates[0];
+	if (
+		requirements === undefined ||
+		design === undefined ||
+		coding === undefined ||
+		designRecord === null ||
+		designRecord === undefined ||
+		designCandidate === undefined
+	) {
+		throw new Error("批量选人夹具必须包含三个阶段和设计候选");
+	}
+	const codingCandidate = {
+		...designCandidate,
+		agentId: "88888888-8888-4888-8888-888888888889",
+		name: "Coding Candidate",
+		quoteMinor: "32000000",
+	};
+	return {
+		...workflow,
+		nodes: [
+			{
+				...requirements,
+				status: "selected",
+				selection: {
+					agentId: requirements.assignment?.agentId ?? designCandidate.agentId,
+					agentName: requirements.assignment?.agentName ?? "PRD Specialist",
+					agreedAmountMinor: "18000000",
+				},
+			},
+			design,
+			{
+				...coding,
+				status: "selecting",
+				candidateRecord: {
+					...designRecord,
+					id: "77777777-7777-4777-8777-777777777778",
+					candidates: [codingCandidate],
+				},
+			},
+		],
 	};
 }
 

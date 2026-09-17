@@ -353,12 +353,22 @@ export class PgWorkflowExecutionRepository {
 			nextVersion,
 		);
 		await this.db.query(
-			`UPDATE workflow_node_execution_state
-          SET progress=100,execution_state=$2,failure_code=NULL,failure_stage=NULL,
-              attention_message=$3,updated_at=now()
-        WHERE workflow_node_id=$1`,
+			`INSERT INTO workflow_node_execution_state(
+		   workflow_node_id,task_id,assignment_id,progress,execution_state,
+		   failure_code,failure_stage,attention_message
+		 ) VALUES ($1,$2,$3,100,$4,NULL,NULL,$5)
+		 ON CONFLICT (workflow_node_id) DO UPDATE SET
+		   assignment_id=EXCLUDED.assignment_id,
+		   progress=EXCLUDED.progress,
+		   execution_state=EXCLUDED.execution_state,
+		   failure_code=NULL,
+		   failure_stage=NULL,
+		   attention_message=EXCLUDED.attention_message,
+		   updated_at=now()`,
 			[
 				workflowNodeId,
+				taskId,
+				input.assignmentId,
 				automaticAcceptance.kind === "failed" ? "needs_input" : "running",
 				automaticAcceptance.kind === "failed"
 					? automaticAcceptance.issues.join("；")
@@ -765,9 +775,10 @@ export class PgWorkflowExecutionRepository {
 			version: string;
 			workflow_run_id: string;
 			agent_id: string;
+			assignment_id: string;
 		}>(
 			`SELECT node.status,node.version::text,node.workflow_run_id::text,
-              assignment.agent_id::text
+		      assignment.agent_id::text,assignment.id::text AS assignment_id
          FROM task_workflow_nodes node
          JOIN tasks task ON task.id=node.task_id
          JOIN task_assignments assignment
@@ -821,13 +832,25 @@ export class PgWorkflowExecutionRepository {
 		);
 		// 返工是一个新的执行批次。旧进度已经保存在不可变节点事件中，当前快照必须回到 0，
 		// 并等待 Agent 的新签名回调推进；直接写 95 会把“已受理”伪装成“即将完成”。
+		//
+		// Agent 可以不先上报进度而直接提交结果，历史数据也可能来自尚未在结果提交处补建
+		// 快照的版本。因此这里必须使用 UPSERT 恢复缺失快照，不能把派生进度快照当作返工
+		// 命令的前置事实。节点、最新结果和 accepted assignment 才是已经在上方锁定的权威事实。
 		const reset = await this.db.query(
-			`UPDATE workflow_node_execution_state
-          SET progress=0,execution_state='running',failure_code=NULL,failure_stage=NULL,
-              attention_message=NULL,
-              last_reported_at=NULL,updated_at=now()
-        WHERE workflow_node_id=$1`,
-			[workflowNodeId],
+			`INSERT INTO workflow_node_execution_state(
+		   workflow_node_id,task_id,assignment_id,progress,execution_state,
+		   failure_code,failure_stage,attention_message,last_reported_at
+		 ) VALUES ($1,$2,$3,0,'running',NULL,NULL,NULL,NULL)
+		 ON CONFLICT (workflow_node_id) DO UPDATE SET
+		   assignment_id=EXCLUDED.assignment_id,
+		   progress=0,
+		   execution_state='running',
+		   failure_code=NULL,
+		   failure_stage=NULL,
+		   attention_message=NULL,
+		   last_reported_at=NULL,
+		   updated_at=now()`,
+			[workflowNodeId, taskId, node.assignment_id],
 		);
 		if (reset.rowCount !== 1) {
 			throw new Error("WORKFLOW_REWORK_EXECUTION_STATE_NOT_FOUND");
@@ -865,6 +888,8 @@ export class PgWorkflowExecutionRepository {
 		return resultOf(201, {
 			taskId,
 			workflowNodeId,
+			resultId: input.resultId,
+			requestId,
 			requestNo,
 			nodeStatus: nextStatus,
 			nodeVersion: nextVersion.toString(),

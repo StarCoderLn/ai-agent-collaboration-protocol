@@ -7,7 +7,7 @@ import { routeDefinitions } from "./routes/registry.generated";
 describe("Hono Marketplace API", () => {
 	it("挂载全部既有路由并由真实健康端点响应", async () => {
 		// 路由数量锁定迁移基线，防止目录生成器漏掉某个深层动态路由却仍然构建成功。
-		expect(routeDefinitions).toHaveLength(88);
+		expect(routeDefinitions).toHaveLength(92);
 		const response = await createApp().request(
 			"https://marketplace-api.test/api/health",
 		);

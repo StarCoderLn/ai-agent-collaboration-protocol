@@ -38,6 +38,11 @@ export const PresentationDeckSchema = z
 
 export type PresentationDeck = z.infer<typeof PresentationDeckSchema>;
 
+const PresentationDesignSchema = z.object({
+	schemaVersion: z.literal("aicp.presentation-design.v1"),
+	deck: PresentationDeckSchema,
+});
+
 export interface PresentationPlanner {
 	/** 只规划内容和视觉 token，PPTX 与 HTML 均由可信渲染器产生。 */
 	plan(prompt: string, signal: AbortSignal): Promise<PresentationDeck>;
@@ -84,8 +89,31 @@ export function createPresentationAgentExecutor(
 	artifactStore: Pick<FileArtifactStore, "write">,
 ): QuickAgentExecutor {
 	return async (request, signal) => {
-		const deck = await planner.plan(taskPromptContext(request), signal);
+		const outputContract = readWorkflowContract(request.workflow, "outputContract");
+		if (outputContract === "ReviewReport") {
+			return reviewPresentation(request);
+		}
+		const deck =
+			outputContract === "PresentationArtifact"
+				? readPresentationDesign(request)
+				: await planner.plan(taskPromptContext(request), signal);
 		assertDeckOrder(deck);
+		if (outputContract === "DesignSpec") {
+			return {
+				status: "completed",
+				artifacts: [
+					{
+						type: "json",
+						summary: `${deck.title} · 路演内容与视觉结构设计`,
+						content: { schemaVersion: "aicp.presentation-design.v1", deck },
+						mimeType: "application/json",
+					},
+				],
+			};
+		}
+		if (outputContract !== undefined && outputContract !== "PresentationArtifact") {
+			throw new Error(`演示文稿 Agent 不支持输出契约：${outputContract}`);
+		}
 		const pptx = await renderPptx(deck);
 		const stored = await artifactStore.write("pptx", pptx);
 		return {
@@ -107,6 +135,58 @@ export function createPresentationAgentExecutor(
 			],
 		};
 	};
+}
+
+function readPresentationDesign(request: Parameters<QuickAgentExecutor>[0]): PresentationDeck {
+	for (const artifact of request.upstreamArtifacts) {
+		if (artifact.outputContract !== "DesignSpec" || artifact.mimeType !== "application/json") continue;
+		try {
+			return PresentationDesignSchema.parse(JSON.parse(artifact.bodyOrFileRef ?? "")).deck;
+		} catch {
+			// 继续检查同一契约的其他制品；全部不合法时统一返回稳定错误。
+		}
+	}
+	throw new Error("演示文稿制作缺少合法的已验收 DesignSpec");
+}
+
+function reviewPresentation(request: Parameters<QuickAgentExecutor>[0]) {
+	const presentationArtifacts = request.upstreamArtifacts.filter(
+		(artifact) => artifact.outputContract === "PresentationArtifact",
+	);
+	const html = presentationArtifacts.find((artifact) => artifact.mimeType === "text/html");
+	const pptx = presentationArtifacts.find(
+		(artifact) =>
+			artifact.mimeType ===
+			"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	);
+	const checks = [
+		{ key: "html_preview", passed: html?.bodyOrFileRef?.includes('class="slide') === true },
+		{ key: "editable_pptx", passed: /^https?:\/\//.test(pptx?.bodyOrFileRef ?? "") },
+		{ key: "artifact_pair", passed: presentationArtifacts.length >= 2 },
+	];
+	return Promise.resolve({
+		status: "completed" as const,
+		artifacts: [
+			{
+				type: "json" as const,
+				summary: checks.every((check) => check.passed)
+					? "演示文稿预览与可编辑文件均通过交付检查"
+					: "演示文稿交付检查发现缺失项",
+				content: {
+					schemaVersion: "aicp.presentation-review.v1",
+					passed: checks.every((check) => check.passed),
+					checks,
+				},
+				mimeType: "application/json",
+			},
+		],
+	});
+}
+
+function readWorkflowContract(value: unknown, key: "inputContract" | "outputContract") {
+	if (typeof value !== "object" || value === null) return undefined;
+	const contract = Reflect.get(value, key);
+	return typeof contract === "string" && contract.trim() !== "" ? contract.trim() : undefined;
 }
 
 function assertDeckOrder(deck: PresentationDeck): void {

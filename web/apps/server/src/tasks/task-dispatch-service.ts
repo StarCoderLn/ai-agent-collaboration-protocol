@@ -245,6 +245,41 @@ export class TaskDispatchService {
 		);
 	}
 
+	/**
+	 * 批量选择只适用于托管前规划态。推荐 Agent 与报价由仓储从最新冻结快照读取，HTTP
+	 * 调用方不能提交自选金额或伪造批量清单；仓储保证全部阶段在一个事务中完成。
+	 */
+	async confirmRecommendedWorkflowCandidates(
+		taskId: string,
+		actorId: string,
+		idempotencyKey: string | undefined,
+	): Promise<TaskServiceResult> {
+		const task = await this.assertPublisher(taskId, actorId);
+		this.assertIdempotencyKey(idempotencyKey, "批量确认推荐 Agent");
+		if (task.status !== "planning" || this.workflowSelection === undefined)
+			throw new TaskDispatchServiceError(
+				"WORKFLOW_SELECTION_LOCKED",
+				"只有仍在规划中的工作流可以批量采用推荐 Agent",
+				409,
+			);
+		try {
+			return await this.workflowSelection.selectRecommended({
+				taskId,
+				actorId,
+				idempotencyKey,
+				selectedAt: new Date(),
+			});
+		} catch (error) {
+			if (error instanceof WorkflowSelectionRepositoryError)
+				throw new TaskDispatchServiceError(
+					error.code,
+					error.message,
+					error.statusCode,
+				);
+			throw error;
+		}
+	}
+
 	async latestWorkflowNodeAssignment(
 		taskId: string,
 		nodeId: string,

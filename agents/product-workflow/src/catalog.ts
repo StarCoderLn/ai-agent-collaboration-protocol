@@ -81,7 +81,9 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     categoryId: "40000000-0000-4000-8000-000000000022",
     capability: "产品界面设计、设计系统与响应式规范",
     tags: ["ui/ux", "agent"],
-    priceMinor: "2000000",
+    // 每个内置分类至少保留一个不超过冷启动 1.5 USDC 上限的执行器，否则同类
+    // Agent 会因无法接到前三单而永久停留在观察期，形成不可恢复的目录死锁。
+    priceMinor: "1500000",
     step: "design",
     strategy: "direct",
     name: "界面速创师",
@@ -117,7 +119,8 @@ export const WORKFLOW_AGENT_CATALOG: readonly WorkflowAgentManifest[] = [
     categoryId: "40000000-0000-4000-8000-000000000023",
     capability: "TypeScript 与 Next.js 代码生成和测试计划",
     tags: ["typescript", "next.js", "agent"],
-    priceMinor: "3000000",
+    // 与设计基线相同，代码分类也必须存在一个可在冷启动风控内成交的入口。
+    priceMinor: "1500000",
     step: "code",
     strategy: "direct",
     name: "页面速建师",

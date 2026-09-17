@@ -292,7 +292,7 @@ func TestPendingInitialWorkflowNodesRetriesAutomaticNodeWithFrozenCandidates(t *
 	_, err = pool.Exec(ctx, `
 		INSERT INTO task_workflow_runs(
 		 id,task_id,status,currency,total_budget_minor,released_amount_minor,refundable_amount_minor
-		) VALUES ($1,$2,'running','USDC',8000000,0,8000000)`, integrationRunID, integrationTaskID)
+		) VALUES ($1,$2,'awaiting_review','USDC',8000000,0,8000000)`, integrationRunID, integrationTaskID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,6 +328,11 @@ func TestPendingInitialWorkflowNodesRetriesAutomaticNodeWithFrozenCandidates(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = pool.Exec(ctx, `
+		UPDATE job_distribution_records SET final_selection_agent_id=$2 WHERE id=$1`,
+		distributionRecordID, integrationAgentID); err != nil {
+		t.Fatal(err)
+	}
 	const failedAssignmentID = "80000000-0000-4000-8000-000000000006"
 	_, err = pool.Exec(ctx, `
 		INSERT INTO task_assignments(
@@ -351,8 +356,8 @@ func TestPendingInitialWorkflowNodesRetriesAutomaticNodeWithFrozenCandidates(t *
 			break
 		}
 	}
-	// 本地开发库可能同时存在用户正在恢复的真实节点；测试只验证自己的固定 UUID
-	// 能被扫描到，不能把“数据库里没有其他待处理业务”当成被测契约的一部分。
+	// run 处于 awaiting_review 模拟并行兄弟节点已经交付。调度必须继续扫描本节点，
+	// 不能因为聚合状态优先展示“待验收”就饿死仍在 matching 的并行分支。
 	if !found {
 		t.Fatalf("automatic node with frozen candidates must remain retryable: got=%+v want=%+v", targets, want)
 	}
@@ -367,6 +372,27 @@ func TestPendingInitialWorkflowNodesRetriesAutomaticNodeWithFrozenCandidates(t *
 	if input.PreviousAssignmentID != failedAssignmentID {
 		t.Fatalf("accept_failed assignment must create replacement identity: got=%q want=%q",
 			input.PreviousAssignmentID, failedAssignmentID)
+	}
+
+	// 扫描到节点还不够：锁定事务也必须接受 awaiting_review 聚合状态，否则 worker
+	// 会每秒领取同一节点，却永远以 CANDIDATE_NOT_FOUND 失败，形成无进展的忙循环。
+	replacementQueue := &concurrentQueue{}
+	coordinator := matching.InitialMatchCoordinator{
+		Matcher: &matching.Service{Repository: &MatchingRepository{Pool: pool}, Now: time.Now},
+		Dispatcher: &dispatch.Service{
+			Repository: &AssignmentRepository{Pool: pool}, Queue: replacementQueue, Now: time.Now,
+		},
+	}
+	if _, err = coordinator.RunWorkflowNodeMatching(ctx, integrationTaskID, integrationNodeID); err != nil {
+		t.Fatal(err)
+	}
+	var replacementCount int
+	err = pool.QueryRow(ctx, `
+		SELECT count(*) FROM task_assignments
+		 WHERE workflow_node_id=$1 AND status='pending_ack'`, integrationNodeID).Scan(&replacementCount)
+	if err != nil || replacementCount != 1 || replacementQueue.count() != 1 {
+		t.Fatalf("awaiting_review sibling blocked replacement dispatch: replacements=%d queue=%d err=%v",
+			replacementCount, replacementQueue.count(), err)
 	}
 }
 
@@ -722,12 +748,19 @@ func cleanupMatchingFixtures(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		`DELETE FROM matching_v2_training_runs WHERE workflow_id='matching-v2-export-integration'`,
 		`DELETE FROM matching_v2_training_runs WHERE workflow_id='matching-v2-small-integration'`,
 		`DELETE FROM task_transition_outbox WHERE task_id='80000000-0000-4000-8000-000000000001'`,
+		`DELETE FROM workflow_node_transition_inbox WHERE task_id='80000000-0000-4000-8000-000000000001'`,
+		`DELETE FROM workflow_node_transition_outbox WHERE task_id='80000000-0000-4000-8000-000000000001'`,
+		`DELETE FROM webhook_deliveries WHERE task_event_id IN (SELECT id FROM task_events WHERE task_id='80000000-0000-4000-8000-000000000001')`,
+		`DELETE FROM task_events WHERE task_id='80000000-0000-4000-8000-000000000001'`,
 		`DELETE FROM dispatch_attempts WHERE assignment_id IN (SELECT id FROM task_assignments WHERE task_id='80000000-0000-4000-8000-000000000001')`,
 		`DELETE FROM task_assignments WHERE task_id='80000000-0000-4000-8000-000000000001'`,
 		`DELETE FROM job_distribution_records WHERE task_id='80000000-0000-4000-8000-000000000001'`,
+		`DELETE FROM workflow_node_events WHERE task_id='80000000-0000-4000-8000-000000000001'`,
 		`DELETE FROM task_workflow_edges WHERE workflow_run_id='80000000-0000-4000-8000-000000000004'`,
 		`DELETE FROM task_workflow_nodes WHERE task_id='80000000-0000-4000-8000-000000000001'`,
 		`DELETE FROM task_workflow_runs WHERE task_id='80000000-0000-4000-8000-000000000001'`,
+		`DELETE FROM agent_score_refresh_requests WHERE agent_id IN ('80000000-0000-4000-8000-000000000002','80000000-0000-4000-8000-000000000003')`,
+		`DELETE FROM agent_score_snapshots WHERE agent_id IN ('80000000-0000-4000-8000-000000000002','80000000-0000-4000-8000-000000000003')`,
 		`DELETE FROM agent_status_config WHERE agent_id IN ('80000000-0000-4000-8000-000000000002','80000000-0000-4000-8000-000000000003')`,
 		`DELETE FROM agent_matching_embeddings WHERE agent_id IN ('80000000-0000-4000-8000-000000000002','80000000-0000-4000-8000-000000000003')`,
 		`DELETE FROM agents WHERE id IN ('80000000-0000-4000-8000-000000000002','80000000-0000-4000-8000-000000000003')`,

@@ -71,6 +71,16 @@ export async function bootstrapLocalAgents(
          ON CONFLICT (agent_id) DO UPDATE SET encrypted_secret=EXCLUDED.encrypted_secret`,
         [agent.platformId, `local-dev:${agent.platformId}`],
       );
+	  // 契约能力是匹配硬门禁，必须随执行器目录同步并删除过期声明；只追加会让已移除的
+	  // 能力继续被分发引擎视为可执行，最终把不兼容制品派给该 Agent。
+	  await database.query("DELETE FROM agent_workflow_contracts WHERE agent_id=$1", [agent.platformId]);
+	  for (const contract of workflowContracts(agent.step)) {
+		await database.query(
+		  `INSERT INTO agent_workflow_contracts(agent_id,input_contract,output_contract)
+		   VALUES ($1,$2,$3)`,
+		  [agent.platformId, contract.input, contract.output],
+		);
+	  }
       await database.query(
         `INSERT INTO agent_status_config(agent_id) VALUES ($1)
          ON CONFLICT (agent_id) DO NOTHING`,
@@ -136,6 +146,25 @@ function localProviderWallet(platformId: string): string {
 
 function estimatedSeconds(step: "requirements" | "design" | "code"): number {
   return step === "code" ? 600 : step === "design" ? 360 : 300;
+}
+
+function workflowContracts(step: "requirements" | "design" | "code") {
+  if (step === "requirements") {
+	return [
+	  { input: "TaskContract", output: "RequirementsArtifact" },
+	  { input: "TaskContract", output: "RequirementsSpec" },
+	] as const;
+  }
+  if (step === "design") {
+	return [
+	  { input: "RequirementsArtifact", output: "DesignArtifact" },
+	  { input: "TaskContract", output: "DesignArtifact" },
+	] as const;
+  }
+  return [
+	{ input: "RequirementsArtifact+DesignArtifact", output: "CodeArtifact" },
+	{ input: "TaskContract+DesignArtifact", output: "CodeArtifact" },
+  ] as const;
 }
 
 async function main(): Promise<void> {

@@ -1,4 +1,5 @@
 import type { QueryExecutor } from "../db/pool";
+import type { PlannedWorkflow } from "./workflow-planner";
 import { planFormalWorkflow } from "./workflow-planner";
 import {
 	transitionWorkflowNode,
@@ -275,6 +276,20 @@ export async function ensureFormalWorkflow(
 		taskTags: task.tag_names,
 		requiredCapability: task.required_capability,
 	});
+	return createFormalWorkflowFromPlan(db, taskId, plan);
+}
+
+/**
+ * 将已经过服务端校验的草案一次性固化为正式交易 DAG。该函数只接受平台内部计划类型，
+ * 浏览器和模型输出必须先通过 workflow-plan-contract，避免绕过分类映射与拓扑校验。
+ */
+export async function createFormalWorkflowFromPlan(
+	db: QueryExecutor,
+	taskId: string,
+	plan: PlannedWorkflow,
+): Promise<FormalWorkflowGraph> {
+	const existing = await findFormalWorkflow(db, taskId);
+	if (existing !== null) return existing;
 	const runInsert = await db.query<{ id: string }>(
 		`INSERT INTO task_workflow_runs(
        task_id,status,currency,total_budget_minor,released_amount_minor,refundable_amount_minor

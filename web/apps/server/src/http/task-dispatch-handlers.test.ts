@@ -57,6 +57,10 @@ function operations(): TaskDispatchOperations {
 			statusCode: 201,
 			body: { assignment: { agentId: AGENT_ID } },
 		})),
+		confirmRecommendedWorkflowCandidates: vi.fn(async () => ({
+			statusCode: 200,
+			body: { taskStatus: "awaiting_escrow" },
+		})),
 		latestWorkflowNodeAssignment: vi.fn(async () => ({
 			statusCode: 200,
 			body: { assignment: { agentId: AGENT_ID } },
@@ -189,6 +193,26 @@ describe("task dispatch façade handlers", () => {
 			"publisher-1",
 			"confirm-node-123",
 		);
+	});
+
+	it("批量确认路由只转发任务、发布者和幂等键", async () => {
+		const deps = dependencies();
+		const response = await createTaskDispatchHandlers(
+			deps,
+		).confirmRecommendedWorkflowCandidates(
+			new Request(
+				`http://api.local/api/tasks/${TASK_ID}/workflow/recommended-agents`,
+				{
+					method: "POST",
+					headers: { "idempotency-key": "confirm-recommended-123" },
+				},
+			),
+			{ params: Promise.resolve({ id: TASK_ID }) },
+		);
+		expect(response.status).toBe(200);
+		expect(
+			deps.service.confirmRecommendedWorkflowCandidates,
+		).toHaveBeenCalledWith(TASK_ID, "publisher-1", "confirm-recommended-123");
 	});
 
 	it("validates candidate exposure facts before forwarding the authenticated publisher", async () => {

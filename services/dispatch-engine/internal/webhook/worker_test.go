@@ -85,7 +85,9 @@ func TestWorkerClassifiesTerminalFailureAndCountsDeadLetter(t *testing.T) {
 }
 
 func TestWorkerTreatsCredentialFailureAsRetryableWithoutCallingSender(t *testing.T) {
-	repository := &repositoryStub{deliveries: []Delivery{{ID: "delivery-3", LockToken: "lease-3"}}}
+	repository := &repositoryStub{deliveries: []Delivery{{
+		ID: "delivery-3", LockToken: "lease-3", EncryptedCredential: "ciphertext",
+	}}}
 	worker := &Worker{
 		Repository: repository,
 		Decryptor:  decryptorStub{err: errors.New("kms unavailable")},

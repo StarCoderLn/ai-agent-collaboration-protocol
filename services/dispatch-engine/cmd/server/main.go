@@ -207,8 +207,11 @@ func run(ctx context.Context) error {
 	webhookWorker := &webhook.Worker{
 		Repository: &store.WebhookRepository{Pool: pool, CallbackBaseURL: strings.TrimSuffix(publicDispatchURL, "/")},
 		Decryptor:  transport.decryptor,
-		Sender:     &webhook.HTTPSender{Client: &http.Client{Timeout: 20 * time.Second}},
-		Lease:      30 * time.Second,
+		Sender: &webhook.HTTPSender{
+			Client:    &http.Client{Timeout: 20 * time.Minute},
+			Submitter: executionClient,
+		},
+		Lease: 30 * time.Second,
 	}
 	healthWorker := &agenthealth.Worker{
 		Repository: &store.AgentHealthRepository{Pool: pool},

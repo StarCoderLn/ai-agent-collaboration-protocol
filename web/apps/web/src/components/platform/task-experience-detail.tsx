@@ -1,6 +1,12 @@
 "use client";
 
 import { Button } from "@web/ui/components/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@web/ui/components/dropdown-menu";
 import { Input } from "@web/ui/components/input";
 import { SelectField } from "@web/ui/components/select";
 import { Textarea } from "@web/ui/components/textarea";
@@ -16,6 +22,7 @@ import {
 	GitBranch,
 	Loader2,
 	LockKeyhole,
+	MoreHorizontal,
 	Paperclip,
 	ReceiptText,
 	RefreshCw,
@@ -49,13 +56,19 @@ import FormalWorkflowView, {
 import PageBackLink from "@/components/platform/page-back-link";
 import TaskAgentAllocationGraph from "@/components/platform/task-agent-allocation-graph";
 import { useCandidateExposureTracking } from "@/components/platform/use-candidate-exposure-tracking";
+import WorkflowPlanEditor, {
+	isSameWorkflowPlan,
+} from "@/components/platform/workflow-plan-editor";
 import SectionRefreshButton from "@/components/section-refresh-button";
 import {
 	acceptTaskResult,
 	archiveTask,
 	confirmTaskCandidate,
+	confirmTaskWorkflowPlan,
+	type EditableWorkflowPlan,
 	type EscrowStatus,
 	type FormalWorkflow,
+	generateTaskWorkflowPlan,
 	getLatestTaskAssignment,
 	getPublicTask,
 	getTaskAcceptancePreview,
@@ -65,6 +78,7 @@ import {
 	getTaskExecutionStatus,
 	getTaskPreview,
 	getTaskWorkflow,
+	getTaskWorkflowPlan,
 	listOwnedTasks,
 	listTaskResults,
 	listWorkflowFeedback,
@@ -75,6 +89,7 @@ import {
 	rematchTaskCandidates,
 	requestTaskRework,
 	retryFailedTaskExecution,
+	type StoredWorkflowPlan,
 	submitTaskDisputeEvidenceWithOptionalFile,
 	submitTaskEscrowTransaction,
 	submitTaskRating,
@@ -92,6 +107,7 @@ import {
 	type TaskResult,
 	type TaskStatus,
 	updateTaskMatchCriteria,
+	updateTaskWorkflowPlan,
 	type WorkflowFeedback,
 	type WorkflowFeedbackInput,
 	type WorkflowFeedbackStrength,
@@ -149,6 +165,7 @@ type LoadedTask = Readonly<{
 	execution: TaskExecutionStatus | null;
 	results: readonly TaskResult[];
 	workflow: FormalWorkflow | null;
+	workflowPlan: StoredWorkflowPlan | null;
 	workflowFeedback: readonly WorkflowFeedback[];
 }>;
 
@@ -245,6 +262,7 @@ export default function TaskExperienceDetail({
 						execution: null,
 						results: [],
 						workflow: null,
+						workflowPlan: null,
 						workflowFeedback: [],
 					});
 					setError(null);
@@ -261,6 +279,7 @@ export default function TaskExperienceDetail({
 					assignment,
 					results,
 					workflow,
+					workflowPlan,
 					workflowFeedback,
 				] = await Promise.all([
 					getTaskPreview(taskId, signal),
@@ -280,6 +299,9 @@ export default function TaskExperienceDetail({
 							)
 						: Promise.resolve([]),
 					optionalWorkflowRead(() => getTaskWorkflow(taskId, signal)),
+					currentStatus === "planning"
+						? optionalRead(() => getTaskWorkflowPlan(taskId, signal))
+						: Promise.resolve(null),
 					isSettlementStage(currentStatus)
 						? optionalRead(
 								() => listWorkflowFeedback(taskId, signal),
@@ -297,6 +319,7 @@ export default function TaskExperienceDetail({
 					execution,
 					results: results ?? [],
 					workflow,
+					workflowPlan,
 					workflowFeedback: workflowFeedback ?? [],
 				});
 				setError(null);
@@ -502,6 +525,43 @@ export default function TaskExperienceDetail({
 		data.owned !== null &&
 		(task.status === "draft" || task.status === "planning");
 
+	async function saveWorkflowPlan(
+		plan: EditableWorkflowPlan,
+	): Promise<StoredWorkflowPlan | null> {
+		if (data?.workflowPlan === null || data?.workflowPlan === undefined)
+			return null;
+		let saved: StoredWorkflowPlan | null = null;
+		await run("workflow-plan-save", async () => {
+			saved = await updateTaskWorkflowPlan(
+				task.id,
+				data.workflowPlan?.version ?? "",
+				plan,
+				key("workflow-plan-save"),
+			);
+		});
+		return saved;
+	}
+
+	async function confirmWorkflowPlan(
+		plan: EditableWorkflowPlan,
+	): Promise<void> {
+		const current = data?.workflowPlan;
+		if (current === null || current === undefined) return;
+		// “确认”也允许直接提交表单中尚未保存的编辑；内容未变化时复用当前版本，避免
+		// 产生一条与上一版完全相同的 user 修订。
+		const saved = isSameWorkflowPlan(plan, current.plan)
+			? current
+			: await saveWorkflowPlan(plan);
+		if (saved === null) return;
+		await run("workflow-plan-confirm", () =>
+			confirmTaskWorkflowPlan(
+				task.id,
+				saved.version,
+				key("workflow-plan-confirm"),
+			),
+		);
+	}
+
 	async function archiveCurrentTask() {
 		setBusy("archive-task");
 		setError(null);
@@ -547,7 +607,7 @@ export default function TaskExperienceDetail({
 								</p>
 							)}
 						</div>
-						<div className="flex flex-col items-stretch gap-2 sm:items-end">
+						<div className="flex items-start gap-2">
 							<div className="rounded-lg border bg-accent px-5 py-3 text-right">
 								<p className="text-muted-foreground text-xs">{t("预算上限")}</p>
 								<p className="mt-1 font-bold text-xl">
@@ -556,53 +616,30 @@ export default function TaskExperienceDetail({
 										: formatMinorAmount(task.budgetMinor, task.currency)}
 								</p>
 							</div>
-							{canArchive && !confirmingArchive && (
-								<Button
-									type="button"
-									variant="destructive"
-									className="min-h-10 cursor-pointer rounded-xl border border-destructive/20 px-4 shadow-destructive/5 shadow-sm"
-									onClick={() => setConfirmingArchive(true)}
-								>
-									<Trash2 className="size-4" aria-hidden />
-									{t("删除任务")}
-								</Button>
-							)}
-							{canArchive && confirmingArchive && (
-								<div className="max-w-sm rounded-xl border border-destructive/25 bg-destructive/5 p-4 text-left">
-									<p className="font-semibold text-destructive text-sm">
-										{t("确认删除这个任务？")}
-									</p>
-									<p className="mt-1 text-muted-foreground text-xs leading-5">
-										{t(
-											"任务将从市场和工作台移除；工作流与审计记录会被安全保留。",
-										)}
-									</p>
-									<div className="mt-3 flex justify-end gap-2">
-										<Button
-											type="button"
-											size="sm"
-											variant="ghost"
-											disabled={busy === "archive-task"}
-											onClick={() => setConfirmingArchive(false)}
-										>
-											{t("取消")}
-										</Button>
-										<Button
-											type="button"
-											size="sm"
+							{canArchive && (
+								<DropdownMenu>
+									<DropdownMenuTrigger
+										render={
+											<Button
+												variant="ghost"
+												size="icon"
+												className="rounded-lg border border-primary/15 bg-card/55 text-muted-foreground hover:border-primary/30 hover:bg-primary-container/20 hover:text-foreground"
+											/>
+										}
+									>
+										<MoreHorizontal className="size-4" aria-hidden />
+										<span className="sr-only">{t("任务操作")}</span>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent align="end" className="min-w-36">
+										<DropdownMenuItem
 											variant="destructive"
-											disabled={busy === "archive-task"}
-											onClick={() => void archiveCurrentTask()}
+											onClick={() => setConfirmingArchive(true)}
 										>
-											{busy === "archive-task" ? (
-												<Loader2 className="size-4 animate-spin" aria-hidden />
-											) : (
-												<Trash2 className="size-4" aria-hidden />
-											)}
-											{t("确认删除")}
-										</Button>
-									</div>
-								</div>
+											<Trash2 aria-hidden />
+											{t("删除任务")}
+										</DropdownMenuItem>
+									</DropdownMenuContent>
+								</DropdownMenu>
 							)}
 						</div>
 					</div>
@@ -615,6 +652,49 @@ export default function TaskExperienceDetail({
 					/>
 				</div>
 			</section>
+			{canArchive && confirmingArchive && (
+				<div className="fixed inset-0 z-80 flex items-end justify-center bg-background/45 p-0 backdrop-blur-sm sm:items-center sm:p-6">
+					<section
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="archive-task-title"
+						className="w-full max-w-md rounded-t-3xl border border-destructive/20 bg-card p-5 shadow-[0_28px_100px_rgb(0_0_0/45%)] sm:rounded-3xl sm:p-6"
+					>
+						<span className="flex size-10 items-center justify-center rounded-xl border border-destructive/20 bg-destructive/8 text-destructive">
+							<Trash2 className="size-4" aria-hidden />
+						</span>
+						<h2 id="archive-task-title" className="mt-4 font-semibold text-lg">
+							{t("确认删除这个任务？")}
+						</h2>
+						<p className="mt-2 text-muted-foreground text-sm leading-6">
+							{t("任务将从市场和工作台移除；工作流与审计记录会被安全保留。")}
+						</p>
+						<div className="mt-6 flex justify-end gap-2">
+							<Button
+								type="button"
+								variant="ghost"
+								disabled={busy === "archive-task"}
+								onClick={() => setConfirmingArchive(false)}
+							>
+								{t("取消")}
+							</Button>
+							<Button
+								type="button"
+								variant="destructive"
+								disabled={busy === "archive-task"}
+								onClick={() => void archiveCurrentTask()}
+							>
+								{busy === "archive-task" ? (
+									<Loader2 className="size-4 animate-spin" aria-hidden />
+								) : (
+									<Trash2 className="size-4" aria-hidden />
+								)}
+								{t("确认删除")}
+							</Button>
+						</div>
+					</section>
+				</div>
+			)}
 			{/* 任务标题、阶段导航和阶段内容共用 1280px 内容轨道，避免上下模块左右边界跳动。 */}
 			<div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-12">
 				{error && (
@@ -636,6 +716,34 @@ export default function TaskExperienceDetail({
 						</div>
 						<TaskConfiguration task={task} />
 					</div>
+				) : data.workflow === null &&
+					data.workflowPlan?.status === "draft" &&
+					selectedFlowStage === 1 ? (
+					<section
+						id="task-stage-panel"
+						role="tabpanel"
+						aria-labelledby="task-stage-tab-1"
+						className="task-stage-panel"
+					>
+						<WorkflowPlanEditor
+							key={`${data.workflowPlan.revision}:${data.workflowPlan.version}`}
+							stored={data.workflowPlan}
+							busy={busy !== null}
+							onGenerate={() =>
+								run("workflow-plan-generate", () =>
+									generateTaskWorkflowPlan(
+										task.id,
+										data.workflowPlan?.version ?? "",
+										key("workflow-plan-generate"),
+									),
+								)
+							}
+							onSave={async (plan) => {
+								await saveWorkflowPlan(plan);
+							}}
+							onConfirm={confirmWorkflowPlan}
+						/>
+					</section>
 				) : data.workflow !== null ? (
 					<section
 						key={selectedFlowStage}

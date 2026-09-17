@@ -2,7 +2,7 @@ import type { MastraModelConfig } from "@mastra/core/llm";
 
 import type { WorkflowAgentId, WorkflowStep } from "../../catalog.js";
 import type { WorkflowArtifact, WorkflowExecutionInput } from "../../domain.js";
-import type { JsonModelClient } from "../../model-client.js";
+import type { WorkflowModelClient } from "../../model-client.js";
 
 export type RunContext = Readonly<{
   signal?: AbortSignal;
@@ -19,7 +19,7 @@ export interface WorkflowExecutor {
 
 /** 内置 Agent 共用的基础设施依赖，不包含任何 Agent 自己的步骤或策略决策。 */
 export type WorkflowAgentDependencies = Readonly<{
-  jsonClient: JsonModelClient;
+  jsonClient: WorkflowModelClient;
   mastraModel: MastraModelConfig;
   modelStepTimeoutMs: number;
   now: () => Date;

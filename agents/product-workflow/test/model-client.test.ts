@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
-	DeepSeekJsonClient,
+	OpenAICompatibleModelClient,
 	ModelOutputError,
 	ModelProviderError,
 	parseGeneratedCodePageForDesign,
@@ -10,7 +10,7 @@ import {
 
 const OutputSchema = z.object({ title: z.string().min(1) }).strict();
 
-describe("DeepSeekJsonClient", () => {
+describe("OpenAICompatibleModelClient", () => {
 	it("把供应商网络故障压缩为不含原始消息的稳定类别", async () => {
 		const fetchImpl = vi.fn<typeof fetch>().mockRejectedValueOnce(
 			new Error("socket failed while sending private task content"),
@@ -327,8 +327,8 @@ describe("DeepSeekJsonClient", () => {
 	});
 });
 
-function createClient(fetchImpl: typeof fetch): DeepSeekJsonClient {
-	return new DeepSeekJsonClient({
+function createClient(fetchImpl: typeof fetch): OpenAICompatibleModelClient {
+	return new OpenAICompatibleModelClient({
 		baseUrl: "https://api.deepseek.test",
 		apiKey: "test-key",
 		modelName: "deepseek-test",

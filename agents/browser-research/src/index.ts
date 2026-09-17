@@ -6,6 +6,12 @@ import {
 import { BROWSER_RESEARCH_AGENT } from "./catalog.js";
 import { loadBrowserRuntimeConfig } from "./config.js";
 import { createBrowserResearchExecutor } from "./research-agent.js";
+import { createResearchSynthesisExecutor } from "./research-synthesis.js";
+import {
+	BraveResearchSourceDiscovery,
+	FallbackResearchSourceDiscovery,
+	SogouResearchSourceDiscovery,
+} from "./source-discovery.js";
 import { StagehandResearchSessionFactory } from "./stagehand-browser.js";
 
 /**
@@ -18,16 +24,23 @@ const artifactStore = new FileArtifactStore(
 	config.artifactDirectory,
 	config.publicBaseUrl,
 );
-const browserFactory = new StagehandResearchSessionFactory(
-	loadBrowserRuntimeConfig(process.env),
-);
+const runtimeConfig = loadBrowserRuntimeConfig(process.env);
+const browserFactory = new StagehandResearchSessionFactory(runtimeConfig);
 const server = createQuickAgentServer({
 	name: BROWSER_RESEARCH_AGENT.name,
 	...(config.apiKey === undefined ? {} : { apiKey: config.apiKey }),
 	artifactStore,
 	responseCacheDirectory: config.responseCacheDirectory,
 	executionTimeoutMs: 20 * 60_000,
-	execute: createBrowserResearchExecutor(browserFactory),
+	execute: createBrowserResearchExecutor(
+		browserFactory,
+		undefined,
+		new FallbackResearchSourceDiscovery([
+			new BraveResearchSourceDiscovery(),
+			new SogouResearchSourceDiscovery(),
+		]),
+		createResearchSynthesisExecutor(),
+	),
 });
 
 server.listen(config.port, config.host, () => {

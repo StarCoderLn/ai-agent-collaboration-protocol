@@ -136,6 +136,120 @@ integration("workflow selection PostgreSQL contract", () => {
 		});
 	});
 
+	it("批量采用推荐仅补齐未选阶段，并以单事务冻结准确总价且可幂等重放", async () => {
+		await withRollbackClient(pool, async (client) => {
+			const fixture = await insertSelectionFixture(client);
+			const repository = new PgWorkflowSelectionRepository(
+				asNestedTransactionDatabase(client),
+			);
+			await repository.select(
+				selectionInput(fixture, fixture.nodeIds[0], "batch-existing"),
+			);
+			const input = {
+				taskId: fixture.taskId,
+				actorId: PUBLISHER,
+				idempotencyKey: `batch-recommended:${randomUUID()}`,
+				selectedAt: SELECTED_AT,
+			};
+			const selected = await repository.selectRecommended(input);
+			expect(selected.body).toEqual({
+				taskId: fixture.taskId,
+				selections: [
+					{
+						nodeId: fixture.nodeIds[1],
+						agentId: fixture.agentId,
+						agreedAmountMinor: "20000000",
+					},
+					{
+						nodeId: fixture.nodeIds[2],
+						agentId: fixture.agentId,
+						agreedAmountMinor: "30000000",
+					},
+				],
+				selectedNodeCount: 3,
+				totalNodeCount: 3,
+				quotedTotalMinor: "60000000",
+				taskStatus: "awaiting_escrow",
+			});
+			await expect(repository.selectRecommended(input)).resolves.toEqual(
+				selected,
+			);
+
+			const facts = await client.query<{
+				task_status: string;
+				quoted_total_minor: string;
+				selected_nodes: string;
+				node_events: string;
+				task_events: string;
+				escrow_intents: string;
+			}>(
+				`SELECT task.status AS task_status,run.quoted_total_minor::text,
+				        (SELECT count(*)::text FROM task_workflow_nodes node
+				          WHERE node.workflow_run_id=run.id AND node.status='selected') AS selected_nodes,
+				        (SELECT count(*)::text FROM workflow_node_events event
+				          WHERE event.task_id=task.id AND event.event_type='candidate_selected') AS node_events,
+				        (SELECT count(*)::text FROM task_events event
+				          WHERE event.task_id=task.id AND event.event_type='task.workflow_quote_confirmed') AS task_events,
+				        (SELECT count(*)::text FROM escrow_intents intent
+				          WHERE intent.task_id=task.id) AS escrow_intents
+				   FROM tasks task JOIN task_workflow_runs run ON run.task_id=task.id
+				  WHERE task.id=$1`,
+				[fixture.taskId],
+			);
+			expect(facts.rows[0]).toEqual({
+				task_status: "awaiting_escrow",
+				quoted_total_minor: "60000000",
+				selected_nodes: "3",
+				node_events: "3",
+				task_events: "1",
+				escrow_intents: "0",
+			});
+		});
+	});
+
+	it("任一未选阶段缺少有效推荐时回滚全部批量选择", async () => {
+		await withRollbackClient(pool, async (client) => {
+			const fixture = await insertSelectionFixture(client);
+			await client.query(
+				"DELETE FROM job_distribution_records WHERE workflow_node_id=$1",
+				[fixture.nodeIds[1]],
+			);
+			const repository = new PgWorkflowSelectionRepository(
+				asNestedTransactionDatabase(client),
+			);
+			await expect(
+				repository.selectRecommended({
+					taskId: fixture.taskId,
+					actorId: PUBLISHER,
+					idempotencyKey: `batch-invalid:${randomUUID()}`,
+					selectedAt: SELECTED_AT,
+				}),
+			).rejects.toMatchObject({
+				code: "RECOMMENDED_CANDIDATE_NOT_FOUND",
+				statusCode: 409,
+			});
+			const unchanged = await client.query<{
+				task_status: string;
+				selected_nodes: string;
+				node_events: string;
+			}>(
+				`SELECT task.status AS task_status,
+				        count(*) FILTER (WHERE node.selected_agent_id IS NOT NULL)::text AS selected_nodes,
+				        (SELECT count(*)::text FROM workflow_node_events event
+				          WHERE event.task_id=task.id AND event.event_type='candidate_selected') AS node_events
+				   FROM tasks task JOIN task_workflow_runs run ON run.task_id=task.id
+				   JOIN task_workflow_nodes node ON node.workflow_run_id=run.id
+				  WHERE task.id=$1 GROUP BY task.status,task.id`,
+				[fixture.taskId],
+			);
+			expect(unchanged.rows[0]).toEqual({
+				task_status: "planning",
+				selected_nodes: "0",
+				node_events: "0",
+			});
+		});
+	});
+
 	it("allows reselection after a verified pre-broadcast failure and locks once Deposit is submitted", async () => {
 		await withRollbackClient(pool, async (client) => {
 			const fixture = await insertSelectionFixture(client);

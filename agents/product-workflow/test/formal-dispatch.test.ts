@@ -15,7 +15,7 @@ import {
   type FormalDispatchInput,
 } from "../src/formal-dispatch.js";
 import { WorkflowExecutorRouter, type RunContext, type WorkflowExecutor } from "../src/executors.js";
-import { ModelOutputError, ModelProviderError, type JsonModelClient } from "../src/model-client.js";
+import { ModelOutputError, ModelProviderError, type WorkflowModelClient } from "../src/model-client.js";
 
 const NOW = new Date("2026-08-23T08:00:00.000Z");
 
@@ -30,7 +30,7 @@ class RecordingExecutor implements WorkflowExecutor {
   }
 }
 
-class RecoveryRecordingClient implements JsonModelClient {
+class RecoveryRecordingClient implements WorkflowModelClient {
   jsonCallCount = 0;
   readonly codeMaxAttempts: Array<1 | 2 | undefined> = [];
 	readonly pageMaxAttempts: Array<1 | 2 | undefined> = [];
@@ -50,7 +50,7 @@ class RecoveryRecordingClient implements JsonModelClient {
     throw new Error("恢复模式不应重新调用分析或评审步骤");
   }
 
-  async generateCodeFiles(options: Parameters<JsonModelClient["generateCodeFiles"]>[0]) {
+  async generateCodeFiles(options: Parameters<WorkflowModelClient["generateCodeFiles"]>[0]) {
     this.codeMaxAttempts.push(options.maxAttempts);
     return {
       pageTsx: "export default function Page(){return <main><h1>恢复后的完整页面</h1></main>;}".padEnd(120, " "),
@@ -58,13 +58,13 @@ class RecoveryRecordingClient implements JsonModelClient {
     };
   }
 
-	async generateCodePage(options: Parameters<JsonModelClient["generateCodePage"]>[0]) {
+	async generateCodePage(options: Parameters<WorkflowModelClient["generateCodePage"]>[0]) {
 		this.pageMaxAttempts.push(options.maxAttempts);
 		this.pageTokenBudgets.push(options.maxOutputTokens);
 		return "export default function Page(){return <main><h1>恢复后的完整页面</h1></main>;}".padEnd(120, " ");
 	}
 
-	async generateCodeStyles(options: Parameters<JsonModelClient["generateCodeStyles"]>[0]) {
+	async generateCodeStyles(options: Parameters<WorkflowModelClient["generateCodeStyles"]>[0]) {
 		this.styleMaxAttempts.push(options.maxAttempts);
 		this.acceptedPageSeenByStyles = options.prompt.includes("恢复后的完整页面");
 		return ":root{--primary:#6255E7;--secondary:#64748B;--background:#F8FAFC;--text:#172033}body{margin:0;background:var(--background);color:var(--text)}main{padding:32px}@media(max-width:760px){main{padding:16px}}".padEnd(320, " ");

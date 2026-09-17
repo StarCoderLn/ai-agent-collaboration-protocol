@@ -17,7 +17,7 @@ export type CodeVisualRequirements = Readonly<{
 	colors: readonly string[];
 }>;
 
-const DeepSeekResponseSchema = z
+const OpenAICompatibleResponseSchema = z
   .object({
     choices: z
       .array(
@@ -32,7 +32,11 @@ const DeepSeekResponseSchema = z
   })
   .passthrough();
 
-export type JsonModelClient = {
+/**
+ * 产品工作流唯一的模型端口。领域 Agent 只依赖结构化生成和代码制品能力，不读取厂商
+ * SDK、URL 或密钥；DeepSeek 与 OpenAI 的差异全部收敛到兼容客户端和启动配置中。
+ */
+export type WorkflowModelClient = {
   generateJson<T>(options: {
     system: string;
     prompt: string;
@@ -312,10 +316,10 @@ function codeValidationError(path: PropertyKey[], message: string): z.ZodError {
 }
 
 /**
- * DeepSeek OpenAI-compatible API 的最小客户端。直连 Agent 和自研状态机使用它，确保
- * 对比的差异来自编排方式，而不是悄悄换了模型或 SDK 默认参数。
+ * OpenAI-compatible Chat Completions 的统一客户端。DeepSeek 与 OpenAI 共享这一窄
+ * 接口，上层只依赖经过 Zod 校验的结构化结果，供应商切换不会扩散到 Agent 或 LangGraph。
  */
-export class DeepSeekJsonClient implements JsonModelClient {
+export class OpenAICompatibleModelClient implements WorkflowModelClient {
   readonly #endpoint: URL;
   readonly #apiKey: string;
   readonly #modelName: string;
@@ -407,7 +411,7 @@ export class DeepSeekJsonClient implements JsonModelClient {
 		throw new ModelOutputError(lastFailure, lastIssues, "code_page");
 	}
 
-	async generateCodePage(options: Parameters<JsonModelClient["generateCodePage"]>[0]): Promise<string> {
+	async generateCodePage(options: Parameters<WorkflowModelClient["generateCodePage"]>[0]): Promise<string> {
 		return this.#generateValidatedCodePart(
 			options,
 			"code-page",
@@ -416,7 +420,7 @@ export class DeepSeekJsonClient implements JsonModelClient {
 		);
 	}
 
-	async generateCodeStyles(options: Parameters<JsonModelClient["generateCodeStyles"]>[0]): Promise<string> {
+	async generateCodeStyles(options: Parameters<WorkflowModelClient["generateCodeStyles"]>[0]): Promise<string> {
 		return this.#generateValidatedCodePart(
 			options,
 			"code-styles",
@@ -430,7 +434,7 @@ export class DeepSeekJsonClient implements JsonModelClient {
 	 * 重新请求该段，已经通过的上一段由状态机原样传给下一步，不再整批推倒重来。
 	 */
 	async #generateValidatedCodePart(
-		options: Parameters<JsonModelClient["generateCodePage"]>[0],
+		options: Parameters<WorkflowModelClient["generateCodePage"]>[0],
 		mode: "code-page" | "code-styles",
 		validationStage: "code_page" | "code_styles",
 		validate: (content: string) => string,
@@ -542,10 +546,10 @@ export class DeepSeekJsonClient implements JsonModelClient {
 			// 对平台统一暴露“供应商暂不可用”，避免把第三方细节变成公共协议。
 			throw new ModelProviderError("MODEL_PROVIDER_UNAVAILABLE");
     }
-		let parsedResponse: z.infer<typeof DeepSeekResponseSchema>;
+		let parsedResponse: z.infer<typeof OpenAICompatibleResponseSchema>;
 		try {
 			const rawResponse: unknown = await response.json();
-			parsedResponse = DeepSeekResponseSchema.parse(rawResponse);
+			parsedResponse = OpenAICompatibleResponseSchema.parse(rawResponse);
 		} catch {
 			// HTTP 成功但响应信封损坏仍属于供应商边界故障；它和模型正文不符合业务 Schema
 			// 是两类问题，后者会走 ModelOutputError 并允许一次受控重新生成。
@@ -553,7 +557,7 @@ export class DeepSeekJsonClient implements JsonModelClient {
 		}
 		const firstChoice = parsedResponse.choices[0];
 		if (firstChoice === undefined) {
-			throw new Error("DeepSeek response did not contain a choice");
+			throw new Error("model response did not contain a choice");
 		}
 		return {
 			content: firstChoice.message.content,
@@ -589,7 +593,7 @@ export class ModelOutputError extends Error {
 
 /**
  * 模型供应商边界只向上暴露两个稳定类别。类中不保存状态码、响应体或请求正文，确保上层
- * 即使直接结构化记录错误，也不会意外泄漏 DeepSeek 返回内容或用户任务。
+ * 即使直接结构化记录错误，也不会意外泄漏供应商返回内容或用户任务。
  */
 export class ModelProviderError extends Error {
 	readonly code: "MODEL_TIMEOUT" | "MODEL_PROVIDER_UNAVAILABLE";

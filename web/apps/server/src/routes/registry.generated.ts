@@ -73,21 +73,25 @@ import * as route69 from "./tasks/[id]/rework/route";
 import * as route70 from "./tasks/[id]/route";
 import * as route71 from "./tasks/[id]/status/route";
 import * as route72 from "./tasks/[id]/submit/route";
-import * as route73 from "./tasks/[id]/workflow/route";
-import * as route74 from "./tasks/[id]/workflow-feedback/route";
-import * as route75 from "./tasks/[id]/workflow-nodes/[nodeId]/accept/route";
-import * as route76 from "./tasks/[id]/workflow-nodes/[nodeId]/acceptance-preview/route";
-import * as route77 from "./tasks/[id]/workflow-nodes/[nodeId]/assignments/latest/route";
-import * as route78 from "./tasks/[id]/workflow-nodes/[nodeId]/assignments/route";
-import * as route79 from "./tasks/[id]/workflow-nodes/[nodeId]/candidate-exposures/route";
-import * as route80 from "./tasks/[id]/workflow-nodes/[nodeId]/candidates/route";
-import * as route81 from "./tasks/[id]/workflow-nodes/[nodeId]/execution-retry/route";
-import * as route82 from "./tasks/[id]/workflow-nodes/[nodeId]/feedback/route";
-import * as route83 from "./tasks/[id]/workflow-nodes/[nodeId]/preferences/route";
-import * as route84 from "./tasks/[id]/workflow-nodes/[nodeId]/rematch/route";
-import * as route85 from "./tasks/[id]/workflow-nodes/[nodeId]/rework/route";
-import * as route86 from "./tasks/route";
-import * as route87 from "./wallet/assets/route";
+import * as route73 from "./tasks/[id]/workflow/recommended-agents/route";
+import * as route74 from "./tasks/[id]/workflow/route";
+import * as route75 from "./tasks/[id]/workflow-feedback/route";
+import * as route76 from "./tasks/[id]/workflow-nodes/[nodeId]/accept/route";
+import * as route77 from "./tasks/[id]/workflow-nodes/[nodeId]/acceptance-preview/route";
+import * as route78 from "./tasks/[id]/workflow-nodes/[nodeId]/assignments/latest/route";
+import * as route79 from "./tasks/[id]/workflow-nodes/[nodeId]/assignments/route";
+import * as route80 from "./tasks/[id]/workflow-nodes/[nodeId]/candidate-exposures/route";
+import * as route81 from "./tasks/[id]/workflow-nodes/[nodeId]/candidates/route";
+import * as route82 from "./tasks/[id]/workflow-nodes/[nodeId]/execution-retry/route";
+import * as route83 from "./tasks/[id]/workflow-nodes/[nodeId]/feedback/route";
+import * as route84 from "./tasks/[id]/workflow-nodes/[nodeId]/preferences/route";
+import * as route85 from "./tasks/[id]/workflow-nodes/[nodeId]/rematch/route";
+import * as route86 from "./tasks/[id]/workflow-nodes/[nodeId]/rework/route";
+import * as route87 from "./tasks/[id]/workflow-plan/confirm/route";
+import * as route88 from "./tasks/[id]/workflow-plan/generate/route";
+import * as route89 from "./tasks/[id]/workflow-plan/route";
+import * as route90 from "./tasks/route";
+import * as route91 from "./wallet/assets/route";
 
 export const routeDefinitions: readonly RouteDefinition[] = [
 	{
@@ -456,78 +460,98 @@ export const routeDefinitions: readonly RouteDefinition[] = [
 		module: route72,
 	},
 	{
+		path: "/api/tasks/:id/workflow/recommended-agents",
+		methods: ["POST", "OPTIONS"],
+		module: route73,
+	},
+	{
 		path: "/api/tasks/:id/workflow",
 		methods: ["GET", "PATCH", "OPTIONS"],
-		module: route73,
+		module: route74,
 	},
 	{
 		path: "/api/tasks/:id/workflow-feedback",
 		methods: ["GET", "OPTIONS"],
-		module: route74,
+		module: route75,
 	},
 	{
 		path: "/api/tasks/:id/workflow-nodes/:nodeId/accept",
 		methods: ["POST", "OPTIONS"],
-		module: route75,
+		module: route76,
 	},
 	{
 		path: "/api/tasks/:id/workflow-nodes/:nodeId/acceptance-preview",
 		methods: ["GET", "OPTIONS"],
-		module: route76,
+		module: route77,
 	},
 	{
 		path: "/api/tasks/:id/workflow-nodes/:nodeId/assignments/latest",
 		methods: ["GET", "OPTIONS"],
-		module: route77,
+		module: route78,
 	},
 	{
 		path: "/api/tasks/:id/workflow-nodes/:nodeId/assignments",
 		methods: ["POST", "OPTIONS"],
-		module: route78,
+		module: route79,
 	},
 	{
 		path: "/api/tasks/:id/workflow-nodes/:nodeId/candidate-exposures",
 		methods: ["POST", "OPTIONS"],
-		module: route79,
+		module: route80,
 	},
 	{
 		path: "/api/tasks/:id/workflow-nodes/:nodeId/candidates",
 		methods: ["GET", "OPTIONS"],
-		module: route80,
+		module: route81,
 	},
 	{
 		path: "/api/tasks/:id/workflow-nodes/:nodeId/execution-retry",
 		methods: ["POST", "OPTIONS"],
-		module: route81,
+		module: route82,
 	},
 	{
 		path: "/api/tasks/:id/workflow-nodes/:nodeId/feedback",
 		methods: ["POST", "OPTIONS"],
-		module: route82,
+		module: route83,
 	},
 	{
 		path: "/api/tasks/:id/workflow-nodes/:nodeId/preferences",
 		methods: ["PATCH", "OPTIONS"],
-		module: route83,
+		module: route84,
 	},
 	{
 		path: "/api/tasks/:id/workflow-nodes/:nodeId/rematch",
 		methods: ["POST", "OPTIONS"],
-		module: route84,
+		module: route85,
 	},
 	{
 		path: "/api/tasks/:id/workflow-nodes/:nodeId/rework",
 		methods: ["POST", "OPTIONS"],
-		module: route85,
+		module: route86,
+	},
+	{
+		path: "/api/tasks/:id/workflow-plan/confirm",
+		methods: ["POST", "OPTIONS"],
+		module: route87,
+	},
+	{
+		path: "/api/tasks/:id/workflow-plan/generate",
+		methods: ["POST", "OPTIONS"],
+		module: route88,
+	},
+	{
+		path: "/api/tasks/:id/workflow-plan",
+		methods: ["GET", "PUT", "OPTIONS"],
+		module: route89,
 	},
 	{
 		path: "/api/tasks",
 		methods: ["POST", "OPTIONS"],
-		module: route86,
+		module: route90,
 	},
 	{
 		path: "/api/wallet/assets",
 		methods: ["GET", "OPTIONS"],
-		module: route87,
+		module: route91,
 	},
 ];

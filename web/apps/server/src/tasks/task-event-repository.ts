@@ -135,6 +135,8 @@ export async function emitTaskEvent(
  * 任意历史节点，而任务最近分配的往往是另一个下游 Agent。调用方必须先在事务内锁定
  * 工作流节点并解析其当前 assignment，再把明确的 Agent ID 传入这里。事件、投递和
  * 必要的评分刷新请求仍在同一事务落库，因此接口成功就意味着异步副作用具备恢复依据。
+ * HMAC Agent 接收 `/webhook` 事件；HTTP JSON Agent 的定向返工则复用同一 outbox，
+ * 由分发引擎把数据库重建的 dispatch.v1 发送到原 `/run` 端点并回传快速结果。
  */
 export async function emitTaskEventToAgent(
 	db: QueryExecutor,
@@ -151,12 +153,14 @@ export async function emitTaskEventToAgent(
        task_event_id,agent_id,endpoint,idempotency_key,status,next_attempt_at
      )
      SELECT inserted_event.id,agent.id,
-            regexp_replace(agent.service_endpoint, '/+$', '') || '/webhook',
+            CASE WHEN agent.integration_mode='aicp_hmac'
+                 THEN regexp_replace(agent.service_endpoint, '/+$', '') || '/webhook'
+                 ELSE agent.service_endpoint END,
             'webhook:' || $1::text || ':' || inserted_event.id::text || '-' || agent.id::text,
             'pending',$5
        FROM inserted_event
        JOIN agents agent ON agent.id=$6
-                         AND agent.integration_mode='aicp_hmac'
+                         AND agent.integration_mode IN ('aicp_hmac','http_json')
        ON CONFLICT (idempotency_key) DO NOTHING
        RETURNING task_event_id
      )

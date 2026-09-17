@@ -30,6 +30,16 @@ integration("escrow PostgreSQL synchronization", () => {
 	});
 	afterEach(async () => {
 		for (const taskId of taskIds.splice(0)) {
+			// 本机可能同时运行 Dispatch/Webhook worker。它会在测试断言完成前后消费
+			// task_events 并创建投递或评分刷新子记录，所以清理不能假设事件无人引用。
+			await pool.query(
+				"DELETE FROM webhook_deliveries WHERE task_event_id IN (SELECT id FROM task_events WHERE task_id=$1)",
+				[taskId],
+			);
+			await pool.query(
+				"DELETE FROM agent_score_refresh_requests WHERE reason_event_id IN (SELECT id FROM task_events WHERE task_id=$1)",
+				[taskId],
+			);
 			await pool.query("DELETE FROM task_events WHERE task_id=$1", [taskId]);
 			await pool.query("DELETE FROM refund_attempts WHERE task_id=$1", [
 				taskId,
@@ -48,6 +58,24 @@ integration("escrow PostgreSQL synchronization", () => {
 				"UPDATE task_workflow_nodes SET selected_agent_id=NULL,selection_record_id=NULL,agreed_amount_minor=NULL WHERE task_id=$1",
 				[taskId],
 			);
+			// 托管确认会激活正式节点并创建 assignment。候选记录同时被节点和 assignment
+			// 引用，因此必须先清理派发与状态迁移子事实，再删除 assignment；直接删除候选
+			// 会让 afterEach 自己触发外键错误，并把测试夹具泄漏到后续用例。
+			await pool.query(
+				"DELETE FROM dispatch_attempts WHERE assignment_id IN (SELECT id FROM task_assignments WHERE task_id=$1)",
+				[taskId],
+			);
+			await pool.query(
+				"DELETE FROM workflow_node_transition_inbox WHERE task_id=$1",
+				[taskId],
+			);
+			await pool.query(
+				"DELETE FROM workflow_node_transition_outbox WHERE task_id=$1",
+				[taskId],
+			);
+			await pool.query("DELETE FROM task_assignments WHERE task_id=$1", [
+				taskId,
+			]);
 			await pool.query(
 				"DELETE FROM job_distribution_records WHERE task_id=$1",
 				[taskId],
@@ -65,6 +93,18 @@ integration("escrow PostgreSQL synchronization", () => {
 			await pool.query("DELETE FROM tasks WHERE id=$1", [taskId]);
 		}
 		for (const agentId of agentIds.splice(0)) {
+			// 健康检查和评分 worker 也可能在用例运行期间为临时 Agent 写入派生状态。
+			// 这些记录只属于随机测试 Agent，必须先删掉，不能通过保留孤立 Agent 绕过外键。
+			await pool.query(
+				"DELETE FROM agent_health_probe_schedule WHERE agent_id=$1",
+				[agentId],
+			);
+			await pool.query("DELETE FROM agent_score_snapshots WHERE agent_id=$1", [
+				agentId,
+			]);
+			await pool.query("DELETE FROM agent_status_config WHERE agent_id=$1", [
+				agentId,
+			]);
 			await pool.query("DELETE FROM agents WHERE id=$1", [agentId]);
 		}
 		await pool.query(

@@ -12,6 +12,7 @@ const FILTER_REASON_MESSAGES = {
 	deadline_passed: "任务截止时间已过",
 	cannot_meet_deadline: "预计无法按时交付",
 	probation_budget_exceeded: "Agent 当前报价超出冷启动风险上限",
+	incompatible_workflow_contract: "Agent 不支持该阶段的输入与输出格式",
 } as const satisfies Readonly<Record<string, MessageId>>;
 
 export function matchingFilterReasonMessageId(reason: string): MessageId {

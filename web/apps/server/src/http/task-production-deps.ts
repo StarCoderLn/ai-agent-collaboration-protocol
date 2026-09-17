@@ -26,7 +26,7 @@ import {
 	type TaskCommandDeps,
 	updateOwnedTaskMatchCriteria,
 } from "../tasks/task-service";
-import { ensureFormalWorkflow } from "../workflows/workflow-repository";
+import { createInitialWorkflowPlan } from "../workflows/workflow-plan-repository";
 import type { TaskHttpDeps } from "./task-handlers";
 
 export function createTaskCommandDeps(client: PoolClientLike): TaskCommandDeps {
@@ -36,7 +36,8 @@ export function createTaskCommandDeps(client: PoolClientLike): TaskCommandDeps {
 		auditLogWriter: new PgAuditLogWriter(client),
 		eventWriter: new PgTaskEventWriter(client),
 		workflowPlanner: {
-			ensure: (taskId) => ensureFormalWorkflow(client, taskId),
+			ensure: (taskId, actorId) =>
+				createInitialWorkflowPlan(client, taskId, actorId),
 		},
 		now: () => new Date(),
 	};

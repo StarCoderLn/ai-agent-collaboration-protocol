@@ -27,6 +27,29 @@ const deck = PresentationDeckSchema.parse({
 });
 
 describe("PPT 生成 Agent", () => {
+	it("路演设计阶段只返回可供下游继承的结构化 DesignSpec", async () => {
+		const planner: PresentationPlanner = { plan: async () => deck };
+		const store = { write: async () => ({ url: "unused", sizeBytes: "0" }) } satisfies Pick<
+			FileArtifactStore,
+			"write"
+		>;
+		const result = await createPresentationAgentExecutor(planner, store)(
+			{
+				task: { title: "设计新能源汽车路演" },
+				workflow: { outputContract: "DesignSpec" },
+				upstreamArtifacts: [],
+			},
+			new AbortController().signal,
+		);
+
+		expect(result.artifacts).toEqual([
+			expect.objectContaining({
+				type: "json",
+				content: { schemaVersion: "aicp.presentation-design.v1", deck },
+			}),
+		]);
+	});
+
 	it("同一份规划同时返回 HTML 预览和可下载 PPTX", async () => {
 		const planner: PresentationPlanner = { plan: async () => deck };
 		const store = {
@@ -47,6 +70,65 @@ describe("PPT 生成 Agent", () => {
 			mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 		});
 		expect(Number(result.artifacts[1]?.sizeBytes)).toBeGreaterThan(1_000);
+	});
+
+	it("制作阶段直接继承已验收 DesignSpec，不再次调用模型重做结构", async () => {
+		let planned = false;
+		const planner: PresentationPlanner = {
+			plan: async () => {
+				planned = true;
+				return deck;
+			},
+		};
+		const store = {
+			write: async () => ({ url: "http://127.0.0.1:9302/artifacts/deck.pptx", sizeBytes: "2048" }),
+		} satisfies Pick<FileArtifactStore, "write">;
+		const result = await createPresentationAgentExecutor(planner, store)(
+			{
+				task: { title: "制作路演" },
+				workflow: { outputContract: "PresentationArtifact" },
+				upstreamArtifacts: [
+					{
+						outputContract: "DesignSpec",
+						mimeType: "application/json",
+						bodyOrFileRef: JSON.stringify({ schemaVersion: "aicp.presentation-design.v1", deck }),
+					},
+				],
+			},
+			new AbortController().signal,
+		);
+
+		expect(planned).toBe(false);
+		expect(result.artifacts).toHaveLength(2);
+	});
+
+	it("质检阶段要求同时存在可打开预览与可编辑 PPTX", async () => {
+		const planner: PresentationPlanner = { plan: async () => deck };
+		const store = { write: async () => ({ url: "unused", sizeBytes: "0" }) } satisfies Pick<
+			FileArtifactStore,
+			"write"
+		>;
+		const result = await createPresentationAgentExecutor(planner, store)(
+			{
+				task: { title: "交付质检" },
+				workflow: { outputContract: "ReviewReport" },
+				upstreamArtifacts: [
+					{
+						outputContract: "PresentationArtifact",
+						mimeType: "text/html",
+						bodyOrFileRef: '<section class="slide active"></section>',
+					},
+					{
+						outputContract: "PresentationArtifact",
+						mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+						bodyOrFileRef: "http://127.0.0.1:9302/artifacts/deck.pptx",
+					},
+				],
+			},
+			new AbortController().signal,
+		);
+
+		expect(result.artifacts[0]?.content).toMatchObject({ passed: true });
 	});
 
 	it("HTML 预览会转义模型文案", () => {

@@ -74,6 +74,11 @@ export interface TaskDispatchOperations {
 		actorId: string,
 		idempotencyKey: string | undefined,
 	): Promise<TaskServiceResult>;
+	confirmRecommendedWorkflowCandidates(
+		taskId: string,
+		actorId: string,
+		idempotencyKey: string | undefined,
+	): Promise<TaskServiceResult>;
 	latestWorkflowNodeAssignment(
 		taskId: string,
 		nodeId: string,
@@ -240,6 +245,17 @@ export function createTaskDispatchHandlers(deps: TaskDispatchHttpDeps) {
 					),
 			);
 		},
+		confirmRecommendedWorkflowCandidates: (
+			request: Request,
+			context: TaskDispatchRouteContext,
+		) =>
+			authenticated(request, context, deps, (taskId, actorId) =>
+				deps.service.confirmRecommendedWorkflowCandidates(
+					taskId,
+					actorId,
+					request.headers.get("idempotency-key") ?? undefined,
+				),
+			),
 	};
 }
 

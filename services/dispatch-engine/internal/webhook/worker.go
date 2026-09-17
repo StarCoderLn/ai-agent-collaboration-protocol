@@ -23,6 +23,7 @@ type Delivery struct {
 	StatusVersion       string
 	Payload             []byte
 	EventCreatedAt      time.Time
+	IntegrationMode     string
 	EncryptedCredential string
 }
 
@@ -85,7 +86,19 @@ func (w *Worker) RunOnce(ctx context.Context, limit int) (RunResult, error) {
 	result := RunResult{Claimed: len(deliveries)}
 	var combined error
 	for _, delivery := range deliveries {
-		secret, deliveryErr := w.Decryptor.DecryptCredential(ctx, delivery.EncryptedCredential)
+		secret := ""
+		var deliveryErr error
+		integrationMode := delivery.IntegrationMode
+		if integrationMode == "" {
+			integrationMode = "aicp_hmac"
+		}
+		// HTTP JSON 允许公开端点不配置凭证；HMAC Agent 则必须解密签名密钥。
+		// 有密文时两种模式都解密，HTTP JSON 会把它作为提供者已有的 Bearer Token。
+		if delivery.EncryptedCredential != "" || delivery.IntegrationMode == "" {
+			secret, deliveryErr = w.Decryptor.DecryptCredential(ctx, delivery.EncryptedCredential)
+		} else if integrationMode == "aicp_hmac" {
+			deliveryErr = &DeliveryError{Code: "AGENT_CREDENTIAL_UNAVAILABLE", Retryable: true}
+		}
 		if deliveryErr != nil {
 			deliveryErr = &DeliveryError{Code: "AGENT_CREDENTIAL_UNAVAILABLE", Retryable: true}
 		} else {

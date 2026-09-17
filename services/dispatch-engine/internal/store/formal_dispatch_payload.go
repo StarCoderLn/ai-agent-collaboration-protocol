@@ -57,14 +57,13 @@ func loadFormalDispatchPayload(
 		      'outputContract',upstream.output_contract,'resultId',result.id,
 		      'artifactKind',result.artifact_kind,'mimeType',result.mime_type,
 		      'bodyOrFileRef',result.body_or_file_ref,'generatedAt',result.generated_at
-		    ) ORDER BY upstream.position_index,upstream.id)
+		    ) ORDER BY upstream.position_index,upstream.id,result.result_index)
 		      FROM ancestors
 		      JOIN task_workflow_nodes upstream ON upstream.id=ancestors.node_id
-		      JOIN LATERAL (
-		        SELECT current_result.* FROM workflow_node_results current_result
-		         WHERE current_result.workflow_node_id=upstream.id AND current_result.is_latest
-		         ORDER BY current_result.submitted_at DESC,current_result.id DESC LIMIT 1
-		      ) result ON TRUE
+		      -- 一个节点可以同时交付预览、机器可读清单和可下载文件。下游必须收到当前
+		      -- 批次的全部制品，不能按随机 UUID 只挑一个后让质检结果随数据库顺序漂移。
+		      JOIN workflow_node_results result
+		        ON result.workflow_node_id=upstream.id AND result.is_latest
 		     WHERE upstream.status='accepted'
 		  ),'[]'::jsonb) END,
 		  'task',jsonb_build_object(

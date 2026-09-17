@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { z } from "zod";
 import { WorkflowExecutorRouter } from "../src/executors.js";
-import type { JsonModelClient } from "../src/model-client.js";
+import type { WorkflowModelClient } from "../src/model-client.js";
 
 const REQUIREMENTS_DRAFT = {
   title: "Agent 工作流体验",
@@ -31,7 +31,7 @@ const REQUIREMENTS_DRAFT = {
   ],
 };
 
-class QueuedJsonClient implements JsonModelClient {
+class QueuedJsonClient implements WorkflowModelClient {
   readonly calls: string[] = [];
 
   constructor(private readonly values: unknown[]) {}
@@ -56,14 +56,14 @@ class QueuedJsonClient implements JsonModelClient {
 		return value as { pageTsx: string; globalsCss: string };
 	}
 
-	async generateCodePage(options: Parameters<JsonModelClient["generateCodePage"]>[0]) {
+	async generateCodePage(options: Parameters<WorkflowModelClient["generateCodePage"]>[0]) {
 		this.calls.push(options.prompt);
 		const value = this.values.shift();
 		if (typeof value !== "string") throw new Error("queued code page must be a string");
 		return value;
 	}
 
-	async generateCodeStyles(options: Parameters<JsonModelClient["generateCodeStyles"]>[0]) {
+	async generateCodeStyles(options: Parameters<WorkflowModelClient["generateCodeStyles"]>[0]) {
 		this.calls.push(options.prompt);
 		const value = this.values.shift();
 		if (typeof value !== "string") throw new Error("queued code styles must be a string");
