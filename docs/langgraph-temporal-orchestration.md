@@ -2,6 +2,12 @@
 
 项目采用分层编排：LangGraph 管理单个 Agent 内部的不确定执行图，Temporal 管理跨服务、可长时间运行的业务步骤。PostgreSQL 保存任务与准入业务事实，智能合约保存资金最终事实；页面不会从 checkpoint 或 Temporal History 猜测业务状态。
 
+2026-09-16 增加 AI 工作流规划：LangGraph 还负责“生成草案 → 本地 DAG 审查 → 最多一次修正”，
+但生成结果仍只是版本化草案。发布者确认后，Marketplace API 才将其固化到正式工作流表并开放
+逐节点匹配。本次规划不调用 Temporal；当前 Temporal 继续承担自动准入和匹配 V2 夜间训练，
+正式任务 DAG 仍由 PostgreSQL 状态机与 Dispatch Engine 推进。结构化模型客户端通过统一
+配置支持 DeepSeek 与 OpenAI，供应商输出始终经过相同 Zod 和确定性拓扑校验。
+
 ## LangGraph Coding Agent
 
 `agents/product-workflow/src/agents/coding/langgraph-agent.ts` 是正式候选 `code-langgraph`，使用独立平台 UUID。内部图把 TSX 与 CSS 分为两个节点，可信输出失败只局部重做一次；基础设施失败后从最后一个成功检查点继续。
@@ -54,8 +60,20 @@ LangGraph 和 Temporal 的代码接入、本机真实服务运行及中断恢复
 
 ## 已执行的真实验证
 
-- Product Workflow 普通回归 71 项通过，真实模型与 PostgreSQL 恢复 2 项集成用例默认跳过；
-  TypeScript 检查与构建通过。
+- 工作流规划使用固定新能源汽车调研需求完成真实 DeepSeek 调用，生成 7 个合法阶段；浏览器
+  完成节点编辑、新增第 8 阶段、创建依赖、保存与确认，并切换到正式 Agent 分配图。
+- PostgreSQL 核对确认 1 个正式 run、8 个节点、8 条业务依赖，候选和托管记录均为 0；事务
+  集成测试覆盖三类修订、版本冲突、确认锁定和回滚隔离。
+- 2026-09-17 将规划协议升级为 v2：LangGraph 只能使用 active Agent 实时声明的完整契约组合，
+  Marketplace API 在确认事务中再次执行能力门禁。历史错误图仅在没有选人、托管和执行事实时
+  才能先归档再恢复为草案；有分配或托管记录的集成测试路径均明确拒绝恢复。
+- 上述“候选和托管为 0”只证明确认边界没有提前产生交易事实。随后同一验收任务删除未执行
+  的空占位节点，剩余 7 个真实阶段完成研究、路演结构、HTML/PPTX 交付与质检；12 USDC
+  Sepolia 托管最终原子结算 10.5 USDC 毛额、平台费 0.35 USDC，并退款 1.5 USDC，任务状态为
+  `settled`，未解决对账告警为 0。
+
+- Product Workflow 全量回归 77 项通过、3 项需显式环境的真实用例默认跳过；TypeScript
+  检查与构建通过。AI 工作流规划的 PostgreSQL 生命周期另以本机事务集成测试通过。
 - 经单独授权后，`code-langgraph` 使用固定合法 DesignSpec 完成一次真实 DeepSeek 冒烟：生成
   `app/page.tsx` 与 `app/globals.css`，并通过标题、四个颜色 token、响应式规则和可信源码校验。
   该用例没有调用 Design Agent，测试输出仅写入系统临时目录。

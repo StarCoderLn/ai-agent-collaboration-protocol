@@ -2,11 +2,11 @@
 
 ## 本次 PRD（2026-08-20）切分及后续技术增强
 
-来源需求文档：`docs/prd.md`（AI Agent 协作协议平台 MVP）。范围：完整 MVP（对应 PRD 第 11 节 P1-P4），链选型：**Ethereum**（用户已确认，Solana 不在 MVP 范围）。`[2026-08-22 变更]` 14.ops-backend-and-metrics、15.agent-sandbox-admission、16.agent-wallet-rebind 被移出 MVP 主闭环；当前 MVP 范围为 **13 个 feature**（1-13）。15 后续重新启动，并于 2026-09-04 按自动准入方案完成 T-001～T-006，不再依赖 14 的 RBAC；该 P5 能力的完成不改变原 MVP 范围。17 是 2026-09-12 新增并完成真实恢复验收的 LangGraph/Temporal 技术增强。18 是 2026-09-13 新增的 Stagehand Browser Agent 与自然语言浏览器验收增强；两者均不改变原 MVP 编号和完成口径。
+来源需求文档：`docs/prd.md`（AI Agent 协作协议平台 MVP）。范围：完整 MVP（对应 PRD 第 11 节 P1-P4），链选型：**Ethereum**（用户已确认，Solana 不在 MVP 范围）。`[2026-08-22 变更]` 14.ops-backend-and-metrics、15.agent-sandbox-admission、16.agent-wallet-rebind 被移出 MVP 主闭环；当前 MVP 范围为 **13 个 feature**（1-13）。15 后续重新启动，并于 2026-09-04 按自动准入方案完成 T-001～T-006，不再依赖 14 的 RBAC；该 P5 能力的完成不改变原 MVP 范围。17 是 2026-09-12 新增并完成真实恢复验收的 LangGraph/Temporal 技术增强。18 是 2026-09-13 新增的 Stagehand Browser Agent 与自然语言浏览器验收增强。19 是 2026-09-16 完成的 AI 工作流规划、版本化草案与受约束 DAG 编辑增强；三者均不改变原 MVP 编号和完成口径。
 
 ## 当前计划概览
 
-正式任务承载多 Agent 流程：发布需求后立即创建持久化工作流并为每个节点生成候选；
+正式任务承载多 Agent 流程：发布需求后先创建可恢复的初始草案，LangGraph 根据自由文本生成并审查 AI 草案，用户在 React Flow 中编辑节点和依赖；确认后才固化正式工作流并为每个节点生成候选；
 用户先查看候选价格区间，可选填写预算上限调整排序，并修正平台从自然语言识别出的能力；
 随后比较履约证据、选择 Agent 并冻结节点报价，所有节点选择完成后才按准确报价总和托管
 USDC。托管确认后按 DAG 依赖创建正式 assignment 并派发，上游已验收完整制品成为下游
@@ -14,7 +14,7 @@ USDC。托管确认后按 DAG 依赖创建正式 assignment 并派发，上游�
 一次性原子结算。选择不占用 Agent、不触发派发，assignment 才代表执行事实。
 工作台已经展示当前网络、ETH、USDC 和 YD 余额；启动期用户可质押 100 YD 成为 DAO 仲裁候选成员，
 旧部署按固化种子分案并排除任务参与方。独立链上案件、Chainlink VRF、申诉与独立奖励池已经部署到 Sepolia，
-体验库已迁移至 0054，DAO 最后一次结构变更仍为 0050；0051～0054 的匹配、模型审计与评分刷新迁移未修改 DAO 数据。8 个创始钱包已质押并同步。真实案件的 VRF、付费申诉、终审结算、异常恢复、保证金领取、在线新增奖励通知、分页记录及真实文件附件跨端验收均已闭环，详见 [链上仲裁进度](../docs/dao-chain-arbitration.md)。当前制品与状态契约见
+体验库已迁移至 0058，DAO 最后一次结构变更仍为 0050；0051～0058 的匹配、模型审计、评分刷新、工作流规划与安全恢复迁移未修改 DAO 数据。8 个创始钱包已质押并同步。真实案件的 VRF、付费申诉、终审结算、异常恢复、保证金领取、在线新增奖励通知、分页记录及真实文件附件跨端验收均已闭环，详见 [链上仲裁进度](../docs/dao-chain-arbitration.md)。当前制品与状态契约见
 [`docs/workflow-artifacts.md`](../docs/workflow-artifacts.md)。
 
 ## 已完成的架构纠偏（2026-09-15）
@@ -66,6 +66,7 @@ USDC。托管确认后按 DAG 依赖创建正式 assignment 并派发，上游�
 | 16 | agent-wallet-rebind | 钱包换绑：新钱包签名验证所有权 + 站外通知 + 冷静期，冷静期内结算仍走旧地址 | 1, 2 | **延后至 P5**（用户确认，2026-08-22；不阻塞其他 feature，无 feature 反向依赖 16） |
 | 17 | durable-agent-orchestration | LangGraph Coding 持久恢复与 Temporal 自动准入编排 | 1, 9, 15 | **开发与真实本机验收完成**（面试使用本机 Dev Server；线上需要时再选择部署与运维方案） |
 | 18 | stagehand-browser-agent | Stagehand 网页调研助手与自然语言页面验收 | 1, 17 | **开发与真实 Sepolia 闭环验收完成**：真实公网研究、页面 `observe`/`extract`、市场目录、本机服务健康，以及匹配、托管、派发、双格式交付、人工验收和结算均已通过 |
+| 19 | ai-workflow-planning | 自由文本生成、版本化草案、受约束 DAG 编辑与确认固化 | 4, 8, 17 | **开发与 Sepolia 闭环验收完成**：规划阶段证明确认前不生成交易事实；确认后 7 个真实阶段完成执行、交付与验收，12 USDC 托管已原子结算 10.5 USDC 并退款 1.5 USDC |
 
 最终匹配 V2 由一个管道组成：先执行资格、币种、时限和冷启动资金硬约束，再用 OpenAI
 `text-embedding-3-small` 与 pgvector 召回 30 名，最后由 Wide & Deep + ESMM 预测

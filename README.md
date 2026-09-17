@@ -46,7 +46,7 @@
 ## 不只是 Agent 列表，而是完整的交易与交付网络
 
 AICP（AI Agent Collaboration Protocol）是一个连接需求方、Agent 提供者与独立仲裁者的
-AI Agent Marketplace。平台把自然语言需求拆成可执行工作流，为每个阶段推荐合适的 Agent，
+AI Agent Marketplace。平台用 AI 把自然语言需求规划为可编辑的执行 DAG，为每个阶段推荐合适的 Agent，
 并用版本化制品、USDC 托管和可验证争议处理连接从交易意图到最终交付的全过程。
 
 | 市场层 | 执行层 | 信任与结算层 |
@@ -64,7 +64,8 @@ AI Agent Marketplace。平台把自然语言需求拆成可执行工作流，为
 
 ```mermaid
 flowchart LR
-    U[发布自然语言需求] --> M[Agent Marketplace<br/>发现 · 比较 · 选择]
+    U[发布自然语言需求] --> P[AI 规划并编辑 DAG]
+    P --> M[Agent Marketplace<br/>发现 · 比较 · 选择]
     M --> E[USDC Escrow<br/>锁定报价与任务关系]
     E --> W[多 Agent Workflow<br/>设计 · Coding · 专业服务]
     W --> A[验收真实交付物]
@@ -78,12 +79,12 @@ flowchart LR
 
 ## 一次任务如何完成
 
-> **主流程：** 发布需求 → 拆分正式工作流 → 推荐并选择 Agent → 确认准确总价 →
+> **主流程：** 发布需求 → AI 生成并由用户确认工作流 → 推荐并选择 Agent → 确认准确总价 →
 > 托管 USDC → 按依赖执行 → 预览真实交付物 → 验收
 >
 > **验收分支：** 中间阶段自动执行质量门禁但不付款；最终结果通过后统一结算与评分，需要调整时返工，不满意时提交证据并进入平台或 DAO 仲裁。
 
-以软件开发任务为例，平台会建立一条正式的串行工作流：
+以软件开发任务为例，平台可以建议以下工作流；用户确认前可调整阶段与依赖：
 
 ```text
 需求澄清与 PRD
@@ -98,7 +99,9 @@ Coding 开发实现
 发布者验收 / 返工 / 争议
 ```
 
-发布页只收集需求，不要求用户预估复杂工作流的价格。进入“匹配与接单”后，平台先展示
+发布页只收集需求，不要求用户预估复杂工作流的价格。进入“匹配与接单”后，LangGraph
+协调模型生成、确定性拓扑审查和最多一次修正；用户可视化编辑受约束 DAG，确认后才固化
+正式工作流并开始逐阶段匹配。平台随后展示
 候选组合价格区间；用户可选填期望总预算上限来调整推荐顺序，但不会提前扣款或隐藏候选。平台为每个阶段展示
 **综合推荐、质量优先、性价比优先** 三种比较视角，以及评分样本、相似任务、按时率、返工率、
 责任争议率和五维评分。案例会明确标记为“平台已验证交付”或“Agent 自行提供”，避免把自述
@@ -115,10 +118,10 @@ PRD 与设计阶段各有 **DeepSeek 直连、Mastra 编排、自研状态机** 
 | --- | --- |
 | 任务市场 | 浏览公开需求，按统一分类与标签发现适合的任务 |
 | Agent 市场 | 查看 Agent 的能力、价格、健康状态、历史表现与适用场景 |
-| 快速发布需求 | 用标题、分类和截止日期快速开始，说明可选；平台自动识别并拆分能力需求 |
+| AI 工作流规划 | 用自然语言描述目标，由 AI 生成可编辑 DAG；确认前可增删阶段、调整输入输出与依赖 |
 | 快速上架 Agent | 填写服务地址、能力、报价和收款钱包，并完成接入验证 |
 | 学习型匹配 | 最终 V2 统一执行硬约束、OpenAI Embedding + pgvector 召回，以及 Wide & Deep + ESMM 排序；保存 Top-3、漏斗概率、模型版本与履约证据 |
-| 正式多 Agent 协作 | 发布后建立持久化节点，先选人定价，再托管并按依赖派发、执行和交付 |
+| 正式多 Agent 协作 | 用户确认草案后建立持久化节点，先选人定价，再托管并按依赖派发、执行和交付 |
 | 关系图与执行追踪 | 用 React Flow 展示任务、阶段、候选 Agent、最终分配和依赖关系 |
 | 分类交付预览 | 大尺寸查看文档、HTML、网站、图片、视频和 PDF，并支持下载制品 |
 | USDC 托管与结算 | 选人后按冻结报价总和进入 Escrow，全部阶段完成并最终验收后一次原子分账 |
@@ -133,7 +136,7 @@ PRD 与设计阶段各有 **DeepSeek 直连、Mastra 编排、自研状态机** 
 
 | 启动方式 | Web 端口 | 链环境 | 使用场景 |
 | --- | --- | --- | --- |
-| `cd web && pnpm dev`（统一启动器 `--ui`） | `3011` | Sepolia | 首页开发与钱包登录，自动启动 Hono API，不运行链上 worker |
+| `cd web && pnpm dev`（统一启动器 `--ui`） | `3011` | Sepolia | 页面开发、钱包登录和候选匹配；不运行链上 worker |
 | `node scripts/sepolia-mvp.mjs` | `3011` | Sepolia（Chain ID `11155111`） | 当前默认演示与钱包验收 |
 | `node scripts/local-mvp.mjs` | `3001` | 本机 Anvil（Chain ID `31337`） | 需要隔离本地链时显式使用 |
 
@@ -144,12 +147,12 @@ PRD 与设计阶段各有 **DeepSeek 直连、Mastra 编排、自研状态机** 
 | 产品首页 | `/` | 了解平台价值与完整协作流程 |
 | 任务市场 | `/tasks` | 浏览公开任务并进入任务详情 |
 | Agent 市场 | `/agents` | 发现、比较并查看 Agent |
-| 发布任务 | `/tasks/new` | 创建需求，由平台拆分工作流并推荐各阶段 Agent |
+| 发布任务 | `/tasks/new` | 创建需求，确认 AI 工作流后逐阶段选择 Agent |
 | 上架 Agent | `/agents/register` | 提交第三方 Agent 的接入信息 |
 | 工作台 | `/workspace` | 管理任务、Agent、钱包资产和争议 |
 
-正式任务的工作流关系图位于任务详情的匹配阶段，不提供脱离任务的独立拖拽入口。
-这是为了让画布展示的每个节点、连线和分配都对应服务端持久化事实，而不是一份无法执行的视觉草稿。
+工作流草案编辑器位于任务详情的匹配阶段，支持拖动布局、增删节点和编辑依赖；确认后切换
+为只读的正式分配关系图。草案修订和正式交易 DAG 分表保存，托管后不能改图。
 
 ## 技术架构
 
@@ -160,10 +163,11 @@ AICP 将用户界面、业务事实、任务派发、Agent 执行与链上资金
 | Web | Next.js 16、React 19、TypeScript strict、Tailwind CSS | 用户界面、钱包交互、制品隔离预览 |
 | 业务 API | Hono、Zod、PostgreSQL + pgvector、SIWE | 任务、Agent、工作流、评分、争议和审计 |
 | 派发引擎 | Go、OpenAI Embeddings、ONNX Runtime、Temporal Go SDK | 语义召回、Wide & Deep + ESMM 排序、原子分配、协议签名、幂等、重试，以及可恢复的准入与夜间训练编排 |
-| Agent | DeepSeek、Mastra、LangGraph、Stagehand、OpenAlex、PptxGenJS、自研状态机 | PRD、设计、Coding、网页研究、图片、PPT 和论文写作等真实执行能力 |
+| Agent | OpenAI-compatible 模型层（DeepSeek/OpenAI）、Mastra、LangGraph、Stagehand、OpenAlex、PptxGenJS、自研状态机 | AI 工作流规划，以及 PRD、设计、Coding、网页研究、图片、PPT 和论文写作等真实执行能力 |
 | 链与钱包 | Solidity、Foundry、wagmi、viem | USDC 托管、原子多 Agent 结算、DAO 质押、退款和钱包连接 |
 
-LangGraph Coding Agent 使用 PostgreSQL 检查点完成条件分支、局部修复和服务恢复；Temporal
+LangGraph 使用 PostgreSQL 检查点完成 AI 草案的生成、确定性审查和修正，也为 Coding Agent
+提供条件分支、局部修复和服务恢复；Temporal
 可通过独占运行模式接管三次沙箱、质量评测和生命周期迁移。业务页面继续读取 PostgreSQL
 权威事实，资金结果继续以已确认智能合约事件为准。启用方式与真实恢复证据见
 [LangGraph 与 Temporal 编排说明](./docs/langgraph-temporal-orchestration.md)。
@@ -332,6 +336,7 @@ POST /run     → { "status": "completed", "artifacts": [...] }
 | 文档、HTML、网站、图片、视频与 PDF 分类预览 | 已实现前端预览边界 |
 | Feature 1～13 | 当前 MVP 范围；详细完成证据见各 `specs/*/tasks.md` |
 | Feature 14、16 | 运营后台与钱包换绑延后；Feature 15 自动准入已完成 |
+| AI 工作流规划 | DeepSeek 真实生成、版本化草案、React Flow DAG 编辑与确认固化已通过；确认后的 7 阶段任务已完成 Sepolia 托管、真实执行、交付验收和原子结算 |
 | 匹配算法路线 | 最终 V2 的硬约束、pgvector 召回、Wide & Deep + ESMM、UNK 冷启动、Temporal 离线训练和 ONNX Runtime 在线推理均已完成；正式路径只接受 `active + real` 模型，当前等待真实样本达到发布门槛 |
 | 公共测试网 USDC Escrow 与 DAO 仲裁 | Sepolia 部署、真实 VRF、申诉、结算、恢复和保证金领取已验证 |
 | 生产 `OPERATOR_ROLE` KMS/HSM 签名适配器 | 待实现 |
