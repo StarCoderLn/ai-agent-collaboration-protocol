@@ -2,7 +2,7 @@
 
 ## 本次 PRD（2026-08-20）切分及后续技术增强
 
-来源需求文档：`docs/prd.md`（AI Agent 协作协议平台 MVP）。范围：完整 MVP（对应 PRD 第 11 节 P1-P4），链选型：**Ethereum**（用户已确认，Solana 不在 MVP 范围）。`[2026-08-22 变更]` 14.ops-backend-and-metrics、15.agent-sandbox-admission、16.agent-wallet-rebind 被移出 MVP 主闭环；当前 MVP 范围为 **13 个 feature**（1-13）。15 后续重新启动，并于 2026-09-04 按自动准入方案完成 T-001～T-006，不再依赖 14 的 RBAC；该 P5 能力的完成不改变原 MVP 范围。17 是 2026-09-12 新增并完成真实恢复验收的 LangGraph/Temporal 技术增强。18 是 2026-09-13 新增的 Stagehand Browser Agent 与自然语言浏览器验收增强。19 是 2026-09-16 完成的 AI 工作流规划、版本化草案与受约束 DAG 编辑增强；三者均不改变原 MVP 编号和完成口径。
+来源需求文档：`docs/prd.md`（AI Agent 协作协议平台 MVP）。范围：完整 MVP（对应 PRD 第 11 节 P1-P4），链选型：**Ethereum**（用户已确认，Solana 不在 MVP 范围）。`[2026-08-22 变更]` 14.ops-backend-and-metrics、15.agent-sandbox-admission、16.agent-wallet-rebind 被移出 MVP 主闭环；当前 MVP 范围为 **13 个 feature**（1-13）。15 后续重新启动，并于 2026-09-04 按自动准入方案完成 T-001～T-006，不再依赖 14 的 RBAC；该 P5 能力的完成不改变原 MVP 范围。17 是 2026-09-12 新增并完成真实恢复验收的 LangGraph/Temporal 技术增强。18 是 2026-09-13 新增的 Stagehand Browser Agent 与自然语言浏览器验收增强。19 是 2026-09-16 完成的 AI 工作流规划、版本化草案与受约束 DAG 编辑增强；其中重复的历史任务 v2 外部模型复验 T-009 已于 2026-09-20 由后续真实闭环取代并关闭，不作为功能缺口。三者均不改变原 MVP 编号和完成口径。
 
 ## 当前计划概览
 
