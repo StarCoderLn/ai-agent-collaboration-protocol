@@ -2,6 +2,7 @@ import { z } from "zod";
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
 import { MARKETPLACE_API_BASE_URL } from "./base-url";
 import { chainArbitrationSchema } from "./dao-cases";
+import type { MarketplaceReadOptions } from "./marketplace-read-options";
 
 /**
  * 正式任务 API 的浏览器边界。页面不保存任务主状态，所有金额、版本和状态都以服务端
@@ -1046,9 +1047,15 @@ export class TaskApiRequestError extends Error {
 }
 
 export async function listTaskCategories(
-	signal?: AbortSignal,
+	options: MarketplaceReadOptions = {},
 ): Promise<readonly TaskCategory[]> {
-	const response = await request("/categories", { signal });
+	// 同一 API 函数同时服务浏览器查询和 Server Component 预取：浏览器省略 baseUrl，
+	// 服务端则传入内部可达地址。响应仍统一经过 Zod 解析，不能因 SSR 绕过边界校验。
+	const response = await request(
+		"/categories",
+		{ signal: options.signal, cache: options.cache },
+		options.baseUrl,
+	);
 	return parseSuccess(response, categoryListSchema).then(
 		(body) => body.categories,
 	);
@@ -1129,7 +1136,7 @@ export async function listPublicTasks(
 		status?: TaskStatus;
 	}>,
 	pagination: Readonly<{ limit: number; offset: number }>,
-	signal?: AbortSignal,
+	options: MarketplaceReadOptions = {},
 ): Promise<z.output<typeof publicTaskListSchema>> {
 	const params = new URLSearchParams({
 		limit: String(pagination.limit),
@@ -1140,9 +1147,16 @@ export async function listPublicTasks(
 		params.set("category", uuidSchema.parse(filters.category));
 	if (filters.tag?.trim()) params.set("tag", filters.tag.trim());
 	if (filters.status) params.set("status", filters.status);
-	const response = await request(`/market/tasks?${params.toString()}`, {
-		signal,
-	});
+	// cache/baseUrl 是传输策略，不参与任务筛选语义；查询参数仍由这一处集中构造，避免
+	// Next.js 页面与浏览器组件各自拼接 URL 后产生不一致。
+	const response = await request(
+		`/market/tasks?${params.toString()}`,
+		{
+			signal: options.signal,
+			cache: options.cache,
+		},
+		options.baseUrl,
+	);
 	return parseSuccess(response, publicTaskListSchema);
 }
 
@@ -1170,9 +1184,13 @@ export async function listOwnedTasks(
 }
 
 export async function getMarketStats(
-	signal?: AbortSignal,
+	options: MarketplaceReadOptions = {},
 ): Promise<MarketStats> {
-	const response = await request("/market/stats", { signal });
+	const response = await request(
+		"/market/stats",
+		{ signal: options.signal, cache: options.cache },
+		options.baseUrl,
+	);
 	return parseSuccess(response, marketStatsSchema).then((body) => body.stats);
 }
 
@@ -1971,12 +1989,15 @@ async function credentialedGet<Schema extends z.ZodType>(
 async function request(
 	path: string,
 	init: RequestInit = {},
+	baseUrl = API_BASE_URL,
 ): Promise<Response> {
+	// baseUrl 默认保持原有浏览器行为；只有受控的服务端预取会覆盖它。认证端点仍使用
+	// 原来的凭据请求函数，不会因为公共市场 SSR 而把会话 Cookie 转发给内部地址。
 	const headers = new Headers(init.headers);
 	if (!headers.has("accept")) headers.set("accept", "application/json");
 	let response: Response;
 	try {
-		response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+		response = await fetch(`${baseUrl}${path}`, { ...init, headers });
 	} catch (error) {
 		if (error instanceof DOMException && error.name === "AbortError")
 			throw error;

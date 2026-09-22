@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	cleanup,
 	fireEvent,
@@ -87,7 +88,7 @@ describe("AgentMarketplace", () => {
 
 	it("renders real API data and keeps missing score evidence explicit", async () => {
 		vi.mocked(fetch).mockImplementation(successfulApiResponse);
-		render(<AgentMarketplace />);
+		renderMarketplace(<AgentMarketplace />);
 
 		expect(
 			await screen.findByText("真实目录 Coding Agent"),
@@ -171,7 +172,7 @@ describe("AgentMarketplace", () => {
 			return Promise.reject(new Error(`Unexpected request: ${url}`));
 		});
 
-		render(
+		renderMarketplace(
 			<LocaleProvider initialLocale="en">
 				<AgentMarketplace />
 			</LocaleProvider>,
@@ -198,7 +199,7 @@ describe("AgentMarketplace", () => {
 			}
 			return successfulApiResponse(input);
 		});
-		render(<AgentMarketplace />);
+		renderMarketplace(<AgentMarketplace />);
 
 		expect(await screen.findByText("Agent 市场暂时不可用")).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
@@ -231,7 +232,7 @@ describe("AgentMarketplace", () => {
 			}
 			return Promise.reject(new Error(`Unexpected request: ${url}`));
 		});
-		render(<AgentMarketplace />);
+		renderMarketplace(<AgentMarketplace />);
 
 		expect(
 			await screen.findByText("真实目录 Coding Agent"),
@@ -246,3 +247,14 @@ describe("AgentMarketplace", () => {
 		).toBe(true);
 	});
 });
+
+function renderMarketplace(children: React.ReactNode): void {
+	// 每次渲染使用全新的 QueryClient，避免前一个测试的成功数据或错误状态影响下一个
+	// 用例；关闭重试则让失败场景只消耗测试明确安排的一次请求。
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
+	render(
+		<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
+	);
+}

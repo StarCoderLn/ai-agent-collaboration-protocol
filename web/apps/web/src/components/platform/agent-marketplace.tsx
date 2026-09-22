@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@web/ui/components/button";
 import { Input } from "@web/ui/components/input";
 import { SelectField } from "@web/ui/components/select";
@@ -17,106 +18,72 @@ import {
 	Star,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useDeferredValue, useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import { useLocale } from "@/components/i18n/locale-provider";
 import {
 	AgentDirectoryRequestError,
 	formatPercent,
-	listPublicAgents,
 	type PublicDirectoryAgent,
 } from "@/lib/api/agent-directory";
-import {
-	listTaskCategories,
-	TaskApiRequestError,
-	type TaskCategory,
-} from "@/lib/api/tasks";
+import { TaskApiRequestError } from "@/lib/api/tasks";
 import { translateKnownText } from "@/lib/i18n/messages";
 import { listSelectableCapabilityCategories } from "@/lib/platform/capability-categories";
 import { matchingTagLabel } from "@/lib/platform/matching-tag-label";
 import { formatMinorAmount } from "@/lib/platform/money";
+import {
+	MARKETPLACE_PAGE_SIZE,
+	publicAgentsQueryOptions,
+	taskCategoriesQueryOptions,
+} from "@/lib/queries/marketplace";
 import { MarketPagination } from "./market-pagination";
 
 const ALL_CATEGORIES = "__all__";
-const PAGE_SIZE = 9;
-
-type LoadState =
-	| Readonly<{ kind: "loading" }>
-	| Readonly<{
-			kind: "loaded";
-			agents: readonly PublicDirectoryAgent[];
-			categories: readonly TaskCategory[];
-			total: number;
-	  }>
-	| Readonly<{ kind: "error"; message: string }>;
+const PAGE_SIZE = MARKETPLACE_PAGE_SIZE;
 
 export default function AgentMarketplace() {
 	const { t } = useLocale();
 	const [query, setQuery] = useState("");
 	const [categoryId, setCategoryId] = useState(ALL_CATEGORIES);
 	const [page, setPage] = useState(1);
+	// 搜索框保持即时响应，延迟值用于生成查询键，避免每次按键都立刻请求 Agent 目录。
 	const deferredQuery = useDeferredValue(query);
-	const [state, setState] = useState<LoadState>({ kind: "loading" });
-
-	const load = useCallback(
-		(signal?: AbortSignal) => {
-			setState({ kind: "loading" });
-			// 市场与发布/上架入口必须读取同一套分类树。不能再从当前 Agent 列表反推分类，
-			// 否则没有在架 Agent 的合法分类会消失，名称也可能因服务端路径文案而不一致。
-			Promise.all([
-				listPublicAgents(
-					{
-						...(deferredQuery.trim() === "" ? {} : { keyword: deferredQuery }),
-						...(categoryId === ALL_CATEGORIES ? {} : { category: categoryId }),
-					},
-					{ limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE },
-					signal,
-				),
-				listTaskCategories(signal),
-			])
-				.then(([agentPage, categories]) =>
-					setState({
-						kind: "loaded",
-						agents: agentPage.agents,
-						total: agentPage.total,
-						categories,
-					}),
-				)
-				.catch((error: unknown) => {
-					if (error instanceof DOMException && error.name === "AbortError")
-						return;
-					setState({
-						kind: "error",
-						message:
-							error instanceof AgentDirectoryRequestError ||
-							error instanceof TaskApiRequestError
-								? error.body.message
-								: t("Agent 市场加载失败，请稍后重试"),
-					});
-				});
-		},
-		[categoryId, deferredQuery, page, t],
+	// ALL_CATEGORIES 只表示界面上的“全部”，不能作为真实分类 ID 发送给服务端。
+	const filters = {
+		...(deferredQuery.trim() === "" ? {} : { keyword: deferredQuery }),
+		...(categoryId === ALL_CATEGORIES ? {} : { category: categoryId }),
+	};
+	// 空筛选第一页会复用 Server Component 的水合缓存；搜索、分类或页码变化后查询键
+	// 随之改变，React Query 再通过浏览器 API 地址获取新结果。
+	const agentsQuery = useQuery(
+		publicAgentsQueryOptions(filters, {
+			limit: PAGE_SIZE,
+			offset: (page - 1) * PAGE_SIZE,
+		}),
 	);
+	const categoriesQuery = useQuery(taskCategoriesQueryOptions());
+	const loadError = agentsQuery.error ?? categoriesQuery.error;
+	const loadErrorMessage =
+		loadError instanceof AgentDirectoryRequestError ||
+		loadError instanceof TaskApiRequestError
+			? loadError.body.message
+			: t("Agent 市场加载失败，请稍后重试");
 
-	useEffect(() => {
-		const controller = new AbortController();
-		load(controller.signal);
-		return () => controller.abort();
-	}, [load]);
-
-	const agents = state.kind === "loaded" ? state.agents : [];
-	const total = state.kind === "loaded" ? state.total : 0;
-	const categories =
-		state.kind === "loaded"
-			? listSelectableCapabilityCategories(state.categories, t)
-			: [];
+	const agents = agentsQuery.data?.agents ?? [];
+	const total = agentsQuery.data?.total ?? 0;
+	// 市场与发布/上架入口读取同一套分类树。不能从当前 Agent 列表反推分类，否则
+	// 暂无在架 Agent 的合法分类会消失，名称也可能与服务端权威分类不一致。
+	const categories = categoriesQuery.data
+		? listSelectableCapabilityCategories(categoriesQuery.data, t)
+		: [];
 	const hasActiveFilters =
 		deferredQuery.trim() !== "" || categoryId !== ALL_CATEGORIES;
 
 	useEffect(() => {
-		if (state.kind !== "loaded" || state.total === 0) return;
-		const lastPage = Math.ceil(state.total / PAGE_SIZE);
+		// 筛选结果或后台数据变化后，总页数可能缩小；将越界页码收敛到最后一个有效页。
+		if (agentsQuery.data === undefined || agentsQuery.data.total === 0) return;
+		const lastPage = Math.ceil(agentsQuery.data.total / PAGE_SIZE);
 		if (page > lastPage) setPage(lastPage);
-	}, [page, state]);
+	}, [agentsQuery.data, page]);
 
 	function changePage(nextPage: number): void {
 		setPage(nextPage);
@@ -195,21 +162,31 @@ export default function AgentMarketplace() {
 					/>
 				</div>
 
-				{state.kind === "loading" && <MarketplaceSkeleton />}
-				{state.kind === "error" && (
+				{(agentsQuery.isPending || categoriesQuery.isPending) && (
+					<MarketplaceSkeleton />
+				)}
+				{loadError && (
 					<DirectoryState
 						icon={AlertTriangle}
 						title={t("Agent 市场暂时不可用")}
-						description={state.message}
+						description={loadErrorMessage}
 						action={
-							<Button variant="outline" onClick={() => load()}>
+							<Button
+								variant="outline"
+								onClick={() => {
+									// 列表和分类任一失败都会让完整市场不可用，因此用户点击
+									// “重新加载”时同时重试两项，而不是留下半恢复状态。
+									void agentsQuery.refetch();
+									void categoriesQuery.refetch();
+								}}
+							>
 								<RefreshCw className="size-4" />
 								{t("重新加载")}
 							</Button>
 						}
 					/>
 				)}
-				{state.kind === "loaded" && (
+				{agentsQuery.data && categoriesQuery.data && (
 					<>
 						<div
 							id="agent-market-results"

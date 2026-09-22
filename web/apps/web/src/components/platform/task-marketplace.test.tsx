@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	cleanup,
 	fireEvent,
@@ -60,12 +61,12 @@ describe("Task marketplace filters", () => {
 	});
 
 	it("queries the backend with category, status and keyword instead of filtering only the first page", async () => {
-		render(<TaskMarketplace />);
+		renderMarketplace();
 		await waitFor(() =>
 			expect(listPublicTasks).toHaveBeenCalledWith(
 				{},
 				{ limit: 9, offset: 0 },
-				expect.any(AbortSignal),
+				expect.objectContaining({ signal: expect.any(AbortSignal) }),
 			),
 		);
 		expect(
@@ -106,7 +107,7 @@ describe("Task marketplace filters", () => {
 					status: "execution_failed",
 				},
 				{ limit: 9, offset: 0 },
-				expect.any(AbortSignal),
+				expect.objectContaining({ signal: expect.any(AbortSignal) }),
 			),
 		);
 		expect(screen.getByText("待处理 / 争议")).toBeInTheDocument();
@@ -138,7 +139,7 @@ describe("Task marketplace filters", () => {
 			limit: 9,
 			offset: 0,
 		});
-		render(<TaskMarketplace />);
+		renderMarketplace();
 		const cardLink = await screen.findByRole("link", {
 			name: "查看任务：开发 USDC 托管任务工作台",
 		});
@@ -163,23 +164,36 @@ describe("Task marketplace filters", () => {
 			limit: 9,
 			offset: 0,
 		});
-		render(<TaskMarketplace />);
+		renderMarketplace();
 
 		await waitFor(() =>
 			expect(listPublicTasks).toHaveBeenCalledWith(
 				{},
 				{ limit: 9, offset: 0 },
-				expect.any(AbortSignal),
+				expect.objectContaining({ signal: expect.any(AbortSignal) }),
 			),
 		);
-		fireEvent.click(screen.getByRole("button", { name: "第 2 页" }));
+		fireEvent.click(await screen.findByRole("button", { name: "第 2 页" }));
 
 		await waitFor(() =>
 			expect(listPublicTasks).toHaveBeenLastCalledWith(
 				{},
 				{ limit: 9, offset: 9 },
-				expect.any(AbortSignal),
+				expect.objectContaining({ signal: expect.any(AbortSignal) }),
 			),
 		);
 	});
 });
+
+function renderMarketplace(): void {
+	// 生产环境由应用根节点和 HydrationBoundary 提供 QueryClient。组件测试不渲染整棵
+	// 应用树，因此为每个用例创建独立客户端，既还原运行前提，也避免缓存跨用例泄漏。
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
+	render(
+		<QueryClientProvider client={queryClient}>
+			<TaskMarketplace />
+		</QueryClientProvider>,
+	);
+}

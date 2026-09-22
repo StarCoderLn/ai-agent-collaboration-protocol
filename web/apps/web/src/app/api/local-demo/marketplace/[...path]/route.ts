@@ -1,3 +1,5 @@
+import { getLocalDemoMarketplaceApiBaseUrl } from "@/lib/api/local-demo-upstream";
+
 const MAX_PROXY_BODY_BYTES = 4 << 20;
 const FORWARDED_REQUEST_HEADERS = [
 	"accept",
@@ -120,24 +122,12 @@ function targetUrl(path: readonly string[], search: string): string {
 	) {
 		throw new ProxyRequestError(404, "route not found");
 	}
-	const rawBase = process.env.LOCAL_DEMO_MARKETPLACE_API_URL;
-	if (rawBase === undefined || rawBase === "")
-		throw new Error("LOCAL_DEMO_MARKETPLACE_API_URL is required");
-	const base = new URL(rawBase);
-	if (
-		(base.protocol !== "http:" && base.protocol !== "https:") ||
-		!isLoopback(base.hostname) ||
-		base.username !== "" ||
-		base.password !== "" ||
-		base.search !== "" ||
-		base.hash !== ""
-	) {
-		throw new Error(
-			"LOCAL_DEMO_MARKETPLACE_API_URL must be a credential-free loopback URL",
-		);
-	}
-	const prefix = base.pathname.replace(/\/$/, "");
-	base.pathname = `${prefix}/api/${path.map(encodeURIComponent).join("/")}`;
+	// 浏览器同源代理与 Server Component 必须复用同一套上游地址校验。若在这里单独
+	// 解析环境变量，两条入口可能对协议、凭据或回环主机形成不同的 SSRF 防护边界。
+	const base = getLocalDemoMarketplaceApiBaseUrl();
+	base.pathname = `${base.pathname.replace(/\/$/, "")}/${path
+		.map(encodeURIComponent)
+		.join("/")}`;
 	base.search = search;
 	return base.toString();
 }
@@ -157,14 +147,6 @@ async function boundedBody(request: Request): Promise<ArrayBuffer> {
 	return bytes;
 }
 
-function isLoopback(hostname: string): boolean {
-	return (
-		hostname === "localhost" ||
-		hostname === "127.0.0.1" ||
-		hostname === "[::1]" ||
-		hostname === "::1"
-	);
-}
 function notFound(): Response {
 	return Response.json({ error: "route not found" }, { status: 404 });
 }

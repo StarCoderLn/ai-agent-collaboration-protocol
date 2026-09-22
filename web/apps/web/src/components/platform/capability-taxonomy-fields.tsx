@@ -47,7 +47,7 @@ export function useCapabilityTaxonomy(): CapabilityTaxonomyState {
 
 	useEffect(() => {
 		const controller = new AbortController();
-		listTaskCategories(controller.signal)
+		listTaskCategories({ signal: controller.signal })
 			.then((categories) => {
 				setState({
 					kind: "loaded",

@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@web/ui/components/button";
 import { Input } from "@web/ui/components/input";
 import { SelectField } from "@web/ui/components/select";
@@ -18,13 +19,9 @@ import {
 	WalletCards,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useDeferredValue, useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import { useLocale } from "@/components/i18n/locale-provider";
 import {
-	getMarketStats,
-	listPublicTasks,
-	listTaskCategories,
-	type MarketStats,
 	type PublicTask,
 	TaskApiRequestError,
 	type TaskCategory,
@@ -35,23 +32,16 @@ import { listSelectableCapabilityCategories } from "@/lib/platform/capability-ca
 import { TASK_STATUS_PRESENTATION } from "@/lib/platform/contracts";
 import { formatCompactDate } from "@/lib/platform/format";
 import { formatMinorAmount } from "@/lib/platform/money";
+import {
+	MARKETPLACE_PAGE_SIZE,
+	publicTasksQueryOptions,
+	taskCategoriesQueryOptions,
+	taskMarketStatsQueryOptions,
+} from "@/lib/queries/marketplace";
 import { MarketPagination } from "./market-pagination";
 import { StatusBadge } from "./status-badge";
 
-const PAGE_SIZE = 9;
-
-type MetadataState =
-	| Readonly<{ kind: "loading" }>
-	| Readonly<{
-			kind: "loaded";
-			stats: MarketStats;
-			categories: readonly TaskCategory[];
-	  }>
-	| Readonly<{ kind: "error"; message: string }>;
-type TaskLoadState =
-	| Readonly<{ kind: "loading" }>
-	| Readonly<{ kind: "loaded"; tasks: readonly PublicTask[]; total: number }>
-	| Readonly<{ kind: "error"; message: string }>;
+const PAGE_SIZE = MARKETPLACE_PAGE_SIZE;
 
 export default function TaskMarketplace() {
 	const { locale, t } = useLocale();
@@ -59,87 +49,45 @@ export default function TaskMarketplace() {
 	const [status, setStatus] = useState<TaskStatus | "all">("all");
 	const [categoryId, setCategoryId] = useState("all");
 	const [page, setPage] = useState(1);
+	// 延迟值只推迟高频输入触发查询，不阻塞输入框本身更新。用户连续输入时可以减少
+	// 无意义的中间请求，最终查询键仍由完整的筛选条件决定。
 	const deferredQuery = useDeferredValue(query);
-	const [metadata, setMetadata] = useState<MetadataState>({ kind: "loading" });
-	const [taskState, setTaskState] = useState<TaskLoadState>({
-		kind: "loading",
-	});
-
-	const loadMetadata = useCallback(
-		(signal?: AbortSignal) => {
-			setMetadata({ kind: "loading" });
-			Promise.all([getMarketStats(signal), listTaskCategories(signal)])
-				.then(([stats, categories]) =>
-					setMetadata({ kind: "loaded", stats, categories }),
-				)
-				.catch((error: unknown) => {
-					if (error instanceof DOMException && error.name === "AbortError")
-						return;
-					setMetadata({
-						kind: "error",
-						message:
-							error instanceof TaskApiRequestError
-								? error.body.message
-								: t("任务市场加载失败"),
-					});
-				});
-		},
-		[t],
+	// 只把真正启用的条件发给 Hono；"all" 是界面占位值，不属于服务端领域参数。
+	const filters = {
+		...(deferredQuery.trim() === "" ? {} : { keyword: deferredQuery }),
+		...(categoryId === "all" ? {} : { category: categoryId }),
+		...(status === "all" ? {} : { status }),
+	};
+	// 第一页的三个查询会命中 Server Component 注入的水合缓存；筛选或翻页改变查询键后，
+	// React Query 才从浏览器请求新数据。业务过滤始终由 Hono 完成，而不是只过滤当前页。
+	const statsQuery = useQuery(taskMarketStatsQueryOptions());
+	const categoriesQuery = useQuery(taskCategoriesQueryOptions());
+	const tasksQuery = useQuery(
+		publicTasksQueryOptions(filters, {
+			limit: PAGE_SIZE,
+			offset: (page - 1) * PAGE_SIZE,
+		}),
 	);
-	const loadTasks = useCallback(
-		(signal?: AbortSignal) => {
-			setTaskState({ kind: "loading" });
-			listPublicTasks(
-				{
-					...(deferredQuery.trim() === "" ? {} : { keyword: deferredQuery }),
-					...(categoryId === "all" ? {} : { category: categoryId }),
-					...(status === "all" ? {} : { status }),
-				},
-				{ limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE },
-				signal,
-			)
-				.then((result) =>
-					setTaskState({
-						kind: "loaded",
-						tasks: result.tasks,
-						total: result.total,
-					}),
-				)
-				.catch((error: unknown) => {
-					if (error instanceof DOMException && error.name === "AbortError")
-						return;
-					setTaskState({
-						kind: "error",
-						message:
-							error instanceof TaskApiRequestError
-								? error.body.message
-								: t("任务列表加载失败"),
-					});
-				});
-		},
-		[categoryId, deferredQuery, page, status, t],
-	);
+	const metadataError = statsQuery.error ?? categoriesQuery.error;
+	const metadataErrorMessage =
+		metadataError instanceof TaskApiRequestError
+			? metadataError.body.message
+			: t("任务市场加载失败");
+	const taskErrorMessage =
+		tasksQuery.error instanceof TaskApiRequestError
+			? tasksQuery.error.body.message
+			: t("任务列表加载失败");
+
+	const tasks = tasksQuery.data?.tasks ?? [];
+	const total = tasksQuery.data?.total ?? 0;
 
 	useEffect(() => {
-		const controller = new AbortController();
-		loadMetadata(controller.signal);
-		return () => controller.abort();
-	}, [loadMetadata]);
-
-	useEffect(() => {
-		const controller = new AbortController();
-		loadTasks(controller.signal);
-		return () => controller.abort();
-	}, [loadTasks]);
-
-	const tasks = taskState.kind === "loaded" ? taskState.tasks : [];
-	const total = taskState.kind === "loaded" ? taskState.total : 0;
-
-	useEffect(() => {
-		if (taskState.kind !== "loaded" || taskState.total === 0) return;
-		const lastPage = Math.ceil(taskState.total / PAGE_SIZE);
+		// 删除或筛选可能让总页数减少。若当前页已经越界，自动回到最后一个有效页，避免
+		// 用户停留在一个“有总数但没有卡片”的不存在页码上。
+		if (tasksQuery.data === undefined || tasksQuery.data.total === 0) return;
+		const lastPage = Math.ceil(tasksQuery.data.total / PAGE_SIZE);
 		if (page > lastPage) setPage(lastPage);
-	}, [page, taskState]);
+	}, [page, tasksQuery.data]);
 
 	function changePage(nextPage: number): void {
 		setPage(nextPage);
@@ -151,14 +99,12 @@ export default function TaskMarketplace() {
 	// 卡片需要完整分类路径帮助用户理解上下文；筛选器则必须和发布/上架入口一样，
 	// 只展示可参与匹配的叶子分类及其短名称。两种展示目的不同，因此保留两份投影，
 	// 但分类 ID 始终来自同一棵服务端分类树。
-	const categoryNames =
-		metadata.kind === "loaded"
-			? flattenCategories(metadata.categories)
-			: new Map<string, string>();
-	const selectableCategories =
-		metadata.kind === "loaded"
-			? listSelectableCapabilityCategories(metadata.categories, t)
-			: [];
+	const categoryNames = categoriesQuery.data
+		? flattenCategories(categoriesQuery.data)
+		: new Map<string, string>();
+	const selectableCategories = categoriesQuery.data
+		? listSelectableCapabilityCategories(categoriesQuery.data, t)
+		: [];
 
 	return (
 		<main className="min-h-[70vh]">
@@ -192,26 +138,26 @@ export default function TaskMarketplace() {
 							{t("发布任务")}
 						</Button>
 					</div>
-					{metadata.kind === "loaded" && (
+					{statsQuery.data && (
 						<div className="mt-8 grid gap-3 sm:grid-cols-3">
 							<Metric
 								label={t("公开任务")}
-								value={String(metadata.stats.total)}
+								value={String(statsQuery.data.total)}
 								icon={Filter}
 							/>
 							<Metric
 								label={t("匹配与执行中")}
 								value={String(
-									metadata.stats.matching + metadata.stats.executing,
+									statsQuery.data.matching + statsQuery.data.executing,
 								)}
 								icon={Clock3}
 							/>
 							<Metric
 								label={t("待处理 / 争议")}
 								value={String(
-									metadata.stats.execution_failed +
-										metadata.stats.awaiting_review +
-										metadata.stats.disputed,
+									statsQuery.data.execution_failed +
+										statsQuery.data.awaiting_review +
+										statsQuery.data.disputed,
 								)}
 								icon={ShieldCheck}
 							/>
@@ -275,34 +221,45 @@ export default function TaskMarketplace() {
 					/>
 				</div>
 
-				{metadata.kind === "error" && (
+				{metadataError && (
 					<MarketState
 						icon={AlertTriangle}
 						title={t("任务市场统计暂时不可用")}
-						description={metadata.message}
+						description={metadataErrorMessage}
 						action={
-							<Button variant="outline" onClick={() => loadMetadata()}>
+							<Button
+								variant="outline"
+								onClick={() => {
+									// 统计与分类共同组成头部元数据，重试时必须一起刷新，避免
+									// 一个恢复而另一个仍停留在失败状态。
+									void statsQuery.refetch();
+									void categoriesQuery.refetch();
+								}}
+							>
 								<RefreshCw className="size-4" />
 								{t("重新加载")}
 							</Button>
 						}
 					/>
 				)}
-				{taskState.kind === "loading" && <TaskMarketSkeleton />}
-				{taskState.kind === "error" && (
+				{tasksQuery.isPending && <TaskMarketSkeleton />}
+				{tasksQuery.isError && (
 					<MarketState
 						icon={AlertTriangle}
 						title={t("任务列表暂时不可用")}
-						description={taskState.message}
+						description={taskErrorMessage}
 						action={
-							<Button variant="outline" onClick={() => loadTasks()}>
+							<Button
+								variant="outline"
+								onClick={() => void tasksQuery.refetch()}
+							>
 								<RefreshCw className="size-4" />
 								{t("重新加载")}
 							</Button>
 						}
 					/>
 				)}
-				{taskState.kind === "loaded" && (
+				{tasksQuery.data && (
 					<>
 						<div
 							id="task-market-results"
@@ -372,7 +329,7 @@ function TaskCard({
 				<h3 className="mt-3 font-semibold leading-6 transition-colors group-hover/card:text-primary">
 					{task.title}
 				</h3>
-				<p className="mt-1.5 min-h-11 line-clamp-2 text-muted-foreground text-sm leading-5.5">
+				<p className="mt-1.5 line-clamp-2 min-h-11 text-muted-foreground text-sm leading-5.5">
 					{task.description}
 				</p>
 				<div className="mt-3 flex min-h-7 flex-wrap content-start gap-1.5">

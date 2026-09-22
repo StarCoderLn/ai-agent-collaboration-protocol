@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { notifyAuthSessionExpired } from "@/lib/wallet/session-expiry";
 import { MARKETPLACE_API_BASE_URL } from "./base-url";
+import type { MarketplaceReadOptions } from "./marketplace-read-options";
 
 /**
  * Agent 市场与生命周期操作的浏览器客户端。
@@ -186,7 +187,7 @@ export class AgentDirectoryRequestError extends Error {
 export async function listPublicAgents(
 	filters: Readonly<{ keyword?: string; category?: string }>,
 	pagination: Readonly<{ limit: number; offset: number }>,
-	signal?: AbortSignal,
+	options: MarketplaceReadOptions = {},
 ): Promise<PublicAgentDirectoryPage> {
 	const params = new URLSearchParams({
 		limit: String(pagination.limit),
@@ -195,9 +196,16 @@ export async function listPublicAgents(
 	if (filters.keyword?.trim()) params.set("keyword", filters.keyword.trim());
 	if (filters.category)
 		params.set("category", uuidSchema.parse(filters.category));
-	const response = await request(`/market/agents?${params.toString()}`, {
-		signal,
-	});
+	// API 层仍是筛选参数和响应结构的唯一权威边界。Server Component 只覆盖传输地址
+	// 与缓存策略，不复制 Agent 查询规则，也不绕过后续的 Zod 解析。
+	const response = await request(
+		`/market/agents?${params.toString()}`,
+		{
+			signal: options.signal,
+			cache: options.cache,
+		},
+		options.baseUrl,
+	);
 	return parseSuccess(response, publicListSchema);
 }
 
@@ -290,10 +298,13 @@ async function transition(
 async function request(
 	path: string,
 	init: RequestInit = {},
+	baseUrl = API_BASE_URL,
 ): Promise<Response> {
+	// 默认地址供浏览器使用；服务端只读预取传入经过校验的 Hono 地址。这个通用请求器
+	// 不自动附带用户凭据，因此不会把浏览器会话泄露到 SSR 的内部请求。
 	let response: Response;
 	try {
-		response = await fetch(`${API_BASE_URL}${path}`, {
+		response = await fetch(`${baseUrl}${path}`, {
 			...init,
 			headers: { accept: "application/json", ...init.headers },
 		});
